@@ -73,7 +73,7 @@ Create a `docker-compose.yml` file and populate it with the service definition.
 version: '2.4'
 
 services:
-  darkandlight:
+  asaserver:
     build: .
     image: asa_server:latest
     container_name: asa_pve_Server
@@ -82,24 +82,24 @@ services:
       - PUID=1001
       - PGID=1001
       - MAP_NAME=TheIsland
-      - SESSION_NAME=POK-PVE-Community-ARK-Server-NO-WIPE
-      - SERVER_ADMIN_PASSWORD=kORNEYA512
+      - SESSION_NAME=Server_name
+      - SERVER_ADMIN_PASSWORD=MyPassword
       - MULTI_HOME=0.0.0.0
-      - ASA_PORT=8780
-      - QUERY_PORT=28017
+      - ASA_PORT=7777
+      - QUERY_PORT=27015
       - MAX_PLAYERS=70
-      - CLUSTER_ID=kny
+      - CLUSTER_ID=cluster
     ports:
-      - "8780:8780/tcp"
-      - "8780:8780/udp"
-      - "28017:28017/tcp"
-      - "28017:28017/udp"
+      - "7777:7777/tcp"
+      - "7777:7777/udp"
+      - "27015:27015/tcp"
+      - "27015:27015/udp"
     volumes:
       - "./ASA:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server/ShooterGame"
       - "./ARK Survival Ascended Dedicated Server:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server"
       - "/home/factorioserver/ASA_Cluster/Cluster:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ShooterGame"
     memswap_limit: 16G
-    mem_limit: 12G  
+    mem_limit: 12G   
 ```
 
 If you're planning to change the volume directories, create those directories manually before starting the service.
