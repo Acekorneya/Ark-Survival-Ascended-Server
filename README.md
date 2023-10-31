@@ -5,7 +5,7 @@
 
 This Docker image is designed to run a dedicated server for the game Ark Survival Ascended. It's based on `scottyhardy/docker-wine` to enable the running of Windows applications. The image uses a bash script to handle startup, server installation, server update ,and setting up environment variables.
 
-#### Repository: Your GitHub Repository](https://github.com/Acekorneya/Ark-Survival-Ascended-Server
+#### Repository: Your GitHub Repository: https://github.com/Acekorneya/Ark-Survival-Ascended-Server
 
 ---
 
