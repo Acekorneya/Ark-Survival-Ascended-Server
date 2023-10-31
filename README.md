@@ -50,7 +50,7 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 | Volume Path                                           | Description                                    |
 | ---------------------------------------------------- | ---------------------------------------------- |
 | `./ASA`              | Game files                                     |
-| `./ARK Survival Ascended Dedicated Server` | Server config files                           |
+| `./ARK Survival Ascended Dedicated Server` | Server files                           |
 | `./Cluster`           | Cluster files                                  |
 
 ---
