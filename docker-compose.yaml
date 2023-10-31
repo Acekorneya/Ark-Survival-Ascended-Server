@@ -1,0 +1,30 @@
+version: '2.4'
+
+services:
+  darkandlight:
+    build: .
+    image: asa_server:latest
+    container_name: asa_pve_Server
+    restart: unless-stopped
+    environment:
+      - PUID=1001
+      - PGID=1001
+      - MAP_NAME=TheIsland
+      - SESSION_NAME=POK-PVE-Community-ARK-Server-NO-WIPE
+      - SERVER_ADMIN_PASSWORD=kORNEYA512
+      - MULTI_HOME=0.0.0.0
+      - ASA_PORT=8780
+      - QUERY_PORT=28017
+      - MAX_PLAYERS=70
+      - CLUSTER_ID=kny
+    ports:
+      - "8780:8780/tcp"
+      - "8780:8780/udp"
+      - "28017:28017/tcp"
+      - "28017:28017/udp"
+    volumes:
+      - "./ASA:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server/ShooterGame"
+      - "./ARK Survival Ascended Dedicated Server:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server"
+      - "/home/factorioserver/ASA_Cluster/Cluster:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ShooterGame"
+    memswap_limit: 16G
+    mem_limit: 12G  
