@@ -46,6 +46,7 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 ---
 
 #### Volumes
+Make sure to create this 3 folders in the same folder as the docker-compose.yaml and make sure to name them EXACTLY the same as Volume Path name below
 
 | Volume Path                                           | Description                                    |
 | ---------------------------------------------------- | ---------------------------------------------- |
