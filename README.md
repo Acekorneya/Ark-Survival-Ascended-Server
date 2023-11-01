@@ -85,7 +85,6 @@ services:
       - MAP_NAME=TheIsland
       - SESSION_NAME=Server_name
       - SERVER_ADMIN_PASSWORD=MyPassword
-      - MULTI_HOME=0.0.0.0
       - ASA_PORT=7777
       - QUERY_PORT=27015
       - MAX_PLAYERS=70
