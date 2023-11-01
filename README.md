@@ -76,7 +76,7 @@ services:
   asaserver:
     build: .
     image: asa_server:latest
-    container_name: asa_pve_Server
+    container_name: asa_Server
     restart: unless-stopped
     environment:
       - PUID=1001
