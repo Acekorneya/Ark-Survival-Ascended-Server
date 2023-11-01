@@ -97,7 +97,7 @@ services:
     volumes:
       - "./ASA:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server/ShooterGame"
       - "./ARK Survival Ascended Dedicated Server:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server"
-      - "/home/factorioserver/ASA_Cluster/Cluster:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ShooterGame"
+      - "./Cluster:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ShooterGame"
     memswap_limit: 16G
     mem_limit: 12G   
 ```
