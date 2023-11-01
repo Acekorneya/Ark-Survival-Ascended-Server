@@ -122,7 +122,7 @@ save_build_id() {
 
 # Start the server
 start_server() {
-    sudo -u games wine "$ASA_DIR/Binaries/Win64/ArkAscendedServer.exe" $MAP_PATH?listen?SessionName=${SESSION_NAME}?ServerAdminPassword=${SERVER_ADMIN_PASSWORD}?MultiHome=${MULTI_HOME}?Port=${ASA_PORT}?QueryPort=${QUERY_PORT}?MaxPlayers=${MAX_PLAYERS}? -clusterid=${CLUSTER_ID} -ClusterDirOverride=$CLUSTER_DIR_OVERRIDE -servergamelog -servergamelogincludetribelogs -ServerRCONOutputTribeLogs -NotifyAdminCommandsInChat -useallavailablecores -usecache -nosteamclient -game -server -log
+    sudo -u games wine "$ASA_DIR/Binaries/Win64/ArkAscendedServer.exe" $MAP_PATH?listen?SessionName=${SESSION_NAME}?Port=${ASA_PORT}?QueryPort=${QUERY_PORT}?MaxPlayers=${MAX_PLAYERS}?ServerAdminPassword=${SERVER_ADMIN_PASSWORD} -clusterid=${CLUSTER_ID} -ClusterDirOverride=$CLUSTER_DIR_OVERRIDE -servergamelog -servergamelogincludetribelogs -ServerRCONOutputTribeLogs -NotifyAdminCommandsInChat -useallavailablecores -usecache -nosteamclient -game -server -log
 }
 
 # Main function
