@@ -45,7 +45,7 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 ---
 
 #### Volumes
-Make sure to create this 3 folders in the same folder as the docker-compose.yaml and make sure to name them EXACTLY the same as Volume Path name below
+When you run the docker compose up it should create this folders in the same folder as the docker-compose.yaml file unless changed by the user
 
 | Volume Path                                           | Description                                    |
 | ---------------------------------------------------- | ---------------------------------------------- |
@@ -67,7 +67,7 @@ Make sure to create this 3 folders in the same folder as the docker-compose.yaml
 
 ##### Docker Compose
 
-Create a `docker-compose.yml` file and populate it with the service definition. 
+Create a `docker-compose.yaml` file and populate it with the service definition. 
 
 ```yaml
 version: '2.4'
