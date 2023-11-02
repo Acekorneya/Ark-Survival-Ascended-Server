@@ -119,4 +119,4 @@ For custom settings, edit GameUserSettings.ini in Saved/Config/WindowsServer. Mo
 ---
 
 #### Comments
-
+A do right now you will need to copy the Game.Ini Files from the single player and place them in the same Folder as the GameUserSetting.Ini
