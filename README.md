@@ -114,7 +114,7 @@ docker compose up
 #### Additional server settings 
 
 Advanced Config
-For custom settings, edit GameUserSettings.ini in Saved/Config/WindowsServer. Modify and restart the container.
+For custom settings, edit GameUserSettings.ini in ASA/Saved/Config/WindowsServer. Modify and restart the container.
 
 ---
 
