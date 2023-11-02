@@ -113,10 +113,11 @@ update_server() {
     fi
 }
 
-# Save the build ID to a file
+# Save the build ID to a file and change ownership to the games user
 save_build_id() {
     local build_id=$1
     echo "$build_id" > "$BUILD_ID_FILE"
+    chown $PUID:$PGID "$BUILD_ID_FILE"
     echo "Saved build ID: $build_id"
 }
 
