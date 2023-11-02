@@ -120,3 +120,8 @@ For custom settings, edit GameUserSettings.ini in ASA/Saved/Config/WindowsServer
 
 #### Comments
 as of right now you will need to copy the Game.Ini Files from a single player game and place them in the same Folder as the GameUserSetting.Ini
+
+#### updating Sever 
+docker compose down 
+docker compose up 
+then the program should automatically start updating the server when it starts up again
