@@ -2,10 +2,6 @@
 FROM scottyhardy/docker-wine
 
 # Arguments and environment variables
-ARG USERNAME=anonymous
-ARG APPID=2430930
-ARG PUID=1001
-ARG PGID=1001
 ENV WINEPREFIX /usr/games/.wine
 ENV WINEDEBUG -all
 ENV PROGRAM_FILES "$WINEPREFIX/drive_c/POK"
@@ -16,6 +12,7 @@ RUN mkdir -p "$PROGRAM_FILES"
 
 # Change user shell and set ownership
 RUN usermod --shell /bin/bash games && chown -R games:games /usr/games
+
 # Modify user and group IDs
 RUN groupmod -o -g $PGID games && \
     usermod -o -u $PUID -g games games
@@ -51,14 +48,14 @@ RUN chown -R games:games "$WINEPREFIX"
 # Switch back to root for final steps
 USER root
 
-# Copy the launch script
-COPY launch_ASA.sh /usr/games/launch_ASA.sh
+# Copy scripts folder into the container
+COPY scripts/ /usr/games/scripts/
 
-# Remove Windows-style carriage returns from the script
-RUN sed -i 's/\r//' /usr/games/launch_ASA.sh
+# Remove Windows-style carriage returns from the scripts
+RUN sed -i 's/\r//' /usr/games/scripts/*.sh
 
-# Make the script executable
-RUN chmod +x /usr/games/launch_ASA.sh
+# Make scripts executable
+RUN chmod +x /usr/games/scripts/*.sh
 
 # Set the entry point
-ENTRYPOINT ["/usr/games/launch_ASA.sh"]
+ENTRYPOINT ["/usr/games/scripts/init.sh"]
