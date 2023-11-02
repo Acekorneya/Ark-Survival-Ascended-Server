@@ -67,7 +67,7 @@ When you run the docker compose up it should create this folders in the same fol
 
 ##### Docker Compose
 
-Create a `docker-compose.yml` file and populate it with the service definition. 
+Create a `docker-compose.yaml` file and populate it with the service definition. 
 
 ```yaml
 version: '2.4'
