@@ -5,7 +5,7 @@
 
 This Docker image is designed to run a dedicated server for the game Ark Survival Ascended. It's based on `scottyhardy/docker-wine` to enable the running of Windows applications. The image uses a bash script to handle startup, server installation, server update ,and setting up environment variables.
 
-#### Repository: https://github.com/Acekorneya/Ark-Survival-Ascended-Server
+#### Docker Hub Repository: https://hub.docker.com/r/acekorneya/asa_server
 
 ---
 
@@ -114,9 +114,14 @@ docker compose up
 #### Additional server settings 
 
 Advanced Config
-For custom settings, edit GameUserSettings.ini in Saved/Config/WindowsServer. Modify and restart the container.
+For custom settings, edit GameUserSettings.ini in ASA/Saved/Config/WindowsServer. Modify and restart the container.
 
 ---
 
 #### Comments
+as of right now you will need to copy the Game.Ini Files from a single player game and place them in the same Folder as the GameUserSetting.Ini
 
+#### updating Sever 
+docker compose down 
+docker compose up 
+then the program should automatically start updating the server when it starts up again
