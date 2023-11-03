@@ -1,9 +1,15 @@
 # Use an image that has Wine installed to run Windows applications
 FROM scottyhardy/docker-wine
 
+# Add ARG for PUID and PGID with a default value
+ARG PUID=1001
+ARG PGID=1001
+
 # Arguments and environment variables
+ENV PUID ${PUID}
+ENV PGID ${PGID}
 ENV WINEPREFIX /usr/games/.wine
-ENV WINEDEBUG -all
+ENV WINEDEBUG err-all
 ENV PROGRAM_FILES "$WINEPREFIX/drive_c/POK"
 ENV ASA_DIR "$PROGRAM_FILES/Steam/steamapps/common/ARK Survival Ascended Dedicated Server/"
 
