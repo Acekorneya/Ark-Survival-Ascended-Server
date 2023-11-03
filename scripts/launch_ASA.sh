@@ -121,9 +121,52 @@ save_build_id() {
     echo "Saved build ID: $build_id"
 }
 
-# Start the server
+# Find the last "Log file open" entry and return the line number
+find_new_log_entries() {
+    LOG_FILE="$ASA_DIR/Saved/Logs/ShooterGame.log"
+    LAST_ENTRY_LINE=$(grep -n "Log file open" "$LOG_FILE" | tail -1 | cut -d: -f1)
+    echo $((LAST_ENTRY_LINE + 1)) # Return the line number after the last "Log file open"
+}
+
+# Start the server and tail the log file
 start_server() {
-    sudo -u games wine "$ASA_DIR/Binaries/Win64/ArkAscendedServer.exe" $MAP_PATH?listen?SessionName=${SESSION_NAME}?Port=${ASA_PORT}?QueryPort=${QUERY_PORT}?MaxPlayers=${MAX_PLAYERS}?ServerAdminPassword=${SERVER_ADMIN_PASSWORD} -clusterid=${CLUSTER_ID} -ClusterDirOverride=$CLUSTER_DIR_OVERRIDE -servergamelog -servergamelogincludetribelogs -ServerRCONOutputTribeLogs -NotifyAdminCommandsInChat -useallavailablecores -usecache -nosteamclient -game -server -log
+    
+    # Check if the log file exists and rename it to archive
+    local old_log_file="$ASA_DIR/Saved/Logs/ShooterGame.log"
+    if [ -f "$old_log_file" ]; then
+        local timestamp=$(date +%F-%T)
+        mv "$old_log_file" "${old_log_file}_$timestamp"
+    fi
+
+    sudo -u games wine "$ASA_DIR/Binaries/Win64/ArkAscendedServer.exe" $MAP_PATH?listen?SessionName=${SESSION_NAME}?Port=${ASA_PORT}?QueryPort=${QUERY_PORT}?MaxPlayers=${MAX_PLAYERS}?ServerAdminPassword=${SERVER_ADMIN_PASSWORD} -clusterid=${CLUSTER_ID} -ClusterDirOverride=$CLUSTER_DIR_OVERRIDE -servergamelog -servergamelogincludetribelogs -ServerRCONOutputTribeLogs -NotifyAdminCommandsInChat -useallavailablecores -usecache -nosteamclient -game -server -log 2>/dev/null &
+    # Server PID
+    SERVER_PID=$!
+
+      # Wait for the log file to be created with a timeout
+    LOG_FILE="$ASA_DIR/Saved/Logs/ShooterGame.log"
+    TIMEOUT=120
+    while [[ ! -f "$LOG_FILE" && $TIMEOUT -gt 0 ]]; do
+        sleep 1
+        ((TIMEOUT--))
+    done
+    if [[ ! -f "$LOG_FILE" ]]; then
+        echo "Log file not found after waiting. Please check server status."
+        return
+    fi
+    
+    # Find the line to start tailing from
+    START_LINE=$(find_new_log_entries)
+
+    # Tail the ShooterGame log file starting from the new session entries
+    tail -n +"$START_LINE" -F "$ASA_DIR/Saved/Logs/ShooterGame.log" &
+    TAIL_PID=$!
+
+    # Wait for the server to exit
+    wait $SERVER_PID
+
+    # Kill the tail process when the server stops
+    kill $TAIL_PID
+
 }
 
 # Main function
