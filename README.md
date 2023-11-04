@@ -18,7 +18,7 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 | `MAP_NAME`               | `TheIsland`                | The map name (`TheIsland')           |
 | `SESSION_NAME`           |   `Server_name`                        | The session name for the server                          |
 | `SERVER_ADMIN_PASSWORD`  |  `MyPassword`                          | The admin password for the server                        |                                               |
-| `DNL_PORT`               | `7777`                     | The game port for the server                             |
+| `ASA_PORT`               | `7777`                     | The game port for the server                             |
 | `QUERY_PORT`             | `27015`                    | The query port for the server                            |
 | `MAX_PLAYERS`            | `127`                       | Max allowed players                                      |
 | `CLUSTER_ID`             |  `cluster`                 | The Cluster ID for the server                            |
@@ -106,7 +106,7 @@ If you're planning to change the volume directories, create those directories ma
 Then, run the following command to start the server:
 
 ```bash
-docker compose up
+sudo docker compose up
 ```
 
 ---
