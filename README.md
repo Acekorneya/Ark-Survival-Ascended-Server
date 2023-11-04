@@ -106,7 +106,7 @@ If you're planning to change the volume directories, create those directories ma
 Then, run the following command to start the server:
 
 ```bash
-docker compose up
+sudo docker compose up
 ```
 
 ---
