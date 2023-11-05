@@ -59,7 +59,7 @@ When you run the docker compose up it should create this folders in the same fol
 
 - CPU: min 2 CPUs
 - RAM: > 16 GB
-- Disk: ~20 GB
+- Disk: ~50 GB
 
 ---
 
