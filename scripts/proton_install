@@ -1,0 +1,19 @@
+#!/bin/bash
+
+# Set the Proton version
+PROTON_VERSION="Proton-6.*"
+
+# Download the latest release
+wget $(curl -s https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases/latest | grep 'browser_' | cut -d\" -f4)
+
+# Extract the downloaded file
+tar -xf $PROTON_VERSION.tar.gz
+
+# Create the compatibilitytools.d directory if it doesn't exist
+mkdir -p ~/.steam/root/compatibilitytools.d/
+
+# Move the extracted folder to the compatibilitytools.d directory
+mv $PROTON_VERSION ~/.steam/root/compatibilitytools.d/
+
+# Clean up
+rm $PROTON_VERSION.tar.gz
