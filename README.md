@@ -122,7 +122,7 @@ IF you see this at the end of you logs
 ```
 asa_pve_Server | [2023.11.06-03.55.48:449][  1]Allocator Stats for binned2 are not in this build set BINNED2_ALLOCATOR_STATS 1 in MallocBinned2.cpp
 ```
-you need to run this coomand first 
+you need to run this command first 
 ```
 sysctl -w vm.max_map_count=262144
 ```
