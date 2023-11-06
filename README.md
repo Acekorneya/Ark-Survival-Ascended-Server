@@ -117,6 +117,19 @@ Advanced Config
 For custom settings, edit GameUserSettings.ini in ASA/Saved/Config/WindowsServer. Modify and restart the container.
 
 ---
+### Temp Fix ###
+IF you see this at the end of you logs 
+```
+asa_pve_Server | [2023.11.06-03.55.48:449][  1]Allocator Stats for binned2 are not in this build set BINNED2_ALLOCATOR_STATS 1 in MallocBinned2.cpp
+```
+you need to run this coomand first 
+```
+sysctl -w vm.max_map_count=262144
+```
+if you want to make it perment 
+```
+echo "vm.max_map_count=262144" >> /etc/sysctl.conf && sysctl -p
+```
 
 #### Comments
 as of right now you will need to copy the Game.Ini Files from a single player game and place them in the same Folder as the GameUserSetting.Ini
