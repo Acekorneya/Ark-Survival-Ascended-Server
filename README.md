@@ -128,7 +128,7 @@ sysctl -w vm.max_map_count=262144
 ```
 if you want to make it perment 
 ```
-echo "vm.max_map_count=262144" >> /etc/sysctl.conf && sysctl -p
+sudo -s echo "vm.max_map_count=262144" >> /etc/sysctl.conf && sysctl -p
 ```
 
 #### Comments
