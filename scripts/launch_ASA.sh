@@ -138,7 +138,15 @@ start_server() {
         mv "$old_log_file" "${old_log_file}_$timestamp"
     fi
 
-    sudo -u games wine "$ASA_DIR/Binaries/Win64/ArkAscendedServer.exe" $MAP_PATH?listen?SessionName=${SESSION_NAME}?Port=${ASA_PORT}?QueryPort=${QUERY_PORT}?MaxPlayers=${MAX_PLAYERS}?ServerAdminPassword=${SERVER_ADMIN_PASSWORD} -clusterid=${CLUSTER_ID} -ClusterDirOverride=$CLUSTER_DIR_OVERRIDE -servergamelog -servergamelogincludetribelogs -ServerRCONOutputTribeLogs -NotifyAdminCommandsInChat -nosteamclient 2>/dev/null &
+     # Add BattleEye parameter based on environment variable
+    if [ "$BATTLEEYE" = "TRUE" ]; then
+        BATTLEEYE_PARAM="-UseBattlEye"
+    else
+        BATTLEEYE_PARAM="-NoBattlEye"
+    fi
+    
+    sudo -u games wine "$ASA_DIR/Binaries/Win64/ArkAscendedServer.exe" $MAP_PATH?listen?SessionName=${SESSION_NAME}?Port=${ASA_PORT}?QueryPort=${QUERY_PORT}?MaxPlayers=${MAX_PLAYERS}?ServerAdminPassword=${SERVER_ADMIN_PASSWORD} -clusterid=${CLUSTER_ID} -ClusterDirOverride=$CLUSTER_DIR_OVERRIDE -servergamelog -servergamelogincludetribelogs -ServerRCONOutputTribeLogs -NotifyAdminCommandsInChat -nosteamclient -mods=${MOD_IDS} $BATTLEEYE_PARAM 2>/dev/null &
+    
     # Server PID
     SERVER_PID=$!
 
@@ -181,4 +189,12 @@ main() {
     sleep infinity
 }
 
+main   initialize_variables
+    install_steamcmd
+    install_proton
+    update_server
+    start_server
+}
+
+# Start the main execution
 main
