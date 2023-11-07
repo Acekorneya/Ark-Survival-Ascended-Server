@@ -130,7 +130,6 @@ find_new_log_entries() {
 
 # Start the server and tail the log file
 start_server() {
-    
     # Check if the log file exists and rename it to archive
     local old_log_file="$ASA_DIR/Saved/Logs/ShooterGame.log"
     if [ -f "$old_log_file" ]; then
@@ -138,21 +137,35 @@ start_server() {
         mv "$old_log_file" "${old_log_file}_$timestamp"
     fi
 
-     # Add BattleEye parameter based on environment variable
-    if [ "$BATTLEEYE" = "TRUE" ]; then
-        BATTLEEYE_PARAM="-UseBattlEye"
-    else
-        BATTLEEYE_PARAM="-NoBattlEye"
+    # Initialize the mods argument to an empty string
+    local mods_arg=""
+    # Initialize the battleye argument to an empty string
+    local battleye_arg=""
+
+    # Check if MOD_IDS is set and not empty
+    if [ -n "$MOD_IDS" ]; then
+        mods_arg="-mods=${MOD_IDS}"
     fi
-    
-    sudo -u games wine "$ASA_DIR/Binaries/Win64/ArkAscendedServer.exe" $MAP_PATH?listen?SessionName=${SESSION_NAME}?Port=${ASA_PORT}?QueryPort=${QUERY_PORT}?MaxPlayers=${MAX_PLAYERS}?ServerAdminPassword=${SERVER_ADMIN_PASSWORD} -clusterid=${CLUSTER_ID} -ClusterDirOverride=$CLUSTER_DIR_OVERRIDE -servergamelog -servergamelogincludetribelogs -ServerRCONOutputTribeLogs -NotifyAdminCommandsInChat -nosteamclient -mods=${MOD_IDS} $BATTLEEYE_PARAM 2>/dev/null &
-    
+
+    # Check the USE_BATTLEYE environment variable and set the appropriate flag
+    if [ "$BATTLEEYE" = "TRUE" ]; then
+        battleye_arg="-UseBattlEye"
+    elif [ "$BATTLEEYE" = "FALSE" ]; then
+        battleye_arg="-NoBattlEye"
+    fi
+
+    # Start the server with the conditional mods and battleye arguments
+    sudo -u games wine "$ASA_DIR/Binaries/Win64/ArkAscendedServer.exe" \
+        $MAP_PATH?listen?SessionName=${SESSION_NAME}?Port=${ASA_PORT}?QueryPort=${QUERY_PORT}?MaxPlayers=${MAX_PLAYERS}?ServerAdminPassword=${SERVER_ADMIN_PASSWORD} \
+        -clusterid=${CLUSTER_ID} -ClusterDirOverride=$CLUSTER_DIR_OVERRIDE \
+        -servergamelog -servergamelogincludetribelogs -ServerRCONOutputTribeLogs -NotifyAdminCommandsInChat -nosteamclient \
+        $mods_arg $battleye_arg 2>/dev/null &
     # Server PID
     SERVER_PID=$!
 
-      # Wait for the log file to be created with a timeout
-    LOG_FILE="$ASA_DIR/Saved/Logs/ShooterGame.log"
-    TIMEOUT=120
+    # Wait for the log file to be created with a timeout
+    local LOG_FILE="$ASA_DIR/Saved/Logs/ShooterGame.log"
+    local TIMEOUT=120
     while [[ ! -f "$LOG_FILE" && $TIMEOUT -gt 0 ]]; do
         sleep 1
         ((TIMEOUT--))
@@ -163,19 +176,19 @@ start_server() {
     fi
     
     # Find the line to start tailing from
-    START_LINE=$(find_new_log_entries)
+    local START_LINE=$(find_new_log_entries)
 
     # Tail the ShooterGame log file starting from the new session entries
-    tail -n +"$START_LINE" -F "$ASA_DIR/Saved/Logs/ShooterGame.log" &
-    TAIL_PID=$!
+    tail -n +"$START_LINE" -F "$LOG_FILE" &
+    local TAIL_PID=$!
 
     # Wait for the server to exit
     wait $SERVER_PID
 
     # Kill the tail process when the server stops
     kill $TAIL_PID
-
 }
+
 
 # Main function
 main() {
