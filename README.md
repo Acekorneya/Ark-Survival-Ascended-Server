@@ -81,6 +81,7 @@ services:
     environment:
       - PUID=1001
       - PGID=1001
+      - BATTLEEYE=FALSE  # Set to TRUE to use BattleEye, FALSE to not use BattleEye
       - MAP_NAME=TheIsland
       - SESSION_NAME=Server_name
       - SERVER_ADMIN_PASSWORD=MyPassword
@@ -88,6 +89,7 @@ services:
       - QUERY_PORT=27015
       - MAX_PLAYERS=70
       - CLUSTER_ID=cluster
+      - MOD_IDS=          # Add your mod IDs here, separated by commas, e.g., "123456789,987654321"
     ports:
       - "7777:7777/tcp"
       - "7777:7777/udp"
