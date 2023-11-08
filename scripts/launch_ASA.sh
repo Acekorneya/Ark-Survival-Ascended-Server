@@ -202,12 +202,5 @@ main() {
     sleep infinity
 }
 
-main   initialize_variables
-    install_steamcmd
-    install_proton
-    update_server
-    start_server
-}
-
 # Start the main execution
 main
