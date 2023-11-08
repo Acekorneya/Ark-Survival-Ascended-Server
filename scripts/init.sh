@@ -37,11 +37,5 @@ for DIR in "$ASA_DIR" "$ARK_DIR" "$CLUSTER_DIR"; do
     chmod -R 755 "$DIR"
 done
 
-# Adjust permissions for build_id.txt if it exists
-BUILD_ID_FILE="$ASA_DIR/build_id.txt"
-if [ -f "$BUILD_ID_FILE" ]; then
-    chown $PUID:$PGID "$BUILD_ID_FILE"
-fi
-
 # Continue with the main application
 exec /usr/games/scripts/launch_ASA.sh
