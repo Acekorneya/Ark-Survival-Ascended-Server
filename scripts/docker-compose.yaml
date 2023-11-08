@@ -1,0 +1,31 @@
+version: '2.4'
+
+services:
+  asaserver:
+    build: .
+    image: acekorneya/asa_server:latest
+    container_name: asa_test
+    restart: unless-stopped
+    environment:
+      - PUID=1001
+      - PGID=1001
+      - BATTLEEYE=FALSE 
+      - MAP_NAME=TheIsland
+      - SESSION_NAME=POK_Test_linux
+      - SERVER_ADMIN_PASSWORD=MyPassword
+      - ASA_PORT=8781
+      - QUERY_PORT=27018
+      - MAX_PLAYERS=70
+      - CLUSTER_ID=cluster
+      - MOD_IDS=928621,928793
+    ports:
+      - "8781:8781/tcp"
+      - "8781:8781/udp"
+      - "27018:27018/tcp"
+      - "27018:27018/udp"
+    volumes:
+      - "./ASA:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server/ShooterGame"
+      - "./ARK Survival Ascended Dedicated Server:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server"
+      - "./Cluster:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ShooterGame"
+    memswap_limit: 16G
+    mem_limit: 12G  

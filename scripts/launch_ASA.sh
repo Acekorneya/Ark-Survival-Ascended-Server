@@ -10,7 +10,7 @@ initialize_variables() {
     CLUSTER_DIR_OVERRIDE="$CLUSTER_DIR"
     SOURCE_DIR="/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server/"
     DEST_DIR="$ASA_DIR/Binaries/Win64/"
-    BUILD_ID_FILE="$ASA_DIR/build_id.txt"
+    PERSISTENT_ACF_FILE="$ASA_DIR/appmanifest_$APPID.acf"
 }
 
 # Start xvfb on display :0
@@ -18,8 +18,8 @@ start_xvfb() {
     Xvfb :0 -screen 0 1024x768x16 &
 }
 
+# Check if the Cluster directory exists
 cluster_dir() {
-    # Check if the Cluster directory exists
     if [ -d "$CLUSTER_DIR" ]; then
         echo "Cluster directory already exists. Skipping folder creation."
     else
@@ -40,85 +40,52 @@ determine_map_path() {
     fi
 }
 
-install_server() {
-    local saved_build_id
-
-    # Try to retrieve the saved build ID
-    if [ -f "$BUILD_ID_FILE" ]; then
-        saved_build_id=$(cat "$BUILD_ID_FILE")
+# Get the build ID from the appmanifest.acf file
+get_build_id_from_acf() {
+    if [[ -f "$PERSISTENT_ACF_FILE" ]]; then
+        local build_id=$(grep -E "^\s+\"buildid\"\s+" "$PERSISTENT_ACF_FILE" | grep -o '[[:digit:]]*')
+        echo "$build_id"
     else
-        echo "No saved build ID found. Will proceed to install the server."
-        saved_build_id=""
-    fi
-
-    # Get the current build ID
-    local current_build_id
-    current_build_id=$(get_current_build_id)
-    if [ -z "$current_build_id" ]; then
-        echo "Unable to retrieve current build ID. Cannot proceed with installation."
-        return 1
-    fi
-
-    # Compare the saved build ID with the current build ID
-    if [ "$saved_build_id" != "$current_build_id" ]; then
-        echo "Saved build ID ($saved_build_id) does not match current build ID ($current_build_id). Installing or updating the server..."
-        sudo -u games wine "$PROGRAM_FILES/Steam/steamcmd.exe" +login "$USERNAME" +force_install_dir "$ASA_DIR" +app_update "$APPID" +@sSteamCmdForcePlatformType windows +quit
-
-        # Save the new build ID
-        save_build_id "$current_build_id"
-    else
-        echo "Server is up to date. Skipping installation."
+        echo ""
     fi
 }
 
-
-
- # Get the current build ID from SteamCMD API
+# Get the current build ID from SteamCMD API
 get_current_build_id() {
-    local build_id
-    build_id=$(curl -sX GET "https://api.steamcmd.net/v1/info/$APPID" | jq -r ".data.\"$APPID\".depots.branches.public.buildid")
-    
-    # Check if the build ID is valid
-    if [ -z "$build_id" ] || [ "$build_id" = "null" ]; then
-        echo "Unable to retrieve current build ID."
-        return 1
-    fi
-    
+    local build_id=$(curl -sX GET "https://api.steamcmd.net/v1/info/$APPID" | jq -r ".data.\"$APPID\".depots.branches.public.buildid")
     echo "$build_id"
-    return 0
 }
 
-# Check for updates and update the server if necessary
-update_server() {
-    CURRENT_BUILD_ID=$(get_current_build_id)
-    
-    if [ -z "$CURRENT_BUILD_ID" ]; then
-        echo "Unable to retrieve current build ID. Skipping update check."
-        return
-    fi
+install_server() {
+    local saved_build_id=$(get_build_id_from_acf)
+    local current_build_id=$(get_current_build_id)
 
-    if [ ! -f "$BUILD_ID_FILE" ]; then
-        echo "No previous build ID found. Assuming first run and skipping update check."
-        save_build_id "$CURRENT_BUILD_ID"
-        return
-    fi
-
-    PREVIOUS_BUILD_ID=$(cat "$BUILD_ID_FILE")
-    if [ "$CURRENT_BUILD_ID" != "$PREVIOUS_BUILD_ID" ]; then
-        echo "Update available (Previous: $PREVIOUS_BUILD_ID, Current: $CURRENT_BUILD_ID). Installing update..."
+    if [ -z "$saved_build_id" ] || [ "$saved_build_id" != "$current_build_id" ]; then
+        echo "New server installation or update required..."
+        echo "Current build ID is $current_build_id, initiating installation/update..."
         sudo -u games wine "$PROGRAM_FILES/Steam/steamcmd.exe" +login "$USERNAME" +force_install_dir "$ASA_DIR" +app_update "$APPID" +@sSteamCmdForcePlatformType windows +quit
-        save_build_id "$CURRENT_BUILD_ID"
+        # Copy the acf file to the persistent volume
+        cp "/usr/games/.wine/drive_c/POK/Steam/steamapps/appmanifest_$APPID.acf" "$PERSISTENT_ACF_FILE"
+        echo "Installation or update completed successfully."
     else
-        echo "Continuing with server start."
+        echo "No update required. Server build ID $saved_build_id is up to date."
     fi
 }
 
-# Save the build ID to a file and change ownership to the games user
-save_build_id() {
-    local build_id=$1
-    echo "$build_id" > "$BUILD_ID_FILE"
-    chown $PUID:$PGID "$BUILD_ID_FILE"
-    echo "Saved build ID: $build_id"
+update_server() {
+    local saved_build_id=$(get_build_id_from_acf)
+    local current_build_id=$(get_current_build_id)
+
+    if [ -z "$saved_build_id" ] || [ "$saved_build_id" != "$current_build_id" ]; then
+        echo "Server update detected..."
+        echo "Updating server to build ID $current_build_id from $saved_build_id..."
+        sudo -u games wine "$PROGRAM_FILES/Steam/steamcmd.exe" +login "$USERNAME" +force_install_dir "$ASA_DIR" +app_update "$APPID" +@sSteamCmdForcePlatformType windows +quit
+        # Copy the acf file to the persistent volume
+        cp "/usr/games/.wine/drive_c/POK/Steam/steamapps/appmanifest_$APPID.acf" "$PERSISTENT_ACF_FILE"
+        echo "Server update completed successfully."
+    else
+        echo "Server is already running the latest build ID $saved_build_id. Proceeding to start the server."
+    fi
 }
 
 # Find the last "Log file open" entry and return the line number
