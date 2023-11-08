@@ -99,8 +99,7 @@ services:
       - "./ASA:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server/ShooterGame"
       - "./ARK Survival Ascended Dedicated Server:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server"
       - "./Cluster:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ShooterGame"
-    memswap_limit: 16G
-    mem_limit: 12G   
+    memswap_limit: 16G  
 ```
 
 If you're planning to change the volume directories, create those directories manually before starting the service.
