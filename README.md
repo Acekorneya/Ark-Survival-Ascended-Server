@@ -140,3 +140,14 @@ as of right now you will need to copy the Game.Ini Files from a single player ga
 docker compose down 
 docker compose up 
 then the program should automatically start updating the server when it starts up again
+
+## Star History
+
+<a href="https://star-history.com/#Acekorneya/Ark-Survival-Ascended-Server&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Acekorneya/Ark-Survival-Ascended-Server&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Acekorneya/Ark-Survival-Ascended-Server&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Acekorneya/Ark-Survival-Ascended-Server&type=Date" />
+  </picture>
+</a>
+
