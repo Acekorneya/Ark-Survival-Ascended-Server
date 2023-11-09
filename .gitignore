@@ -1,3 +1,9 @@
+# default docker volumes
+ARK Survival Ascended Dedicated Server/
+ASA/
+Cluster/
+
+# dotnet related
 .vscode/
 bin/
 obj/
