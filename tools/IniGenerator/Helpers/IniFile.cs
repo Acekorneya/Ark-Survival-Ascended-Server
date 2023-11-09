@@ -136,6 +136,12 @@ public class IniFile
                 iniBuilder.AppendLine($"{option.Key}={option.Value ?? string.Empty}");
             }
         }
+        var filePath = Path.GetDirectoryName(fileName) ?? 
+            throw new DirectoryNotFoundException($"Unknown file path format {fileName}");
+        if(!Directory.Exists(filePath))
+        {
+            Directory.CreateDirectory(filePath);
+        }
         File.WriteAllText(fileName, iniBuilder.ToString());
     }
 }
