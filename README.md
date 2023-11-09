@@ -131,7 +131,7 @@ if you want to make it perment
 ```
 sudo -s echo "vm.max_map_count=262144" >> /etc/sysctl.conf && sysctl -p
 ```
-###Hypervisors
+### Hypervisors
 If you are using Proxmox as your virtual host make sure to set the CPU Type to "host" in your VM elsewise you'll get errors with the server.
 
 #### Comments
