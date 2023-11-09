@@ -98,6 +98,8 @@ find_new_log_entries() {
 # Update the ini file
 update_ini() {
     /IniGenerator/IniGenerator
+    chown ${PUID}:${PGID} -R "${IniConfiguration__IniFilesPath}"
+    chmod -R 755 "${IniConfiguration__IniFilesPath}"
 }
 
 # Start the server and tail the log file
