@@ -1,3 +1,11 @@
+# Build the ini generator
+FROM mcr.microsoft.com/dotnet/sdk:7.0 AS build-env
+WORKDIR /App
+
+COPY ./tools/IniGenerator ./
+RUN dotnet restore
+RUN dotnet publish -c Release -o out
+
 # Use an image that has Wine installed to run Windows applications
 FROM scottyhardy/docker-wine
 
@@ -12,6 +20,8 @@ ENV WINEPREFIX /usr/games/.wine
 ENV WINEDEBUG err-all
 ENV PROGRAM_FILES "$WINEPREFIX/drive_c/POK"
 ENV ASA_DIR "$PROGRAM_FILES/Steam/steamapps/common/ARK Survival Ascended Dedicated Server/"
+ENV IniConfiguration__EnvironmentPrefix "ASAINI_"
+ENV IniConfiguration__IniFilesPath "${ASA_DIR}ShooterGame/Saved/Config/WindowsServer/"
 
 # Create required directories
 RUN mkdir -p "$PROGRAM_FILES"
@@ -62,6 +72,9 @@ RUN sed -i 's/\r//' /usr/games/scripts/*.sh
 
 # Make scripts executable
 RUN chmod +x /usr/games/scripts/*.sh
+
+# Copy the IniGenerator files
+COPY --from=build-env /App/out /IniGenerator
 
 # Set the entry point
 ENTRYPOINT ["/usr/games/scripts/init.sh"]
