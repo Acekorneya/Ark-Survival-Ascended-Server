@@ -24,6 +24,7 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 | `CLUSTER_ID`             |  `cluster`                 | The Cluster ID for the server                            |
 
 ---
+Fore advanced configuration and setting ini files see the [Additional Server Settings](#Additional-Server-Settings) section. 
 
 #### Additional Information
 
@@ -115,7 +116,14 @@ sudo docker compose up
 #### Additional server settings 
 
 Advanced Config
-For custom settings, edit GameUserSettings.ini in ASA/Saved/Config/WindowsServer. Modify and restart the container.
+For custom settings, add corresponding environment variable in the following form ASAINI_FileName__SectionName__SettingKey.
+If you want to change the settings to enable the crosshair you would for example set the environment as follows:
+```yaml
+services:
+  asaserver:
+    environment:
+      - ASAINI_GameUserSettings__ServerSettings__ServerCrosshair=True
+```
 
 ---
 ### Temp Fix ###
@@ -132,9 +140,6 @@ if you want to make it perment
 sudo -s echo "vm.max_map_count=262144" >> /etc/sysctl.conf && sysctl -p
 ```
 ### Hypervisors
-If you are using Proxmox as your virtual host make sure to set the CPU Type to "host" in your VM elsewise you'll get errors with the server.
-
-#### Hypervisors
 If you are using Proxmox as your virtual host make sure to set the CPU Type to "host" in your VM elsewise you'll get errors with the server.
 
 #### Comments

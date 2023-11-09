@@ -95,6 +95,11 @@ find_new_log_entries() {
     echo $((LAST_ENTRY_LINE + 1)) # Return the line number after the last "Log file open"
 }
 
+# Update the ini file
+update_ini() {
+    /IniGenerator/IniGenerator
+}
+
 # Start the server and tail the log file
 start_server() {
     # Check if the log file exists and rename it to archive
@@ -165,6 +170,7 @@ main() {
     update_server
     determine_map_path
     cluster_dir
+    update_ini
     start_server
     sleep infinity
 }
