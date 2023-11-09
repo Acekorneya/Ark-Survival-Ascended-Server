@@ -23,8 +23,9 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 | `MAX_PLAYERS`            | `127`                       | Max allowed players                                      |
 | `CLUSTER_ID`             |  `cluster`                 | The Cluster ID for the server                            |
 
----
 Fore advanced configuration and setting ini files see the [Additional Server Settings](#Additional-Server-Settings) section. 
+
+---
 
 #### Additional Information
 
