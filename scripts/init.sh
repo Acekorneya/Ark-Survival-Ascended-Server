@@ -28,6 +28,12 @@ check_vm_max_map_count() {
 # Check vm.max_map_count before proceeding
 check_vm_max_map_count
 
+# Fix games user uid & gid then re set the owner of wine folders
+groupmod -o -g $PGID games
+usermod -o -u $PUID -g games games
+chown -R games:games "$WINEPREFIX"
+
+
 # Create directories if they do not exist and set permissions
 for DIR in "$ASA_DIR" "$ARK_DIR" "$CLUSTER_DIR"; do
     if [ ! -d "$DIR" ]; then
