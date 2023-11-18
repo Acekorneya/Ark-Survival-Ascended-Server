@@ -23,12 +23,16 @@ RUN usermod --shell /bin/bash games && chown -R games:games /usr/games
 RUN groupmod -o -g $PGID games && \
     usermod -o -u $PUID -g games games
 
-# Install jq and curl
+# Install jq, curl, and dependencies for rcon-cli
 USER root
+
 RUN apt-get update && \
-    apt-get install -y jq curl && \
-    rm -rf /var/lib/apt/lists/*
-    
+    apt-get install -y jq curl unzip nano && \
+    rm -rf /var/lib/apt/lists/* && \
+    curl -L https://github.com/itzg/rcon-cli/releases/download/1.6.3/rcon-cli_1.6.3_linux_amd64.tar.gz | tar xvz && \
+    mv rcon-cli /usr/local/bin/ && \
+    chmod +x /usr/local/bin/rcon-cli
+
 # Switch to games user
 USER games
 
@@ -63,5 +67,5 @@ RUN sed -i 's/\r//' /usr/games/scripts/*.sh
 # Make scripts executable
 RUN chmod +x /usr/games/scripts/*.sh
 
-# Set the entry point
+# Set the entry point to Supervisord
 ENTRYPOINT ["/usr/games/scripts/init.sh"]

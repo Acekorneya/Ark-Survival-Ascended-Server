@@ -37,5 +37,8 @@ for DIR in "$ASA_DIR" "$ARK_DIR" "$CLUSTER_DIR"; do
     chmod -R 755 "$DIR"
 done
 
+# Start monitor_ark_server.sh in the background
+/usr/games/scripts/monitor_ark_server.sh &
+
 # Continue with the main application
 exec /usr/games/scripts/launch_ASA.sh
