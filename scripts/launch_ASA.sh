@@ -180,7 +180,7 @@ start_server() {
     if [ "$RCON_ENABLED" = "TRUE" ]; then
         rcon_args="?RCONEnabled=True?RCONPort=${RCON_PORT}"
     elif [ "$RCON_ENABLED" = "FALSE" ]; then
-        rcon_args="?RCONEnabled=False?"
+        rcon_args="?RCONEnabled=False"
     fi
     
     if [ -n "$CUSTOM_SERVER_ARGS" ]; then
