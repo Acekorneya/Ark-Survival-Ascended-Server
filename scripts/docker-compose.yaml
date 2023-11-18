@@ -1,0 +1,32 @@
+version: '2.4'
+
+services:
+  asaserver:
+    build: .
+    image: asa_server:latest
+    container_name: asa_Server
+    restart: unless-stopped
+    environment:
+      - PUID=1001
+      - PGID=1001
+      - BATTLEEYE=TRUE
+      - RCON_ENABLED=TRUE  
+      - MAP_NAME=TheIsland
+      - SESSION_NAME=POK-PVP-Community-ARK-Server-NO-WIPE
+      - SERVER_ADMIN_PASSWORD=Korneya512!
+      - ASA_PORT=8777
+      - RCON_PORT=27020
+      - MAX_PLAYERS=70
+      - CLUSTER_ID=kny
+      - MOD_IDS=
+      - CUSTOM_SERVER_ARGS=
+    ports:
+      - "8777:8777/tcp"
+      - "8777:8777/udp"
+    volumes:
+      - "/home/factorioserver/ASA/ARK_Servers/ASA:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server/ShooterGame"
+      - "/home/factorioserver/ASA/ARK_Servers/ARK Survival Ascended Dedicated Server:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server"
+      - "/home/factorioserver/ASA_Cluster/Cluster:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ShooterGame"
+    cpuset: 8-11  # Pinning CPUs to threads 10-12
+    memswap_limit: 16G
+    mem_limit: 12G  # Setting memory limit to 12GB
