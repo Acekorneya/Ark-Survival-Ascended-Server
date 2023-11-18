@@ -27,7 +27,7 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 
 #### Additional Information
 
-- **PUID and PGID**: These are important for setting the permissions of the folders that Docker will use. Make sure to set these values based on your host machine's user and group IDs.
+- **PUID and PGID**: These are important for setting the permissions of the folders that Docker will use. DONT CHANGE THEM.
   
 - **Folder Creation**: Before starting the Docker Compose file, make sure to manually create any folders that you'll be using for volumes, especially if you're overriding the default folders.
 
