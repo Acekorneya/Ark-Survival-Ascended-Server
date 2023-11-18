@@ -91,7 +91,7 @@ services:
       - MAX_PLAYERS=70
       - CLUSTER_ID=cluster
       - MOD_IDS=                # Add your mod IDs here, separated by commas, e.g., 123456789,987654321
-      - CUSTOM_SERVER_ARGS=     #If You need to add more Custom Args Make Sure Pass them As STRING EX: "-ForceRespawnDinos -ForceAllowCaveFlyers"
+      - CUSTOM_SERVER_ARGS=     #If You need to add more Custom Args -ForceRespawnDinos -ForceAllowCaveFlyers
     ports:
       - "7777:7777/tcp"
       - "7777:7777/udp"
@@ -100,7 +100,7 @@ services:
       - "./ARK Survival Ascended Dedicated Server:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server"
       - "./Cluster:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ShooterGame"
     mem_limit: 16G 
- 
+
 ```
 
 If you're planning to change the volume directories, create those directories manually before starting the service.
