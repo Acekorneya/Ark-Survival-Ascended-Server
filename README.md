@@ -13,14 +13,18 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 
 | Variable                 | Default                    | Description                                              |
 | ------------------------ | -------------------------- | -------------------------------------------------------- |
-| `PUID`                   | `1001`                     | The UID to run server as                                 |
-| `PGID`                   | `1001`                     | The GID to run server as                                 |
-| `MAP_NAME`               | `TheIsland`                | The map name (`TheIsland')           |
+| `PUID`                   | `1001`                     | The UID to run server as Dont Change                                |
+| `PGID`                   | `1001`                     | The GID to run server as Dont Change                                  |
+| `BATTLEEYE`                   | `TRUE`                     | Set to TRUE to use BattleEye, FALSE to not use BattleEye                                 |
+| `RCON_ENABLED`                   | `TRUE`                     | Needed for Graceful Shutdown                                 |
+| `MAP_NAME`               | `TheIsland`                | The map name (`TheIsland') Or Custom Map Name Can Be Enter aswell          |
 | `SESSION_NAME`           |   `Server_name`                        | The session name for the server                          |
 | `SERVER_ADMIN_PASSWORD`  |  `MyPassword`                          | The admin password for the server                        |                                               |
 | `ASA_PORT`               | `7777`                     | The game port for the server                             |
 | `MAX_PLAYERS`            | `127`                       | Max allowed players                                      |
 | `CLUSTER_ID`             |  `cluster`                 | The Cluster ID for the server                            |
+| `MOD_IDS`             |  ``                 | Add your mod IDs here, separated by commas, e.g., 123456789,987654321                            |
+| `CUSTOM_SERVER_ARGS`             |  ``                 | If You need to add more Custom Args -ForceRespawnDinos -ForceAllowCaveFlyers                           |
 
 ---
 
