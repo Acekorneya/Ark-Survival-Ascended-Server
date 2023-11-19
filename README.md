@@ -19,7 +19,6 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 | `SESSION_NAME`           |   `Server_name`                        | The session name for the server                          |
 | `SERVER_ADMIN_PASSWORD`  |  `MyPassword`                          | The admin password for the server                        |                                               |
 | `ASA_PORT`               | `7777`                     | The game port for the server                             |
-| `QUERY_PORT`             | `27015`                    | The query port for the server                            |
 | `MAX_PLAYERS`            | `127`                       | Max allowed players                                      |
 | `CLUSTER_ID`             |  `cluster`                 | The Cluster ID for the server                            |
 
@@ -39,8 +38,6 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 | ------------ | -------------------------------------- |
 | `7777/tcp`   | Game port                              |
 | `7777/udp`   | Game port                              |
-| `27015/tcp`  | Query port                             |
-| `27015/udp`  | Query port                             |
 
 ---
 
