@@ -7,8 +7,8 @@ services:
     container_name: asa_Server
     restart: unless-stopped
     environment:
-      - PUID=1001               #DONT CHANGE
-      - PGID=1001               #DONT CHANGE
+      - PUID=1001               
+      - PGID=1001               
       - BATTLEEYE=FALSE         # Set to TRUE to use BattleEye, FALSE to not use BattleEye
       - RCON_ENABLED=TRUE       #Needed for Graceful Shutdown
       - MAP_NAME=TheIsland

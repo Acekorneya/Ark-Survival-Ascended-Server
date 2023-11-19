@@ -13,8 +13,8 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 
 | Variable                 | Default                    | Description                                              |
 | ------------------------ | -------------------------- | -------------------------------------------------------- |
-| `PUID`                   | `1001`                     | The UID to run server as Dont Change                                |
-| `PGID`                   | `1001`                     | The GID to run server as Dont Change                                  |
+| `PUID`                   | `1001`                     | The UID to run server as 
+| `PGID`                   | `1001`                     | The GID to run server as
 | `BATTLEEYE`                   | `TRUE`                     | Set to TRUE to use BattleEye, FALSE to not use BattleEye                                 |
 | `RCON_ENABLED`                   | `TRUE`                     | Needed for Graceful Shutdown                                 |
 | `MAP_NAME`               | `TheIsland`                | The map name (`TheIsland') Or Custom Map Name Can Be Enter aswell          |
@@ -30,7 +30,7 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 
 #### Additional Information
 
-- **PUID and PGID**: These are important for setting the permissions of the folders that Docker will use. DONT CHANGE THEM.
+- **PUID and PGID**: These are important for setting the permissions of the folders that Docker will use. Make sure to set these values based on your host machine's user and group ID
   
 - **Folder Creation**: Before starting the Docker Compose file, make sure to manually create any folders that you'll be using for volumes, especially if you're overriding the default folders.
 
@@ -80,8 +80,8 @@ services:
     container_name: asa_Server
     restart: unless-stopped
     environment:
-      - PUID=1001               #DONT CHANGE
-      - PGID=1001               #DONT CHANGE
+      - PUID=1001               
+      - PGID=1001               
       - BATTLEEYE=FALSE         # Set to TRUE to use BattleEye, FALSE to not use BattleEye
       - RCON_ENABLED=TRUE       #Needed for Graceful Shutdown
       - MAP_NAME=TheIsland
