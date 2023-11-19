@@ -127,6 +127,10 @@ shutdown_handler() {
     echo "Saving the world..."
     rcon-cli --host localhost --port $RCON_PORT --password $SERVER_ADMIN_PASSWORD "saveworld"
 
+    # Initial delay to avoid catching a previous save message
+    echo "Waiting a few seconds before checking for save completion..."
+    sleep 5  # Initial delay, can be adjusted based on server behavior
+
     # Wait for save to complete
     echo "Waiting for save to complete..."
     while ! save_complete_check; do
