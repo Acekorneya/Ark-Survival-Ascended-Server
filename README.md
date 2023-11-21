@@ -16,6 +16,7 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 | `PUID`                   | `1001`                     | The UID to run server as 
 | `PGID`                   | `1001`                     | The GID to run server as
 | `BATTLEEYE`                   | `TRUE`                     | Set to TRUE to use BattleEye, FALSE to not use BattleEye                                 |
+| `DISPLAY_POK_MONITOR_MESSAGE`                   | `TRUE`                     | FALSE to suppress the Server Monitor Shutdown                              |
 | `RCON_ENABLED`                   | `TRUE`                     | Needed for Graceful Shutdown                                 |
 | `MAP_NAME`               | `TheIsland`                | The map name (`TheIsland') Or Custom Map Name Can Be Enter aswell          |
 | `SESSION_NAME`           |   `Server_name`                        | The session name for the server                          |
