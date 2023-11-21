@@ -4,12 +4,15 @@ PID_FILE="/usr/games/ark_server.pid"
 LAUNCH_SCRIPT="/usr/games/scripts/launch_ASA.sh"
 INITIAL_STARTUP_DELAY=120  # Delay in seconds
 
+
 # Function to check if the server process is running
 is_process_running() {
     if [ -f "$PID_FILE" ]; then
         local pid=$(cat "$PID_FILE")
         if ps -p $pid > /dev/null 2>&1; then
-            echo "ARK server process (PID: $pid) is running."
+            if [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
+                echo "ARK server process (PID: $pid) is running."
+            fi
             return 0
         else
             echo "ARK server process (PID: $pid) is not running."
