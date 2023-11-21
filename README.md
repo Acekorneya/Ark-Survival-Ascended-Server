@@ -82,8 +82,9 @@ services:
     environment:
       - PUID=1001               
       - PGID=1001               
-      - BATTLEEYE=FALSE         # Set to TRUE to use BattleEye, FALSE to not use BattleEye
-      - RCON_ENABLED=TRUE       #Needed for Graceful Shutdown
+      - BATTLEEYE=FALSE                        # Set to TRUE to use BattleEye, FALSE to not use BattleEye
+      - RCON_ENABLED=TRUE                      #Needed for Graceful Shutdown
+      - DISPLAY_POK_MONITOR_MESSAGE=TRUE       # Or FALSE to suppress the Server Monitor
       - MAP_NAME=TheIsland
       - SESSION_NAME=Server_name
       - SERVER_ADMIN_PASSWORD=MyPassword
@@ -91,8 +92,8 @@ services:
       - RCON_PORT=27020
       - MAX_PLAYERS=70
       - CLUSTER_ID=cluster
-      - MOD_IDS=                # Add your mod IDs here, separated by commas, e.g., 123456789,987654321
-      - CUSTOM_SERVER_ARGS=     #If You need to add more Custom Args -ForceRespawnDinos -ForceAllowCaveFlyers
+      - MOD_IDS=                              # Add your mod IDs here, separated by commas, e.g., 123456789,987654321
+      - CUSTOM_SERVER_ARGS=                   #If You need to add more Custom Args -ForceRespawnDinos -ForceAllowCaveFlyers
     ports:
       - "7777:7777/tcp"
       - "7777:7777/udp"

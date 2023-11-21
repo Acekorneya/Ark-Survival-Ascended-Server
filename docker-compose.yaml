@@ -11,7 +11,7 @@ services:
       - PGID=1001               
       - BATTLEEYE=FALSE                  # Set to TRUE to use BattleEye, FALSE to not use BattleEye
       - RCON_ENABLED=TRUE                #Needed for Graceful Shutdown
-      - DISPLAY_RUNNING_MESSAGE=TRUE     # Or FALSE to suppress the Server Monitor 
+      - DISPLAY_POK_MONITOR_MESSAGE=TRUE     # Or FALSE to suppress the Server Monitor 
       - MAP_NAME=TheIsland
       - SESSION_NAME=Server_name
       - SERVER_ADMIN_PASSWORD=MyPassword
