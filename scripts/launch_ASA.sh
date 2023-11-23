@@ -193,8 +193,8 @@ start_server() {
 
     # Start the server with conditional arguments
     sudo -u games wine "$ASA_DIR/Binaries/Win64/ArkAscendedServer.exe" \
-        $MAP_PATH?listen?$session_name_arg?Port=${ASA_PORT}${rcon_args}?MaxPlayers=${MAX_PLAYERS}?ServerAdminPassword=${SERVER_ADMIN_PASSWORD} \
-        -clusterid=${CLUSTER_ID} -ClusterDirOverride=$CLUSTER_DIR_OVERRIDE \
+        $MAP_PATH?listen?$session_name_arg?Port=${ASA_PORT}${rcon_args}?ServerAdminPassword=${SERVER_ADMIN_PASSWORD} \
+        -WinLiveMaxPlayers=${MAX_PLAYERS} -clusterid=${CLUSTER_ID} -ClusterDirOverride=$CLUSTER_DIR_OVERRIDE \
         -servergamelog -servergamelogincludetribelogs -ServerRCONOutputTribeLogs -NotifyAdminCommandsInChat -nosteamclient $custom_args \
         $mods_arg $battleye_arg 2>/dev/null &
 
