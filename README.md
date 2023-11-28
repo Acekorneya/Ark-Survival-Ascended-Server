@@ -149,10 +149,18 @@ If you are using Proxmox as your virtual host make sure to set the CPU Type to "
 #### SERVER_MANAGER
 If you want to run Rcon_manager.sh download it just place it in the same folder as your docker-compose.yaml make it executable and launch it..
 
-#### updating Sever 
-docker compose down 
-docker compose up 
-then the program should automatically start updating the server when it starts up again
+#### updating the docker image
+Open a terminal or command prompt.
+Run 
+```docker pull acekorneya/asa_server:latest.```
+This command downloads the latest version of the Ark: Survival Ascended Docker image from Docker Hub.
+
+Restart the Docker Container
+First, bring down your current container with 
+```docker-compose down.```
+Then, start it again using 
+```docker-compose up.```
+These commands stop the currently running container and start a new one with the updated image.
 
 ## Star History
 
