@@ -18,10 +18,6 @@ initialize_variables() {
     fi
 }
 
-# Start xvfb on display :0
-start_xvfb() {
-    Xvfb :0 -screen 0 1024x768x16 &
-}
 
 # Check if the Cluster directory exists
 cluster_dir() {
@@ -245,7 +241,6 @@ start_server() {
 # Main function
 main() {
     initialize_variables
-    start_xvfb
     install_server
     update_server
     determine_map_path

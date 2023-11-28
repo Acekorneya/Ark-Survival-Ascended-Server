@@ -77,7 +77,7 @@ is_server_updating() {
 
 # Restart the ARK server
 restart_server() {
-    echo "Gracefully shutting down the ARK server for update..."
+    echo "Gracefully shutting down the ARK server..."
     send_rcon_command "DoExit"
 
     # Wait for a bit to ensure the server has completely shut down
