@@ -11,21 +11,25 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 
 #### Environment Variables
 
-| Variable                 | Default                    | Description                                              |
-| ------------------------ | -------------------------- | -------------------------------------------------------- |
-| `PUID`                   | `1001`                     | The UID to run server as 
-| `PGID`                   | `1001`                     | The GID to run server as
-| `BATTLEEYE`                   | `TRUE`                     | Set to TRUE to use BattleEye, FALSE to not use BattleEye                                 |
-| `DISPLAY_POK_MONITOR_MESSAGE`                   | `TRUE`                     | FALSE to suppress the Server Monitor Shutdown                              |
-| `RCON_ENABLED`                   | `TRUE`                     | Needed for Graceful Shutdown                                 |
-| `MAP_NAME`               | `TheIsland`                | The map name (`TheIsland') Or Custom Map Name Can Be Enter aswell          |
-| `SESSION_NAME`           |   `Server_name`                        | The session name for the server                          |
-| `SERVER_ADMIN_PASSWORD`  |  `MyPassword`                          | The admin password for the server                        |                                               |
-| `ASA_PORT`               | `7777`                     | The game port for the server                             |
-| `MAX_PLAYERS`            | `127`                       | Max allowed players                                      |
-| `CLUSTER_ID`             |  `cluster`                 | The Cluster ID for the server                            |
-| `MOD_IDS`             |                   | Add your mod IDs here, separated by commas, e.g., 123456789,987654321                            |
-| `CUSTOM_SERVER_ARGS`             |                   | If You need to add more Custom Args -ForceRespawnDinos -ForceAllowCaveFlyers                           |
+| Variable                      | Default           | Description                                                                       |
+| ------------------------------| ------------------| ----------------------------------------------------------------------------------|
+| `PUID`                        | `1001`            | The UID to run server as                                                          |
+| `PGID`                        | `1001`            | The GID to run server as                                                          |
+| `BATTLEEYE`                   | `TRUE`            | Set to TRUE to use BattleEye, FALSE to not use BattleEye                          |
+| `RCON_ENABLED`                | `TRUE`            | Needed for Graceful Shutdown                                                      |
+| `DISPLAY_POK_MONITOR_MESSAGE` | `TRUE`            | FALSE to suppress the Server Monitor Shutdown                                     |
+| `UPDATE_SERVER`               | `TRUE`            | Enable or disable update checks                                                   |
+| `CHECK_FOR_UPDATE_INTERVAL`   | `24`              | Check for Updates interval in hours                                               |
+| `RESTART_NOTICE_MINUTES`      | `30`              | Duration in minutes for notifying players before a server restart due to updates  |
+| `MAP_NAME`                    | `TheIsland`       | The map name (`TheIsland') Or Custom Map Name Can Be Enter aswell                 |
+| `SESSION_NAME`                | `Server_name`     | The session name for the server                                                   |
+| `SERVER_ADMIN_PASSWORD`       | `MyPassword`      | The admin password for the server                                                 |
+| `ASA_PORT`                    | `7777`            | The game port for the server                                                      |
+| `RCON_PORT`                   | `27020`           | Rcon Port Use for Most Server Operations                                          |
+| `MAX_PLAYERS`                 | `127`             | Max allowed players                                                               |
+| `CLUSTER_ID`                  | `cluster`         | The Cluster ID for the server                                                     | 
+| `MOD_IDS`                     |                   | Add your mod IDs here, separated by commas, e.g., 123456789,987654321             |
+| `CUSTOM_SERVER_ARGS`          |                   | If You need to add more Custom Args -ForceRespawnDinos -ForceAllowCaveFlyers      |
 
 ---
 
@@ -49,11 +53,11 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 #### Volumes
 When you run the docker compose up it should create this folders in the same folder as the docker-compose.yaml file unless changed by the user
 
-| Volume Path                                           | Description                                    |
+| Volume Path                                          | Description                                   |
 | ---------------------------------------------------- | ---------------------------------------------- |
-| `./ASA`              | Game files                                     |
-| `./ARK Survival Ascended Dedicated Server` | Server files                           |
-| `./Cluster`           | Cluster files                                  |
+| `./ASA`                                              | Game files                                     |
+| `./ARK Survival Ascended Dedicated Server`           | Server files                                   |
+| `./Cluster`                                          | Cluster files                                  |
 
 ---
 
@@ -81,11 +85,14 @@ services:
     container_name: asa_Server
     restart: unless-stopped
     environment:
-      - PUID=1001               
-      - PGID=1001               
-      - BATTLEEYE=FALSE                        # Set to TRUE to use BattleEye, FALSE to not use BattleEye
-      - RCON_ENABLED=TRUE                      #Needed for Graceful Shutdown
-      - DISPLAY_POK_MONITOR_MESSAGE=TRUE       # Or FALSE to suppress the Server Monitor
+      - PUID=1001                            # The UID to run server as
+      - PGID=1001                            # The GID to run server as
+      - BATTLEEYE=FALSE                      # Set to TRUE to use BattleEye, FALSE to not use BattleEye
+      - RCON_ENABLED=TRUE                    # Needed for Graceful Shutdown / Updates / Server Notifications
+      - DISPLAY_POK_MONITOR_MESSAGE=TRUE     # Or FALSE to suppress the Server Monitor / Update Monitor 
+      - UPDATE_SERVER=TRUE                   # Enable or disable update checks
+      - CHECK_FOR_UPDATE_INTERVAL=24         # Check for Updates interval in hours
+      - RESTART_NOTICE_MINUTES=30            # Duration in minutes for notifying players before a server restart due to updates
       - MAP_NAME=TheIsland
       - SESSION_NAME=Server_name
       - SERVER_ADMIN_PASSWORD=MyPassword
@@ -94,7 +101,7 @@ services:
       - MAX_PLAYERS=70
       - CLUSTER_ID=cluster
       - MOD_IDS=                              # Add your mod IDs here, separated by commas, e.g., 123456789,987654321
-      - CUSTOM_SERVER_ARGS=                   #If You need to add more Custom Args -ForceRespawnDinos -ForceAllowCaveFlyers
+      - CUSTOM_SERVER_ARGS=                   # If You need to add more Custom Args -ForceRespawnDinos -ForceAllowCaveFlyers
     ports:
       - "7777:7777/tcp"
       - "7777:7777/udp"
@@ -103,6 +110,7 @@ services:
       - "./ARK Survival Ascended Dedicated Server:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server"
       - "./Cluster:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ShooterGame"
     mem_limit: 16G 
+
 
 ```
 

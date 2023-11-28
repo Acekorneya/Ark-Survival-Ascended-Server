@@ -19,32 +19,34 @@ send_rcon_command() {
     rcon-cli --host $RCON_HOST --port $RCON_PORT --password $RCON_PASSWORD "$1"
 }
 
-# Function for shutdown sequence
+
 # Function for shutdown sequence
 initiate_restart() {
     echo -n "Enter countdown duration in minutes: "
     read duration_in_minutes
     duration_in_minutes=${duration_in_minutes:-5}  # Default to 5 minutes if not specified
 
-    # Convert minutes to seconds for countdown
-    local duration=$((duration_in_minutes * 60))
+    local total_seconds=$((duration_in_minutes * 60))
+    local seconds_remaining=$total_seconds
 
-    # Start with a minute countdown
-    local remaining=$duration
-    while [ $remaining -gt 0 ]; do
-        local minutes=$((remaining / 60))
-        local seconds=$((remaining % 60))
-        send_rcon_command "ServerChat Server Restarting in ${minutes} minute(s) and ${seconds} second(s)"
+    while [ $seconds_remaining -gt 0 ]; do
+        local minutes_remaining=$((seconds_remaining / 60))
 
-        sleep 60  # Wait for 1 minute before next notification
-        let remaining-=60
+        if [ $seconds_remaining -le 10 ]; then
+            # Notify every second for the last 10 seconds
+            send_rcon_command "ServerChat Server restarting in $seconds_remaining second(s)"
+        elif [ $((seconds_remaining % 300)) -eq 0 ] || [ $seconds_remaining -eq $total_seconds ]; then
+            # Notify at 5 minute intervals
+            send_rcon_command "ServerChat Server restarting in $minutes_remaining minute(s)"
+        fi
+
+        sleep 1
+        ((seconds_remaining--))
     done
 
     send_rcon_command "saveworld"
     echo "World saved. Restarting the server..."
-
     send_rcon_command "DoExit"
-    echo "Server is Restarting. Please wait for a few moments"
 }
 
 # Display available commands
