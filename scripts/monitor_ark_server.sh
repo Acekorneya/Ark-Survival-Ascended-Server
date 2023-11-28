@@ -92,8 +92,11 @@ sleep $INITIAL_STARTUP_DELAY
 
 # Monitoring loop
 while true; do
-    if ! is_process_running && ! is_server_updating; then
-        restart_server
+    # Check if the server is currently updating (based on the presence of the updating.flag file)
+    if [ -f "/usr/games/updating.flag" ]; then
+        echo "Update in progress, waiting for it to complete..."
+        sleep 60
+        continue  # Skip the rest of this loop iteration
     fi
 
     if [ "${UPDATE_SERVER}" = "TRUE" ]; then
@@ -111,5 +114,10 @@ while true; do
         fi
     fi
 
-    sleep 60  # Short sleep to prevent high CPU usage, loop continues
+    # Restart the server if it's not running and not currently updating
+    if ! is_process_running && ! is_server_updating; then
+        restart_server
+    fi
+
+    sleep 60  # Short sleep to prevent high CPU usage
 done
