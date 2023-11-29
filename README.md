@@ -151,7 +151,7 @@ If you are using Proxmox as your virtual host make sure to set the CPU Type to "
 #### SERVER_MANAGER
 If you want to run Rcon_manager.sh download it just place it in the same folder as your docker-compose.yaml make it executable and launch it..
 
-#### updating the docker image
+#### UPDATING DOCKER IMAGE
 Open a terminal or command prompt.
 
 romove old docker image 
