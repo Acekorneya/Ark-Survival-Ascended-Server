@@ -27,6 +27,27 @@ initialize_variables() {
     fi
 }
 
+# Function to copy default configuration files if they don't exist
+copy_default_configs() {
+    local config_dir="$ASA_DIR/Saved/Config/WindowsServer/"
+
+    # Create the directory if it does not exist
+    if [ ! -d "$config_dir" ]; then
+        mkdir -p "$config_dir"
+    fi
+
+    # Copy GameUserSettings.ini if it does not exist
+    if [ ! -f "${config_dir}GameUserSettings.ini" ]; then
+        cp /usr/games/defaults/GameUserSettings.ini "$config_dir"
+    fi
+
+    # Copy Game.ini if it does not exist
+    if [ ! -f "${config_dir}Game.ini" ]; then
+        cp /usr/games/defaults/Game.ini "$config_dir"
+    fi
+}
+
+
 update_game_user_settings() {
     local ini_file="$ASA_DIR/Saved/Config/WindowsServer/GameUserSettings.ini"
 
@@ -276,6 +297,7 @@ main() {
     initialize_variables
     install_server
     update_server
+    copy_default_configs
     determine_map_path
     cluster_dir
     update_game_user_settings

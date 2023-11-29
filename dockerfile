@@ -60,6 +60,8 @@ USER root
 
 # Copy scripts folder into the container
 COPY scripts/ /usr/games/scripts/
+# Copy defaults folder into the container
+COPY defaults/ /usr/games/defaults/
 
 # Remove Windows-style carriage returns from the scripts
 RUN sed -i 's/\r//' /usr/games/scripts/*.sh

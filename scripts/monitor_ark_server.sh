@@ -94,7 +94,7 @@ sleep $INITIAL_STARTUP_DELAY
 while true; do
     # Check if the server is currently updating (based on the presence of the updating.flag file)
     if [ -f "/usr/games/updating.flag" ]; then
-        echo "Update in progress, waiting for it to complete..."
+        echo "Update/Installation in progress, waiting for it to complete..."
         sleep 60
         continue  # Skip the rest of this loop iteration
     fi
