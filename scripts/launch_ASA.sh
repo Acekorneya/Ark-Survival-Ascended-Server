@@ -297,9 +297,9 @@ main() {
     initialize_variables
     install_server
     update_server
-    copy_default_configs
     determine_map_path
     cluster_dir
+    copy_default_configs
     update_game_user_settings
     start_server
 }
