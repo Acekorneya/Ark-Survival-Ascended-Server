@@ -11,25 +11,26 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 
 #### Environment Variables
 
-| Variable                      | Default           | Description                                                                       |
-| ------------------------------| ------------------| ----------------------------------------------------------------------------------|
-| `PUID`                        | `1001`            | The UID to run server as                                                          |
-| `PGID`                        | `1001`            | The GID to run server as                                                          |
-| `BATTLEEYE`                   | `TRUE`            | Set to TRUE to use BattleEye, FALSE to not use BattleEye                          |
-| `RCON_ENABLED`                | `TRUE`            | Needed for Graceful Shutdown                                                      |
-| `DISPLAY_POK_MONITOR_MESSAGE` | `TRUE`            | FALSE to suppress the Server Monitor Shutdown                                     |
-| `UPDATE_SERVER`               | `TRUE`            | Enable or disable update checks                                                   |
-| `CHECK_FOR_UPDATE_INTERVAL`   | `24`              | Check for Updates interval in hours                                               |
-| `RESTART_NOTICE_MINUTES`      | `30`              | Duration in minutes for notifying players before a server restart due to updates  |
-| `MAP_NAME`                    | `TheIsland`       | The map name (`TheIsland') Or Custom Map Name Can Be Enter aswell                 |
-| `SESSION_NAME`                | `Server_name`     | The session name for the server                                                   |
-| `SERVER_ADMIN_PASSWORD`       | `MyPassword`      | The admin password for the server                                                 |
-| `ASA_PORT`                    | `7777`            | The game port for the server                                                      |
-| `RCON_PORT`                   | `27020`           | Rcon Port Use for Most Server Operations                                          |
-| `MAX_PLAYERS`                 | `127`             | Max allowed players                                                               |
-| `CLUSTER_ID`                  | `cluster`         | The Cluster ID for the server                                                     | 
-| `MOD_IDS`                     |                   | Add your mod IDs here, separated by commas, e.g., 123456789,987654321             |
-| `CUSTOM_SERVER_ARGS`          |                   | If You need to add more Custom Args -ForceRespawnDinos -ForceAllowCaveFlyers      |
+| Variable                      | Default           | Description                                                                               |
+| ------------------------------| ------------------| ------------------------------------------------------------------------------------------|
+| `PUID`                        | `1001`            | The UID to run server as                                                                  |
+| `PGID`                        | `1001`            | The GID to run server as                                                                  |
+| `BATTLEEYE`                   | `TRUE`            | Set to TRUE to use BattleEye, FALSE to not use BattleEye                                  |
+| `RCON_ENABLED`                | `TRUE`            | Needed for Graceful Shutdown                                                              |
+| `DISPLAY_POK_MONITOR_MESSAGE` | `TRUE`            | FALSE to suppress the Server Monitor Shutdown                                             |
+| `UPDATE_SERVER`               | `TRUE`            | Enable or disable update checks                                                           |
+| `CHECK_FOR_UPDATE_INTERVAL`   | `24`              | Check for Updates interval in hours                                                       |
+| `RESTART_NOTICE_MINUTES`      | `30`              | Duration in minutes for notifying players before a server restart due to updates          |
+| `MAP_NAME`                    | `TheIsland`       | The map name (`TheIsland') Or Custom Map Name Can Be Enter aswell                         |
+| `SESSION_NAME`                | `Server_name`     | The session name for the server                                                           |
+| `SERVER_ADMIN_PASSWORD`       | `MyPassword`      | The admin password for the server                                                         |
+| `SERVER_PASSWORD`             |                   | Set a server password or leave it blank (ONLY NUMBERS AND CHARACTERS ARE ALLOWED BY DEVS) |
+| `ASA_PORT`                    | `7777`            | The game port for the server                                                              |
+| `RCON_PORT`                   | `27020`           | Rcon Port Use for Most Server Operations                                                  |
+| `MAX_PLAYERS`                 | `127`             | Max allowed players                                                                       |
+| `CLUSTER_ID`                  | `cluster`         | The Cluster ID for the server                                                             | 
+| `MOD_IDS`                     |                   | Add your mod IDs here, separated by commas, e.g., 123456789,987654321                     |
+| `CUSTOM_SERVER_ARGS`          |                   | If You need to add more Custom Args -ForceRespawnDinos -ForceAllowCaveFlyers              |
 
 ---
 
@@ -96,12 +97,13 @@ services:
       - MAP_NAME=TheIsland
       - SESSION_NAME=Server_name
       - SERVER_ADMIN_PASSWORD=MyPassword
+      - SERVER_PASSWORD=                     # Set a server password or leave it blank (ONLY NUMBERS AND CHARACTERS ARE ALLOWED BY DEVS)
       - ASA_PORT=7777
       - RCON_PORT=27020
       - MAX_PLAYERS=70
       - CLUSTER_ID=cluster
-      - MOD_IDS=                              # Add your mod IDs here, separated by commas, e.g., 123456789,987654321
-      - CUSTOM_SERVER_ARGS=                   # If You need to add more Custom Args -ForceRespawnDinos -ForceAllowCaveFlyers
+      - MOD_IDS=                             # Add your mod IDs here, separated by commas, e.g., 123456789,987654321
+      - CUSTOM_SERVER_ARGS=                  # If You need to add more Custom Args -ForceRespawnDinos -ForceAllowCaveFlyers
     ports:
       - "7777:7777/tcp"
       - "7777:7777/udp"

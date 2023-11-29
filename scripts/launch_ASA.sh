@@ -11,13 +11,42 @@ initialize_variables() {
     SOURCE_DIR="/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server/"
     DEST_DIR="$ASA_DIR/Binaries/Win64/"
     PERSISTENT_ACF_FILE="$ASA_DIR/appmanifest_$APPID.acf"
+    
     # Clean and format MOD_IDS if it's set
     if [ -n "$MOD_IDS" ]; then
         # Remove all quotes and extra spaces
         MOD_IDS=$(echo "$MOD_IDS" | tr -d '"' | tr -d "'" | tr -d ' ')
     fi
+    
+    # Validate SERVER_PASSWORD if set
+    if [ -n "$SERVER_PASSWORD" ]; then
+        if ! [[ "$SERVER_PASSWORD" =~ ^[a-zA-Z0-9]+$ ]]; then
+            echo "ERROR: The server password must contain only numbers or characters."
+            exit 1
+        fi
+    fi
 }
 
+update_game_user_settings() {
+    local ini_file="$ASA_DIR/Saved/Config/WindowsServer/GameUserSettings.ini"
+
+    # Check if the file exists
+    if [ -f "$ini_file" ]; then
+        # If SERVER_PASSWORD is set, update or add the password in the ini file
+        if [ -n "$SERVER_PASSWORD" ]; then
+            if grep -q "^ServerPassword=" "$ini_file"; then
+                sed -i "s/^ServerPassword=.*/ServerPassword=$SERVER_PASSWORD/" "$ini_file"
+            else
+                echo "ServerPassword=$SERVER_PASSWORD" >> "$ini_file"
+            fi
+        else
+            # If SERVER_PASSWORD is not set, remove the password line
+            sed -i '/^ServerPassword=/d' "$ini_file"
+        fi
+    else
+        echo "GameUserSettings.ini not found."
+    fi
+}
 
 # Check if the Cluster directory exists
 cluster_dir() {
@@ -162,6 +191,7 @@ start_server() {
     local battleye_arg=""
     local rcon_args=""
     local custom_args=""
+    local server_password_arg=""
     local session_name_arg="SessionName=\"${SESSION_NAME}\""
 
     # Check if MOD_IDS is set and not empty
@@ -187,9 +217,12 @@ start_server() {
         custom_args="$CUSTOM_SERVER_ARGS"
     fi
 
+    if [ -n "$SERVER_PASSWORD" ]; then
+        server_password_arg="?ServerPassword=${SERVER_PASSWORD}"
+    fi
     # Start the server with conditional arguments
     sudo -u games wine "$ASA_DIR/Binaries/Win64/ArkAscendedServer.exe" \
-        $MAP_PATH?listen?$session_name_arg?Port=${ASA_PORT}${rcon_args}?ServerAdminPassword=${SERVER_ADMIN_PASSWORD} \
+        $MAP_PATH?listen?$session_name_arg?Port=${ASA_PORT}${rcon_args}${server_password_arg}?ServerAdminPassword=${SERVER_ADMIN_PASSWORD} \
         -WinLiveMaxPlayers=${MAX_PLAYERS} -clusterid=${CLUSTER_ID} -ClusterDirOverride=$CLUSTER_DIR_OVERRIDE \
         -servergamelog -servergamelogincludetribelogs -ServerRCONOutputTribeLogs -NotifyAdminCommandsInChat -nosteamclient $custom_args \
         $mods_arg $battleye_arg 2>/dev/null &
@@ -245,6 +278,7 @@ main() {
     update_server
     determine_map_path
     cluster_dir
+    update_game_user_settings
     start_server
 }
 
