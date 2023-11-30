@@ -27,33 +27,16 @@ initialize_variables() {
     fi
 }
 
-# Function to copy default configuration files if they don't exist
-copy_default_configs() {
-    local config_dir="$ASA_DIR/Saved/Config/WindowsServer/"
-
-    # Create the directory if it does not exist
-    if [ ! -d "$config_dir" ]; then
-        mkdir -p "$config_dir"
-    fi
-
-    # Copy GameUserSettings.ini if it does not exist
-    if [ ! -f "${config_dir}GameUserSettings.ini" ]; then
-        cp /usr/games/defaults/GameUserSettings.ini "$config_dir"
-    fi
-
-    # Copy Game.ini if it does not exist
-    if [ ! -f "${config_dir}Game.ini" ]; then
-        cp /usr/games/defaults/Game.ini "$config_dir"
-    fi
-}
-
 
 update_game_user_settings() {
     local ini_file="$ASA_DIR/Saved/Config/WindowsServer/GameUserSettings.ini"
 
     # Check if the file exists
     if [ -f "$ini_file" ]; then
-        # If SERVER_PASSWORD is set, update or add the password in the ini file
+        # Prepare MOTD by escaping newline characters
+        local escaped_motd=$(echo "$MOTD" | sed 's/\\n/\\\\n/g')
+
+        # Update or add SERVER_PASSWORD in the ini file
         if [ -n "$SERVER_PASSWORD" ]; then
             if grep -q "^ServerPassword=" "$ini_file"; then
                 sed -i "s/^ServerPassword=.*/ServerPassword=$SERVER_PASSWORD/" "$ini_file"
@@ -61,13 +44,25 @@ update_game_user_settings() {
                 echo "ServerPassword=$SERVER_PASSWORD" >> "$ini_file"
             fi
         else
-            # If SERVER_PASSWORD is not set, remove the password line
+            # Remove the password line if SERVER_PASSWORD is not set
             sed -i '/^ServerPassword=/d' "$ini_file"
+        fi
+
+        # Remove existing [MessageOfTheDay] section
+        sed -i '/^\[MessageOfTheDay\]/,/^$/d' "$ini_file"
+
+        # Handle MOTD based on ENABLE_MOTD value
+        if [ "$ENABLE_MOTD" = "TRUE" ]; then
+            # Add the new Message of the Day
+            echo -e "\n[MessageOfTheDay]\nMessage=$escaped_motd\nDuration=$MOTD_DURATION" >> "$ini_file"
         fi
     else
         echo "GameUserSettings.ini not found."
     fi
 }
+
+
+
 
 # Check if the Cluster directory exists
 cluster_dir() {
@@ -299,7 +294,6 @@ main() {
     update_server
     determine_map_path
     cluster_dir
-    copy_default_configs
     update_game_user_settings
     start_server
 }

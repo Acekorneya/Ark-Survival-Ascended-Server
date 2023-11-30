@@ -4,6 +4,9 @@
 ASA_DIR="/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server/ShooterGame"
 ARK_DIR="/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server"
 CLUSTER_DIR="/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ShooterGame"
+SAVED_DIR="/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server/ShooterGame/Saved"
+CONFIG_DIR="/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server/ShooterGame/Saved/Config"
+WINDOWS_SERVER_DIR="/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server/ShooterGame/Saved/Config/WindowsServer"
 
 # Get PUID and PGID from environment variables, or default to 1001
 PUID=${PUID:-1001}
@@ -34,13 +37,33 @@ usermod -o -u $PUID -g games games
 chown -R games:games "$WINEPREFIX"
 
 # Create directories if they do not exist and set permissions
-for DIR in "$ASA_DIR" "$ARK_DIR" "$CLUSTER_DIR"; do
+for DIR in "$ASA_DIR" "$ARK_DIR" "$CLUSTER_DIR" "$SAVED_DIR" "$CONFIG_DIR" "$WINDOWS_SERVER_DIR"; do
     if [ ! -d "$DIR" ]; then
         mkdir -p "$DIR"
     fi
     chown -R $PUID:$PGID "$DIR"
     chmod -R 755 "$DIR"
 done
+
+# Function to copy default configuration files if they don't exist
+copy_default_configs() {
+    # Copy GameUserSettings.ini if it does not exist
+    if [ ! -f "${WINDOWS_SERVER_DIR}/GameUserSettings.ini" ]; then
+        cp /usr/games/defaults/GameUserSettings.ini "$WINDOWS_SERVER_DIR"
+        chown $PUID:$PGID "${WINDOWS_SERVER_DIR}/GameUserSettings.ini"
+        chmod 755 "${WINDOWS_SERVER_DIR}/GameUserSettings.ini"
+    fi
+
+    # Copy Game.ini if it does not exist
+    if [ ! -f "${WINDOWS_SERVER_DIR}/Game.ini" ]; then
+        cp /usr/games/defaults/Game.ini "$WINDOWS_SERVER_DIR"
+        chown $PUID:$PGID "${WINDOWS_SERVER_DIR}/Game.ini"
+        chmod 755 "${WINDOWS_SERVER_DIR}/Game.ini"
+    fi
+}
+
+# Call copy_default_configs function
+copy_default_configs
 
 # Start monitor_ark_server.sh in the background
 /usr/games/scripts/monitor_ark_server.sh &
