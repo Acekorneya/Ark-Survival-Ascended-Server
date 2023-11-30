@@ -97,7 +97,7 @@ services:
       - UPDATE_SERVER=TRUE                   # Enable or disable update checks
       - CHECK_FOR_UPDATE_INTERVAL=24         # Check for Updates interval in hours
       - RESTART_NOTICE_MINUTES=30            # Duration in minutes for notifying players before a server restart due to updates
-      - ENABLE_MOTD=TRUE                     # Enable or disable Message of the Day
+      - ENABLE_MOTD=FALSE                    # Enable or disable Message of the Day
       - MOTD=                                # Message of the Day
       - MOTD_DURATION=30                     # Duration for the Message of the Day
       - MAP_NAME=TheIsland
