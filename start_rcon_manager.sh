@@ -6,6 +6,6 @@ if [ $(docker compose ps -q asaserver | wc -l) -eq 0 ]; then
     exit 1
 fi
 
-# Attach to the running container and start the RCON interface
+# Pass all arguments to the RCON interface script
 echo "Starting the POK Server Manager (RCON Interface)..."
-docker compose exec -T asaserver /usr/games/scripts/rcon_interface.sh
+docker compose exec -T asaserver /usr/games/scripts/rcon_interface.sh "$@"

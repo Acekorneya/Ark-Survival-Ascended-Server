@@ -11,20 +11,21 @@ if [ -z "$RCON_PORT" ] || [ -z "$RCON_PASSWORD" ]; then
     exit 1
 fi
 
-echo "Connected to ARK Server RCON at $RCON_HOST:$RCON_PORT"
-echo "Type 'exit' to leave RCON interface."
 
 # Function to send RCON command
 send_rcon_command() {
     rcon-cli --host $RCON_HOST --port $RCON_PORT --password $RCON_PASSWORD "$1"
 }
 
-
 # Function for shutdown sequence
 initiate_restart() {
-    echo -n "Enter countdown duration in minutes: "
-    read duration_in_minutes
-    duration_in_minutes=${duration_in_minutes:-5}  # Default to 5 minutes if not specified
+    if [ -z "$1" ]; then
+        echo -n "Enter countdown duration in minutes: "
+        read duration_in_minutes
+        duration_in_minutes=${duration_in_minutes:-5}  # Default to 5 minutes if not specified
+    else
+        duration_in_minutes=$1
+    fi
 
     local total_seconds=$((duration_in_minutes * 60))
     local seconds_remaining=$total_seconds
@@ -48,6 +49,17 @@ initiate_restart() {
     echo "World saved. Restarting the server..."
     send_rcon_command "DoExit"
 }
+
+# Handle automated restart if arguments are provided
+if [ "$1" == "-restart" ] && [ -n "$2" ]; then
+    echo "Automated restart initiated with a $2 minute countdown."
+    initiate_restart $2
+    exit 0
+fi
+
+# Interactive mode
+echo "Connected to ARK Server RCON at $RCON_HOST:$RCON_PORT"
+echo "Type 'exit' to leave RCON interface."
 
 # Display available commands
 echo "Available Commands:"
