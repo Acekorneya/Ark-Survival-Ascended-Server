@@ -162,6 +162,7 @@ you can also do automatic restart with CronJobs example below
 ```
  0 3 * * * /path/to/start_rcon_manager.sh -restart 10
 ```
+ this will schedule a restart every day at 3 AM with a 10-minute countdown
 
 #### UPDATING DOCKER IMAGE
 Open a terminal or command prompt.
