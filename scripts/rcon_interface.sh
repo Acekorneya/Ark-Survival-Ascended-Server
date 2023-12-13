@@ -50,10 +50,14 @@ initiate_restart() {
     send_rcon_command "DoExit"
 }
 
-# Handle automated restart if arguments are provided
+# Handle automated restart or custom command if arguments are provided
 if [ "$1" == "-restart" ] && [ -n "$2" ]; then
     echo "Automated restart initiated with a $2 minute countdown."
     initiate_restart $2
+    exit 0
+elif [ "$1" == "-custom" ] && [ -n "$2" ]; then
+    echo "Executing custom RCON command: $2"
+    send_rcon_command "$2"
     exit 0
 fi
 
