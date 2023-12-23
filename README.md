@@ -20,8 +20,8 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 | `DISPLAY_POK_MONITOR_MESSAGE` | `TRUE`            | FALSE to suppress the Server Monitor Shutdown                                             |
 | `UPDATE_SERVER`               | `TRUE`            | Enable or disable update checks                                                           |
 | `CHECK_FOR_UPDATE_INTERVAL`   | `24`              | Check for Updates interval in hours                                                       |
-| `UPDATE_WINDOW_MINIMUM_HOUR`  | `0`               | Defines the minimum hour based on server time when an update check should run, 0-23       |
-| `UPDATE_WINDOW_MAXIMUM_HOUR`  | `23`              | Defines the maximum hour based on server time when an update check should run, 0-23       |
+| `UPDATE_WINDOW_MINIMUM_TIME`  | `12:00 AM`        | Defines the minimum time, relative to server time, when an update check should run        |
+| `UPDATE_WINDOW_MAXIMUM_TIME`  | `11:59 PM`        | Defines the maximum time, relative to server time, when an update check should run        |
 | `RESTART_NOTICE_MINUTES`      | `30`              | Duration in minutes for notifying players before a server restart due to updates          |
 | `ENABLE_MOTD`                 | `FALSE`           | Enable or disable Message of the Day                                                      |
 | `MOTD`                        |                   | Message of the Day                                                                        |
@@ -45,7 +45,7 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
   
 - **Folder Creation**: Before starting the Docker Compose file, make sure to manually create any folders that you'll be using for volumes, especially if you're overriding the default folders.
 
-- **UPDATE_WINDOW_MINIMUM_HOUR and UPDATE_WINDOW_MAXIMUM_HOUR**: Combined, these two values can allow you to define a time window for when server updates should be performed. This can be useful to ensure update driven restarts only happen during off peak hours. The `UPDATE_WINDOW_MAXIMUM_HOUR` allows that hour to be within the window. For example, if UPDATE_WINDOW_MAXIMUM_HOUR is set to 6, then the update will be within a window that does not close until 7:59am. Note that hours are offset by 1 to conform to the Linux system command [Date](https://linux.die.net/man/1/date).
+- **UPDATE_WINDOW_MINIMUM_TIME and UPDATE_WINDOW_MAXIMUM_TIME**: Combined, these two values can allow you to define a time window for when server updates should be performed. This can be useful to ensure update driven restarts only happen during off peak hours.
 
 ---
 
@@ -100,8 +100,8 @@ services:
       - DISPLAY_POK_MONITOR_MESSAGE=TRUE     # Or FALSE to suppress the Server Monitor / Update Monitor 
       - UPDATE_SERVER=TRUE                   # Enable or disable update checks
       - CHECK_FOR_UPDATE_INTERVAL=24         # Check for Updates interval in hours
-      - UPDATE_WINDOW_MINIMUM_HOUR=0         # Defines the minimum hour based on server time when an update check should run, 0-23
-      - UPDATE_WINDOW_MINIMUM_HOUR=23        # Defines the maximum hour based on server time when an update check should run, 0-23
+      - UPDATE_WINDOW_MINIMUM_TIME=12:00 AM  # Defines the minimum time, relative to server time, when an update check should run
+      - UPDATE_WINDOW_MAXIMUM_TIME=11:59 PM  # Defines the maximum time, relative to server time, when an update check should run
       - RESTART_NOTICE_MINUTES=30            # Duration in minutes for notifying players before a server restart due to updates
       - ENABLE_MOTD=FALSE                    # Enable or disable Message of the Day
       - MOTD=                                # Message of the Day
