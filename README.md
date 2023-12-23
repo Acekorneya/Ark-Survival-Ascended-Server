@@ -100,6 +100,8 @@ services:
       - DISPLAY_POK_MONITOR_MESSAGE=TRUE     # Or FALSE to suppress the Server Monitor / Update Monitor 
       - UPDATE_SERVER=TRUE                   # Enable or disable update checks
       - CHECK_FOR_UPDATE_INTERVAL=24         # Check for Updates interval in hours
+      - UPDATE_WINDOW_MINIMUM_HOUR=0         # Defines the minimum hour based on server time when an update check should run, 0-23
+      - UPDATE_WINDOW_MINIMUM_HOUR=23        # Defines the maximum hour based on server time when an update check should run, 0-23
       - RESTART_NOTICE_MINUTES=30            # Duration in minutes for notifying players before a server restart due to updates
       - ENABLE_MOTD=FALSE                    # Enable or disable Message of the Day
       - MOTD=                                # Message of the Day
