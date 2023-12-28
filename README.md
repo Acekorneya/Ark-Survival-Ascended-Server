@@ -54,7 +54,7 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 
 ---
 #### Comments
-When you run is not needed for Ark Ascended 
+Query Port is not needed for Ark Ascended 
 
 #### Volumes
 When you run the docker compose up it should create this folders in the same folder as the docker-compose.yaml file unless changed by the user
