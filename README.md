@@ -51,7 +51,8 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 | ------------ | -------------------------------------- |
 | `7777/tcp`   | Game port                              |
 | `7777/udp`   | Game port                              |
-
+### Comments 
+Query port is not needed for Ark Ascended 
 ---
 
 #### Volumes
