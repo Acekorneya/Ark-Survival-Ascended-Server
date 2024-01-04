@@ -17,7 +17,7 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 | `PGID`                        | `1001`            | The GID to run server as                                                                  |
 | `BATTLEEYE`                   | `TRUE`            | Set to TRUE to use BattleEye, FALSE to not use BattleEye                                  |
 | `RCON_ENABLED`                | `TRUE`            | Needed for Graceful Shutdown                                                              |
-| `DISPLAY_POK_MONITOR_MESSAGE` | `FALSE`            | FALSE to suppress the Server Monitor Shutdown                                             |
+| `DISPLAY_POK_MONITOR_MESSAGE` | `FALSE`            | TRUE to Show the Server Monitor Messages / Update Monitor Shutdown                                             |
 | `UPDATE_SERVER`               | `TRUE`            | Enable or disable update checks                                                           |
 | `CHECK_FOR_UPDATE_INTERVAL`   | `24`              | Check for Updates interval in hours                                                       |
 | `UPDATE_WINDOW_MINIMUM_TIME`  | `12:00 AM`        | Defines the minimum time, relative to server time, when an update check should run        |
@@ -99,7 +99,7 @@ services:
       - PGID=1001                            # The GID to run server as
       - BATTLEEYE=FALSE                      # Set to TRUE to use BattleEye, FALSE to not use BattleEye
       - RCON_ENABLED=TRUE                    # Needed for Graceful Shutdown / Updates / Server Notifications
-      - DISPLAY_POK_MONITOR_MESSAGE=FALSE    # Or TRUE to Show the Server Monitor Messages / Update Monitor 
+      - DISPLAY_POK_MONITOR_MESSAGE=FALSE    # TRUE to Show the Server Monitor Messages / Update Monitor 
       - UPDATE_SERVER=TRUE                   # Enable or disable update checks
       - CHECK_FOR_UPDATE_INTERVAL=24         # Check for Updates interval in hours
       - UPDATE_WINDOW_MINIMUM_TIME=12:00 AM  # Defines the minimum time, relative to server time, when an update check should run
