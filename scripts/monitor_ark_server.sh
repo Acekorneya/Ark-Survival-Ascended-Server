@@ -9,6 +9,8 @@ RCON_HOST="localhost"
 RCON_PORT=${RCON_PORT}
 RCON_PASSWORD=${SERVER_ADMIN_PASSWORD}
 RESTART_NOTICE_MINUTES=${RESTART_NOTICE_MINUTES:-30}  # Default to 30 minutes if not set
+UPDATE_WINDOW_MINIMUM_TIME=${UPDATE_WINDOW_MINIMUM_TIME:-12:00 AM} # Default to "12:00 AM" if not set
+UPDATE_WINDOW_MAXIMUM_TIME=${UPDATE_WINDOW_MAXIMUM_TIME:-11:59 PM} # Default to "11:59 PM" if not set
 
 # Send RCON command
 send_rcon_command() {
@@ -105,12 +107,18 @@ while true; do
         last_update_check_time=${last_update_check_time:-0}
         update_check_interval_seconds=$((CHECK_FOR_UPDATE_INTERVAL * 3600))
 
+        # Put constraints around the update check interval to prevent it from running outside of desired time windows
+        update_window_lower_bound=$(date -d "${UPDATE_WINDOW_MINIMUM_TIME}" +'%s')
+        update_window_upper_bound=$(date -d "${UPDATE_WINDOW_MAXIMUM_TIME}" +'%s')
+
         if (( current_time - last_update_check_time > update_check_interval_seconds )); then
-            if /usr/games/scripts/POK_Update_Monitor.sh; then
-                notify_players_for_restart
-                restart_server
+            if (( current_time >= update_window_lower_bound && current_time < update_window_upper_bound )); then
+                if /usr/games/scripts/POK_Update_Monitor.sh; then
+                    notify_players_for_restart
+                    restart_server
+                fi
+                last_update_check_time=$current_time
             fi
-            last_update_check_time=$current_time
         fi
     fi
 
