@@ -209,19 +209,22 @@ start_server() {
     local custom_args=""
     local server_password_arg=""
     local session_name_arg="SessionName=\"${SESSION_NAME}\""
-
+    
     # Check if MOD_IDS is set and not empty
     if [ -n "$MOD_IDS" ]; then
         mods_arg="-mods=${MOD_IDS}"
     fi
-
+    # Initialize the passive mods argument
+    local passive_mods_arg=""
+    if [ -n "$PASSIVE_MODS" ]; then
+        passive_mods_arg="-passivemods=${PASSIVE_MODS}"
+    fi
     # Set BattlEye flag based on environment variable
     if [ "$BATTLEEYE" = "TRUE" ]; then
         battleye_arg="-UseBattlEye"
     elif [ "$BATTLEEYE" = "FALSE" ]; then
         battleye_arg="-NoBattlEye"
     fi
-
     # Set RCON arguments based on RCON_ENABLED environment variable
     if [ "$RCON_ENABLED" = "TRUE" ]; then
         rcon_args="?RCONEnabled=True?RCONPort=${RCON_PORT}"
@@ -241,7 +244,7 @@ start_server() {
         $MAP_PATH?listen?$session_name_arg?Port=${ASA_PORT}${rcon_args}${server_password_arg}?ServerAdminPassword=${SERVER_ADMIN_PASSWORD} \
         -WinLiveMaxPlayers=${MAX_PLAYERS} -clusterid=${CLUSTER_ID} -ClusterDirOverride=$CLUSTER_DIR_OVERRIDE \
         -servergamelog -servergamelogincludetribelogs -ServerRCONOutputTribeLogs -NotifyAdminCommandsInChat -nosteamclient $custom_args \
-        $mods_arg $battleye_arg 2>/dev/null &
+        $mods_arg $battleye_arg $passive_mods_arg 2>/dev/null &
 
     SERVER_PID=$!
     echo "Server process started with PID: $SERVER_PID"

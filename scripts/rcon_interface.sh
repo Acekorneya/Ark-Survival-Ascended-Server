@@ -19,11 +19,28 @@ send_rcon_command() {
 
 # Function for shutdown sequence
 initiate_restart() {
+    local duration_in_minutes
+
     if [ -z "$1" ]; then
-        echo -n "Enter countdown duration in minutes: "
-        read duration_in_minutes
-        duration_in_minutes=${duration_in_minutes:-5}  # Default to 5 minutes if not specified
+        while true; do
+            echo -n "Enter countdown duration in minutes (or type 'cancel' to return to main menu): "
+            read input
+
+            if [[ "$input" =~ ^[0-9]+$ ]]; then
+                duration_in_minutes=$input
+                break
+            elif [[ "$input" == "cancel" ]]; then
+                echo "Restart cancelled. Returning to main menu."
+                return
+            else
+                echo "Invalid input. Please enter a number or 'cancel'."
+            fi
+        done
     else
+        if ! [[ "$1" =~ ^[0-9]+$ ]]; then
+            echo "Invalid duration: $1. Must be a number."
+            return
+        fi
         duration_in_minutes=$1
     fi
 

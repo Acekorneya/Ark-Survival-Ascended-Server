@@ -34,7 +34,8 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 | `RCON_PORT`                   | `27020`           | Rcon Port Use for Most Server Operations                                                  |
 | `MAX_PLAYERS`                 | `127`             | Max allowed players                                                                       |
 | `CLUSTER_ID`                  | `cluster`         | The Cluster ID for the server                                                             | 
-| `MOD_IDS`                     |                   | Add your mod IDs here, separated by commas, e.g., 123456789,987654321                     |
+| `PASSIVE_MODS`                | `123456`          | Replace with your passive mods IDs                                                        |
+| `MOD_IDS`                     | `123456`          | Add your mod IDs here, separated by commas, e.g., 123456789,987654321                     |
 | `CUSTOM_SERVER_ARGS`          |                   | If You need to add more Custom Args -ForceRespawnDinos -ForceAllowCaveFlyers              |
 
 ---
@@ -116,6 +117,7 @@ services:
       - RCON_PORT=27020
       - MAX_PLAYERS=70
       - CLUSTER_ID=cluster
+      - PASSIVE_MODS=                        # Replace with your passive mods IDs
       - MOD_IDS=                             # Add your mod IDs here, separated by commas, e.g., 123456789,987654321
       - CUSTOM_SERVER_ARGS=                  # If You need to add more Custom Args -ForceRespawnDinos -ForceAllowCaveFlyers
     ports:

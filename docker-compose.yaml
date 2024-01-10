@@ -29,6 +29,7 @@ services:
       - MAX_PLAYERS=70
       - CLUSTER_ID=cluster
       - MOD_IDS=                             # Add your mod IDs here, separated by commas, e.g., 123456789,987654321
+      - PASSIVE_MODS=                        # Replace with your passive mods IDs
       - CUSTOM_SERVER_ARGS=                  # If You need to add more Custom Args -ForceRespawnDinos -ForceAllowCaveFlyers
     ports:
       - "7777:7777/tcp"
