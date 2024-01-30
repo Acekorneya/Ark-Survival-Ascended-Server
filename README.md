@@ -198,6 +198,9 @@ Then, start it again using
 docker-compose up.
 ```
 These commands stop the currently running container and start a new one with the updated image.
+## Discord Server 
+https://discord.gg/9GJKWjQuXy
+for Support 
 
 ## Star History
 
