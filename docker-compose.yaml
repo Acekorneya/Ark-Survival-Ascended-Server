@@ -1,0 +1,42 @@
+version: '2.4'
+
+services:
+  asaserver:
+    build: .
+    image: acekorneya/asa_server:latest
+    container_name: asa_Server
+    restart: unless-stopped
+    environment:
+      - PUID=1001                            # The UID to run server as
+      - PGID=1001                            # The GID to run server as
+      - TZ=America/Los_Angeles               # Timezone setting: Change this to your local timezone. Ex.America/New_York, Europe/Berlin, Asia/Tokyo
+      - BATTLEEYE=FALSE                      # Set to TRUE to use BattleEye, FALSE to not use BattleEye
+      - RCON_ENABLED=TRUE                    # Needed for Graceful Shutdown / Updates / Server Notifications
+      - DISPLAY_POK_MONITOR_MESSAGE=FALSE    # Or TRUE to Show the Server Monitor Messages / Update Monitor 
+      - UPDATE_SERVER=TRUE                   # Enable or disable update checks
+      - CHECK_FOR_UPDATE_INTERVAL=24         # Check for Updates interval in hours
+      - UPDATE_WINDOW_MINIMUM_TIME=12:00 AM  # Defines the minimum time, relative to server time, when an update check should run
+      - UPDATE_WINDOW_MAXIMUM_TIME=11:59 PM  # Defines the maximum time, relative to server time, when an update 
+      - RESTART_NOTICE_MINUTES=30            # Duration in minutes for notifying players before a server restart due to updates
+      - ENABLE_MOTD=FALSE                    # Enable or disable Message of the Day
+      - MOTD=                                # Message of the Day
+      - MOTD_DURATION=30                     # Duration for the Message of the Day
+      - MAP_NAME=TheIsland
+      - SESSION_NAME=Server_name
+      - SERVER_ADMIN_PASSWORD=MyPassword
+      - SERVER_PASSWORD=                     # Set a server password or leave it blank (ONLY NUMBERS AND CHARACTERS ARE ALLOWED BY DEVS)
+      - ASA_PORT=7777
+      - RCON_PORT=27020
+      - MAX_PLAYERS=70
+      - CLUSTER_ID=cluster
+      - MOD_IDS=                             # Add your mod IDs here, separated by commas, e.g., 123456789,987654321
+      - PASSIVE_MODS=                        # Replace with your passive mods IDs
+      - CUSTOM_SERVER_ARGS=                  # If You need to add more Custom Args -ForceRespawnDinos -ForceAllowCaveFlyers
+    ports:
+      - "7777:7777/tcp"
+      - "7777:7777/udp"
+    volumes:
+      - "./ASA:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server/ShooterGame"
+      - "./ARK Survival Ascended Dedicated Server:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server"
+      - "./Cluster:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ShooterGame"
+    mem_limit: 16G 
