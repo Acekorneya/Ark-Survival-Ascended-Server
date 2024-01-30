@@ -1,0 +1,44 @@
+version: '2.4'
+
+services:
+  asaserver:
+    build: .
+    image: acekorneya/asa_server:latest
+    container_name: asa_Server
+    restart: unless-stopped
+    environment:
+      - PUID=1001
+      - PGID=1001
+      - TZ=America/Los_Angeles               # Timezone setting: Change this to your local timezone. Ex.America/New_York, Europe/Berlin, Asia/Tokyo
+      - BATTLEEYE=TRUE
+      - RCON_ENABLED=TRUE  
+      - DISPLAY_POK_MONITOR_MESSAGE=TRUE
+      - UPDATE_SERVER=TRUE                   # Enable or disable update checks
+      - CHECK_FOR_UPDATE_INTERVAL=1 
+      - UPDATE_WINDOW_MINIMUM_TIME=5:00 AM  # Defines the minimum time, relative to server time, when an update check should run
+      - UPDATE_WINDOW_MAXIMUM_TIME=4:00 PM   # Defines the maximum time, relative to server time, when an update check should run        # Check interval in hours
+      - RESTART_NOTICE_MINUTES=15            # Duration in minutes for notifying players before a server restart due to updates
+      - ENABLE_MOTD=TRUE                     # Enable or disable Message of the Day TRUE/FALSE
+      - MOTD=<RichColor Color="0.65, 0, 1 ,1">Welcom To Our POK Server</> \n <RichColor Color="1, 1, 0, 1">Current Server Rates 1.0X Taming/Harvest/Maturation/Hatch/XP/Imprint</> \n <RichColor Color="1, 0, 0, 1">Join Our Discord discord.gg/9GJKWjQuXy For Server Updates</>                               # Message of the Day
+      - MOTD_DURATION=40                     # Duration for the Message of the Day
+      - MAP_NAME=TheIsland
+      - SESSION_NAME=POK TESTING SERVER
+      - SERVER_ADMIN_PASSWORD=kORNEYA512!
+      - SERVER_PASSWORD= 
+      - ASA_PORT=8777
+      - RCON_PORT=27020
+      - MAX_PLAYERS=10
+      - CLUSTER_ID=kny
+      - MOD_IDS=927090
+      - PASSIVE_MODS=927090,927083
+      - CUSTOM_SERVER_ARGS=-UseDynamicConfig  
+    ports:
+      - "8777:8777/tcp"
+      - "8777:8777/udp"
+    volumes:
+      - "/home/factorioserver/ASA/ARK_Servers/ASA:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server/ShooterGame"
+      - "/home/factorioserver/ASA/ARK_Servers/ARK Survival Ascended Dedicated Server:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server"
+      - "/home/factorioserver/ASA_Cluster/Cluster:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ShooterGame"
+    cpuset: 8-11  # Pinning CPUs to threads 10-12
+    memswap_limit: 18G
+    mem_limit: 16G  # Setting memory limit to 12GB

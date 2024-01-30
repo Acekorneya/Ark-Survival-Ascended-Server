@@ -16,8 +16,9 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 | `PUID`                        | `1001`            | The UID to run server as                                                                  |
 | `PGID`                        | `1001`            | The GID to run server as                                                                  |
 | `BATTLEEYE`                   | `TRUE`            | Set to TRUE to use BattleEye, FALSE to not use BattleEye                                  |
+| `TZ`                       | `America/Los_Angeles`| Timezone setting: Change this to your local timezone.                                     |
 | `RCON_ENABLED`                | `TRUE`            | Needed for Graceful Shutdown                                                              |
-| `DISPLAY_POK_MONITOR_MESSAGE` | `FALSE`            | TRUE to Show the Server Monitor Messages / Update Monitor Shutdown                                             |
+| `DISPLAY_POK_MONITOR_MESSAGE` | `FALSE`           | TRUE to Show the Server Monitor Messages / Update Monitor Shutdown                        |
 | `UPDATE_SERVER`               | `TRUE`            | Enable or disable update checks                                                           |
 | `CHECK_FOR_UPDATE_INTERVAL`   | `24`              | Check for Updates interval in hours                                                       |
 | `UPDATE_WINDOW_MINIMUM_TIME`  | `12:00 AM`        | Defines the minimum time, relative to server time, when an update check should run        |
@@ -98,6 +99,7 @@ services:
     environment:
       - PUID=1001                            # The UID to run server as
       - PGID=1001                            # The GID to run server as
+	    - TZ=America/Los_Angeles               # Timezone setting: Change this to your local timezone. Ex.America/New_York, Europe/Berlin, Asia/Tokyo
       - BATTLEEYE=FALSE                      # Set to TRUE to use BattleEye, FALSE to not use BattleEye
       - RCON_ENABLED=TRUE                    # Needed for Graceful Shutdown / Updates / Server Notifications
       - DISPLAY_POK_MONITOR_MESSAGE=FALSE    # TRUE to Show the Server Monitor Messages / Update Monitor 
