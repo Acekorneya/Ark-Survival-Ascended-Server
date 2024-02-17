@@ -6,8 +6,6 @@ initialize_variables() {
     USERNAME=anonymous
     APPID=2430930
     ASA_DIR="/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server/ShooterGame"
-    CLUSTER_DIR="$ASA_DIR/Cluster"
-    CLUSTER_DIR_OVERRIDE="$CLUSTER_DIR"
     SOURCE_DIR="/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server/"
     DEST_DIR="$ASA_DIR/Binaries/Win64/"
     PERSISTENT_ACF_FILE="$ASA_DIR/appmanifest_$APPID.acf"
@@ -26,7 +24,6 @@ initialize_variables() {
         fi
     fi
 }
-
 
 update_game_user_settings() {
     local ini_file="$ASA_DIR/Saved/Config/WindowsServer/GameUserSettings.ini"
@@ -58,19 +55,6 @@ update_game_user_settings() {
         fi
     else
         echo "GameUserSettings.ini not found."
-    fi
-}
-
-
-
-
-# Check if the Cluster directory exists
-cluster_dir() {
-    if [ -d "$CLUSTER_DIR" ]; then
-        echo "Cluster directory already exists. Skipping folder creation."
-    else
-        echo "Creating Cluster Folder..."
-        mkdir -p "$CLUSTER_DIR"
     fi
 }
 
@@ -242,7 +226,7 @@ start_server() {
     # Start the server with conditional arguments
     sudo -u games wine "$ASA_DIR/Binaries/Win64/ArkAscendedServer.exe" \
         $MAP_PATH?listen?$session_name_arg?Port=${ASA_PORT}${rcon_args}${server_password_arg}?ServerAdminPassword=${SERVER_ADMIN_PASSWORD} \
-        -WinLiveMaxPlayers=${MAX_PLAYERS} -clusterid=${CLUSTER_ID} -ClusterDirOverride=$CLUSTER_DIR_OVERRIDE \
+        -WinLiveMaxPlayers=${MAX_PLAYERS} -clusterid=${CLUSTER_ID} \
         -servergamelog -servergamelogincludetribelogs -ServerRCONOutputTribeLogs -NotifyAdminCommandsInChat -nosteamclient $custom_args \
         $mods_arg $battleye_arg $passive_mods_arg 2>/dev/null &
 
@@ -296,7 +280,6 @@ main() {
     install_server
     update_server
     determine_map_path
-    cluster_dir
     update_game_user_settings
     start_server
 }
