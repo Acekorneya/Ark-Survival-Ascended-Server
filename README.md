@@ -34,7 +34,7 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 | `ASA_PORT`                    | `7777`            | The game port for the server                                                              |
 | `RCON_PORT`                   | `27020`           | Rcon Port Use for Most Server Operations                                                  |
 | `MAX_PLAYERS`                 | `127`             | Max allowed players                                                                       |
-| `CLUSTER_ID`                  | `cluster`         | The Cluster ID for the server                                                             | 
+| `CLUSTER_ID`                  | `cluster`         | The Cluster ID for Server Transfers                                                       | 
 | `PASSIVE_MODS`                | `123456`          | Replace with your passive mods IDs                                                        |
 | `MOD_IDS`                     | `123456`          | Add your mod IDs here, separated by commas, e.g., 123456789,987654321                     |
 | `CUSTOM_SERVER_ARGS`          |                   | If You need to add more Custom Args -ForceRespawnDinos -ForceAllowCaveFlyers              |
@@ -48,6 +48,8 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 - **Folder Creation**: Before starting the Docker Compose file, make sure to manually create any folders that you'll be using for volumes, especially if you're overriding the default folders.
 
 - **UPDATE_WINDOW_MINIMUM_TIME and UPDATE_WINDOW_MAXIMUM_TIME**: Combined, these two values can allow you to define a time window for when server updates should be performed. This can be useful to ensure update driven restarts only happen during off peak hours.
+
+- **SERVER TRANSFERS**: For Server Transfer to Work you just need to make sure you that your CLUSTER_ID is the same in all the servers.
 
 ---
 
