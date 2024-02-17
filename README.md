@@ -71,7 +71,6 @@ When you run the docker compose up it should create this folders in the same fol
 | ---------------------------------------------------- | ---------------------------------------------- |
 | `./ASA`                                              | Game files                                     |
 | `./ARK Survival Ascended Dedicated Server`           | Server files                                   |
-| `./Cluster`                                          | Cluster files                                  |
 
 ---
 
