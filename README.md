@@ -49,7 +49,7 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 
 - **UPDATE_WINDOW_MINIMUM_TIME and UPDATE_WINDOW_MAXIMUM_TIME**: Combined, these two values can allow you to define a time window for when server updates should be performed. This can be useful to ensure update driven restarts only happen during off peak hours.
 
-- **SERVER TRANSFERS**: For Server Transfer to Work you just need to make sure you that your CLUSTER_ID is the same in all the servers.
+- **SERVER TRANSFERS**: For Server Transfer to Work you just need to make sure you that your CLUSTER_ID is the same in all the servers.and also make sure to make a folder outside the server folder and change the path (/Path/to/Cluster) in the docker-compose.yaml file. under the volumes section. and just make sure that all your other docker-compose.yaml files have the same path.
 
 ---
 
@@ -129,6 +129,7 @@ services:
     volumes:
       - "./ASA:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server/ShooterGame"
       - "./ARK Survival Ascended Dedicated Server:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server"
+      - "/Path/to/Cluster:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server/ShooterGame/Saved/clusters"
     mem_limit: 16G 
 
 
