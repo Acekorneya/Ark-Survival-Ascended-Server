@@ -49,7 +49,7 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 
 - **UPDATE_WINDOW_MINIMUM_TIME and UPDATE_WINDOW_MAXIMUM_TIME**: Combined, these two values can allow you to define a time window for when server updates should be performed. This can be useful to ensure update driven restarts only happen during off peak hours.
 
-- **SERVER TRANSFERS**: For Server Transfer to Work you just need to make sure you that your CLUSTER_ID is the same in all the servers.and also make sure to make a folder outside the server folder and change the path (/Path/to/Cluster) in the docker-compose.yaml file. under the volumes section. and just make sure that all your other docker-compose.yaml files have the same path.
+- **SERVER TRANSFERS**: To ensure successful server transfer, ensure that the CLUSTER_ID is identical across all servers. Additionally, create a folder outside the server directory and modify the path (/Path/to/Cluster) in the docker-compose.yaml file within the volumes section. Verify that all other docker-compose.yaml files share the same path.
 
 ---
 
