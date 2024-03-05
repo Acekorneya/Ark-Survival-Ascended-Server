@@ -220,7 +220,29 @@ check_dependencies() {
   # Check if Docker is installed
   if ! command -v docker &>/dev/null; then
     echo "Docker is not installed on your system."
-    exit 1
+    read -p "Do you want to install Docker? [y/N]: " install_docker
+    if [[ "$install_docker" =~ ^[Yy]$ ]]; then
+      # Detect the OS and install Docker accordingly
+      if command -v apt-get &>/dev/null; then
+        # Debian/Ubuntu
+        sudo apt-get update
+        sudo apt-get install -y docker.io
+      elif command -v dnf &>/dev/null; then
+        # Fedora
+        sudo dnf install -y docker
+      elif command -v yum &>/dev/null; then
+        # CentOS/RHEL
+        sudo yum install -y docker
+      else
+        echo "Unsupported Linux distribution. Please install Docker manually and run the script again."
+        exit 1
+      fi
+      sudo usermod -aG docker $USER
+      echo "Docker has been installed. Please log out and log back in for the changes to take effect."
+    else
+      echo "Docker installation declined. Please install Docker manually to proceed."
+      exit 1
+    fi
   fi
 
   # Initialize Docker Compose command variable
@@ -236,8 +258,28 @@ check_dependencies() {
     DOCKER_COMPOSE_CMD="docker-compose"
   else
     echo "Neither 'docker compose' (V2) nor 'docker-compose' (V1) command is available."
-    echo "Please ensure Docker Compose is correctly installed."
-    exit 1
+    read -p "Do you want to install Docker Compose? [y/N]: " install_compose
+    if [[ "$install_compose" =~ ^[Yy]$ ]]; then
+      # Detect the OS and install Docker Compose accordingly
+      if command -v apt-get &>/dev/null; then
+        # Debian/Ubuntu
+        sudo apt-get update
+        sudo apt-get install -y docker-compose
+      elif command -v dnf &>/dev/null; then
+        # Fedora
+        sudo dnf install -y docker-compose
+      elif command -v yum &>/dev/null; then
+        # CentOS/RHEL
+        sudo yum install -y docker-compose
+      else
+        echo "Unsupported Linux distribution. Please install Docker Compose manually and run the script again."
+        exit 1
+      fi
+      DOCKER_COMPOSE_CMD="docker-compose"
+    else
+      echo "Docker Compose installation declined. Please install Docker Compose manually to proceed."
+      exit 1
+    fi
   fi
 
   # Extract the version number using the appropriate command
