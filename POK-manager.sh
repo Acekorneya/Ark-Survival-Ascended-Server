@@ -1,9 +1,9 @@
 #!/bin/bash
-BASE_DIR="$(dirname "$(realpath "$0")")"
+BASE_DIR="$(dirname "$(realpath "$0")")/"
 MAIN_DIR="$BASE_DIR"
-SERVER_FILES_DIR="$BASE_DIR/ServerFiles/arkserver"
-CLUSTER_DIR="$BASE_DIR/Cluster"
-instance_dir="$BASE_DIR/Instance_${instance_name}"
+SERVER_FILES_DIR="./ServerFiles/arkserver"
+CLUSTER_DIR="./Cluster"
+instance_dir="./Instance_${instance_name}"
 # Set PUID and PGID to match the container's expected values
 PUID=1000
 PGID=1000
@@ -539,7 +539,8 @@ root_tasks() {
   check_puid_pgid_user "$PUID" "$PGID"
   check_dependencies
   install_yq
-  adjust_ownership_and_permissions "$SERVER_FILES_DIR" "$CLUSTER_FILES_DIR"
+  adjust_ownership_and_permissions "${base_dir}/ServerFiles/arkserver"
+  adjust_ownership_and_permissions "${base_dir}/Cluster"
   echo "Root tasks completed. You're now ready to create an instance."
 }
 
