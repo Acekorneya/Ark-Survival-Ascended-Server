@@ -1,73 +1,72 @@
-# Use an image that has Wine installed to run Windows applications
-FROM scottyhardy/docker-wine
+FROM ubuntu:20.04
 
-# Add ARG for PUID and PGID with a default value
-ARG PUID=1001
-ARG PGID=1001
+# Accept PUID and PGID environment variables to allow runtime specification
+ARG PUID=1000
+ARG PGID=1000
 
-# Arguments and environment variables
-ENV PUID ${PUID}
-ENV PGID ${PGID}
-ENV WINEPREFIX /usr/games/.wine
-ENV WINEDEBUG err-all
-ENV PROGRAM_FILES "$WINEPREFIX/drive_c/POK"
-ENV ASA_DIR "$PROGRAM_FILES/Steam/steamapps/common/ARK Survival Ascended Dedicated Server/"
+# Set a default timezone, can be overridden at runtime
+ENV TZ=UTC
+ENV PUID=${PUID}
+ENV PGID=${PGID}
 
-# Create required directories
-RUN mkdir -p "$PROGRAM_FILES"
+# Install necessary packages
+RUN set -ex; \
+    dpkg --add-architecture i386; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends jq curl wget tar unzip nano gzip iproute2 procps software-properties-common dbus lib32gcc-s1; \
+    # Cleanup to keep the image lean
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/*
 
-# Change user shell and set ownership
-RUN usermod --shell /bin/bash games && chown -R games:games /usr/games
+# Create the pok group and user, assign home directory, and add to the 'users' group  
+RUN set -ex; \
+    groupadd -g ${PGID} pok && \
+    useradd -d /home/pok -u ${PUID} -g pok -G users -m pok; \
+    mkdir /home/pok/arkserver
 
-# Modify user and group IDs
-RUN groupmod -o -g $PGID games && \
-    usermod -o -u $PUID -g games games
+# Setup working directory
+WORKDIR /opt/steamcmd
+RUN set -ex; \
+    wget -qO- https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz | tar zxvf -
 
-# Install jq, curl, and dependencies for rcon-cli
-USER root
+# Setup the Proton GE
+WORKDIR /usr/local/bin
+RUN set -ex; \
+    curl -sLOJ "$(curl -s https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases/latest | grep browser_download_url | cut -d\" -f4 | grep .tar.gz)"; \
+    tar -xzf GE-Proton*.tar.gz --strip-components=1; \
+    rm GE-Proton*.*
 
-RUN apt-get update && \
-    apt-get install -y jq curl unzip nano && \
-    rm -rf /var/lib/apt/lists/* && \
-    curl -L https://github.com/itzg/rcon-cli/releases/download/1.6.3/rcon-cli_1.6.3_linux_amd64.tar.gz | tar xvz && \
-    mv rcon-cli /usr/local/bin/ && \
+# Setup machine-id for Proton
+RUN set -ex; \
+    rm -f /etc/machine-id; \
+    dbus-uuidgen --ensure=/etc/machine-id; \
+    rm /var/lib/dbus/machine-id; \
+    dbus-uuidgen --ensure
+
+WORKDIR /tmp/
+# Setup rcon-cli
+RUN set -ex; \
+    wget -qO- https://github.com/itzg/rcon-cli/releases/download/1.6.3/rcon-cli_1.6.3_linux_amd64.tar.gz | tar xvz && \
+    mv rcon-cli /usr/local/bin/rcon-cli && \
     chmod +x /usr/local/bin/rcon-cli
 
-# Switch to games user
-USER games
+# Install tini
+ARG TINI_VERSION=v0.19.0
+ADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini /tini
+RUN chmod +x /tini
 
-# Set the working directory
-WORKDIR /usr/games
+RUN set -ex; \
+    chown -R pok:pok /home/pok; \
+    chown -R pok:pok /home/pok/arkserver; \
+    chown -R pok:pok /opt/steamcmd
 
-# Install SteamCMD
-RUN wget https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip \
-    && unzip steamcmd.zip -d "$PROGRAM_FILES/Steam" \
-    && rm steamcmd.zip
+# Copy scripts and defaults folders into the container, ensure they are executable
+COPY --chown=pok:pok scripts/ /home/pok/scripts/
+COPY --chown=pok:pok defaults/ /home/pok/defaults/
+RUN sed -i 's/\r$//' /home/pok/scripts/*.sh && chmod +x /home/pok/scripts/*.sh
+# Switch back to root to run the entrypoint script
+USER pok
+WORKDIR /home/pok
 
-# Debug: Output the directory structure for Program Files to debug
-RUN ls -R "$WINEPREFIX/drive_c/POK"
-
-# Install Steam app dependencies
-RUN ln -s "$PROGRAM_FILES/Steam" /usr/games/Steam && \
-    mkdir -p /usr/games/Steam/steamapps/common && \
-    find /usr/games/Steam/steamapps/common -maxdepth 0 -not -name "Steamworks Shared" 
-
-# Explicitly set the ownership of WINEPREFIX directory to games
-RUN chown -R games:games "$WINEPREFIX"
-
-# Switch back to root for final steps
-USER root
-
-# Copy scripts folder into the container
-COPY scripts/ /usr/games/scripts/
-# Copy defaults folder into the container
-COPY defaults/ /usr/games/defaults/
-
-# Remove Windows-style carriage returns from the scripts
-RUN sed -i 's/\r//' /usr/games/scripts/*.sh
-
-# Make scripts executable
-RUN chmod +x /usr/games/scripts/*.sh
-
-# Set the entry point to Supervisord
-ENTRYPOINT ["/usr/games/scripts/init.sh"]
+# Use tini as the entrypoint  
+ENTRYPOINT ["/tini", "--", "/home/pok/scripts/init.sh"]
