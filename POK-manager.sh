@@ -530,14 +530,16 @@ install_yq() {
 
 # Root tasks
 root_tasks() {
-  # Check vm.max_map_count
-  #check_vm_max_map_count
+  local base_dir=$(dirname "$(realpath "$0")")
+  check_vm_max_map_count
   check_puid_pgid_user "$PUID" "$PGID"
   check_dependencies
   install_yq
-  adjust_ownership_and_permissions "$BASE_DIR"
+  adjust_ownership_and_permissions "${base_dir}/ServerFiles"
+  adjust_ownership_and_permissions "${base_dir}/Cluster"
   echo "Root tasks completed. You're now ready to create an instance."
 }
+
 pull_docker_image() {
   local image_name="acekorneya/asa_server:beta"
   echo "Pulling Docker image: $image_name"
