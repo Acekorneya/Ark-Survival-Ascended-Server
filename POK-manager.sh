@@ -534,7 +534,7 @@ root_tasks() {
   check_dependencies
   install_yq
   adjust_ownership_and_permissions "$BASE_DIR"
-  update_manager_and_instances
+  
   echo "Root tasks completed. You're now ready to create an instance."
 }
 
