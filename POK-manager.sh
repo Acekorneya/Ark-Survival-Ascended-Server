@@ -380,8 +380,10 @@ check_vm_max_map_count() {
   local current_map_count=$(cat /proc/sys/vm/max_map_count)
   if [ "$current_map_count" -lt "$required_map_count" ]; then
     echo "ERROR: vm.max_map_count is too low ($current_map_count). Needs to be at least $required_map_count."
-    echo "Run 'sudo sysctl -w vm.max_map_count=262144' to temporarily fix this issue."
-    echo "For a permanent fix, add 'vm.max_map_count=262144' to /etc/sysctl.conf and run 'sudo sysctl -p'."
+    echo "Please run the following command to temporarily set the value:"
+    echo "  sudo sysctl -w vm.max_map_count=262144"
+    echo "To set the value permanently, add the following line to /etc/sysctl.conf and run 'sudo sysctl -p':"
+    echo "  vm.max_map_count=262144"
     exit 1
   fi
 }
@@ -921,9 +923,10 @@ start_instance() {
   local docker_compose_file="./Instance_${instance_name}/docker-compose-${instance_name}.yaml"
   echo "-----Starting ${instance_name} Server-----"
   if [ -f "$docker_compose_file" ]; then
-    get_docker_compose_cmd # Add this line to get the correct Docker Compose command
+    get_docker_compose_cmd #  get the correct Docker Compose command
     echo "Using $DOCKER_COMPOSE_CMD for ${instance_name}..."
-    pull_docker_image # Add this line to pull the Docker image before starting the instance
+    pull_docker_image # A pull the Docker image before starting the instance
+    check_vm_max_map_count  #  check if the VM has the max_map_count setting set
     $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d
     echo "-----Server Started for ${instance_name} -----"
     echo "You can check the status of your server by running -status -all or -status ${instance_name}."
