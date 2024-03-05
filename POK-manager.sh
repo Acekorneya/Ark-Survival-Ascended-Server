@@ -534,10 +534,13 @@ root_tasks() {
   check_dependencies
   install_yq
   adjust_ownership_and_permissions "$BASE_DIR"
-  
   echo "Root tasks completed. You're now ready to create an instance."
 }
-
+pull_docker_image() {
+  local image_name="acekorneya/asa_server:beta"
+  echo "Pulling Docker image: $image_name"
+  docker pull "$image_name"
+}
 
 read_docker_compose_config() {
   local instance_name="$1"
@@ -918,7 +921,9 @@ start_instance() {
   local docker_compose_file="./Instance_${instance_name}/docker-compose-${instance_name}.yaml"
   echo "-----Starting ${instance_name} Server-----"
   if [ -f "$docker_compose_file" ]; then
+    get_docker_compose_cmd # Add this line to get the correct Docker Compose command
     echo "Using $DOCKER_COMPOSE_CMD for ${instance_name}..."
+    pull_docker_image # Add this line to pull the Docker image before starting the instance
     $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d
     echo "-----Server Started for ${instance_name} -----"
     echo "You can check the status of your server by running -status -all or -status ${instance_name}."
