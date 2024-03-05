@@ -368,7 +368,7 @@ adjust_ownership_and_permissions() {
   find "$dir" -type f -exec chmod 644 {} \;
 
   # Set executable bit for POK-manager.sh
-  chmod +x "$dir/POK-manager.sh"
+  chmod +x "$(dirname "$(realpath "$0")")/POK-manager.sh"
 
   echo "Ownership and permissions adjustment on $dir completed."
 }
@@ -653,8 +653,10 @@ EOF
       *) env_key="$key" ;; # Default case if the mapping is direct
     esac
     
-    # Write the environment variable to the Docker Compose file
-    echo "      - $env_key=${config_values[$key]}" >> "$docker_compose_file"
+    # Write the environment variable to the Docker Compose file, skipping Memory Limit
+    if [[ "$key" != "Memory Limit" ]]; then
+      echo "      - $env_key=${config_values[$key]}" >> "$docker_compose_file"
+    fi
   done
 
   # Continue writing the rest of the Docker Compose configuration
