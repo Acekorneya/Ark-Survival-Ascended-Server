@@ -361,11 +361,14 @@ adjust_ownership_and_permissions() {
   if [ ! -d "$dir" ]; then
     echo "Creating directory: $dir"
     mkdir -p "$dir"
+    chown 1000:1000 "$dir"
+    chmod 755 "$dir"
   fi
 
   echo "Checking and adjusting ownership and permissions for $dir..."
-  chown -R 1000:1000 "$dir"
+  find "$dir" -type d -exec chown 1000:1000 {} \;
   find "$dir" -type d -exec chmod 755 {} \;
+  find "$dir" -type f -exec chown 1000:1000 {} \;
   find "$dir" -type f -exec chmod 644 {} \;
 
   # Set executable bit for POK-manager.sh
