@@ -357,9 +357,10 @@ adjust_ownership_and_permissions() {
     return 1
   fi
 
+  # Create the directory if it doesn't exist
   if [ ! -d "$dir" ]; then
-    echo "Error: Directory does not exist: $dir"
-    return 1
+    echo "Creating directory: $dir"
+    mkdir -p "$dir"
   fi
 
   echo "Checking and adjusting ownership and permissions for $dir..."
