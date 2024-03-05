@@ -1,5 +1,5 @@
 #!/bin/bash
-BASE_DIR="$(dirname "$(realpath "$0")")/"
+BASE_DIR="$(dirname "$(realpath "$0")")"
 MAIN_DIR="$BASE_DIR"
 SERVER_FILES_DIR="$BASE_DIR/ServerFiles/arkserver"
 CLUSTER_DIR="$BASE_DIR/Cluster"
