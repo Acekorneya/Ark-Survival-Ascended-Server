@@ -347,7 +347,10 @@ set_timezone() {
   echo "Detected Host Timezone: $current_tz"
   read -rp "Press Enter to accept the host default for the container timezone ($current_tz) or type to change: " user_tz
   TZ="${user_tz:-$current_tz}" # Use user input or fall back to detected timezone
-
+  
+  # Export the TZ variable for use in other functions
+  export TZ
+  
   # Add TZ environment variable to the Docker Compose file for the instance
   echo "Configured Timezone: $TZ"
   echo "TZ=$TZ" >> "${instance_dir}/docker-compose-${instance_name}.yaml"
@@ -1291,17 +1294,21 @@ backup_single_instance() {
   # Remove the trailing slash from $MAIN_DIR if it exists
   local main_dir="${MAIN_DIR%/}"
   local backup_dir="${main_dir}/backups/${instance_name}"
-  local timestamp=$(date +"%Y-%m-%d_%H-%M-%S")
-  local backup_file="${backup_dir}/${instance_name}_backup_${timestamp}.tar.gz"
-
+  
+  # Get the current timestamp based on the host's timezone
+  local timestamp=$(TZ="$(cat /etc/timezone)" date +"%Y-%m-%d_%I%p-%M-%S")
+  
+  # Format the backup file name
+  local backup_file="${instance_name}_backup_${timestamp}.tar.gz"
+  
   mkdir -p "$backup_dir"
 
   local instance_dir="${main_dir}/Instance_${instance_name}"
   local saved_arks_dir="${instance_dir}/Saved/SavedArks"
   if [ -d "$saved_arks_dir" ]; then
     echo "Creating backup for instance $instance_name..."
-    tar -czf "$backup_file" -C "$instance_dir/Saved" "SavedArks"
-    echo "Backup created: $backup_file"
+    tar -czf "${backup_dir}/${backup_file}" -C "$instance_dir/Saved" "SavedArks"
+    echo "Backup created: ${backup_dir}/${backup_file}"
   else
     echo "SavedArks directory not found for instance $instance_name. Skipping backup."
   fi
@@ -1349,7 +1356,7 @@ restore_instance() {
 
     echo "Here is a list of all your backup archives:"
     for ((i=0; i<${#backup_files[@]}; i++)); do
-      echo "$((i+1)) - - - - - File: $(basename "${backup_files[i]}")"
+      echo "$((i+1)) ------ File: $(basename "${backup_files[i]}")"
     done
 
     read -p "Please input the number of the archive you want to restore: " choice
