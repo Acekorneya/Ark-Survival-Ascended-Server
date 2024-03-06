@@ -124,6 +124,7 @@ validate_mod_ids() {
   echo "$input"
 }
 
+
 validate_simple_password() {
   local input="$1"
   # Loop until the input is alphanumeric (letters and numbers only)
@@ -216,6 +217,7 @@ prompt_for_input() {
   esac
 }
 
+
 check_dependencies() {
   # Check if Docker is installed
   if ! command -v docker &>/dev/null; then
@@ -295,6 +297,7 @@ check_dependencies() {
   echo "$DOCKER_COMPOSE_CMD" > ./config/POK-manager/docker_compose_cmd
   echo "Using Docker Compose command: '$DOCKER_COMPOSE_CMD'."
 }
+
 get_docker_compose_cmd() {
   local cmd_file="./config/POK-manager/docker_compose_cmd"
   local config_dir="./config/POK-manager"
@@ -377,7 +380,6 @@ adjust_ownership_and_permissions() {
   echo "Ownership and permissions adjustment on $dir completed."
 }
 
-
 # Check vm.max_map_count
 check_vm_max_map_count() {
   local required_map_count=262144
@@ -391,7 +393,9 @@ check_vm_max_map_count() {
     exit 1
   fi
 }
+
 check_puid_pgid_user() {
+
   local puid="$1"
   local pgid="$2"
 
@@ -412,12 +416,13 @@ check_puid_pgid_user() {
     echo "Alternatively, you can run the script with sudo to bypass this check: sudo .POK-manager.sh <commands>"
     exit 1
   fi
+  
   # Check if a user with the specified PUID exists
   local puid_user=$(getent passwd "${puid}" | cut -d: -f1)
   if [ -z "${puid_user}" ]; then
     echo "No user found with UID (${puid}). You may need to create a user with this UID or change an existing user's UID."
     echo "To create a new user with the specified UID, run the following command:"
-    echo "sudo useradd -u (${puid}) -m -s /bin/bash <username>"
+    echo "sudo useradd -u ${puid} -m -s /bin/bash <username>"
     echo "Replace <username> with your preferred username."
     exit 1
   else
@@ -427,9 +432,9 @@ check_puid_pgid_user() {
   # Check if a group with the specified PGID exists
   local pgid_group=$(getent group "${pgid}" | cut -d: -f1)
   if [ -z "${pgid_group}" ]; then
-    echo "No group found with GID (${pgid}_. You may need to create a group with this GID or change an existing group's GID."
+    echo "No group found with GID (${pgid}). You may need to create a group with this GID or change an existing group's GID."
     echo "To create a new group with the specified GID, run the following command:"
-    echo "sudo groupadd -g (${pgid}_ <groupname>"
+    echo "sudo groupadd -g ${pgid} <groupname>"
     echo "Replace <groupname> with your preferred group name."
     exit 1
   else
@@ -688,7 +693,8 @@ adjust_docker_permissions() {
   local config_file=$(get_config_file_path)
 
   if [ -f "$config_file" ]; then
-    local use_sudo=$(cat "$config_file")
+    local use_sudo
+    use_sudo=$(cat "$config_file")
     if [ "$use_sudo" = "false" ]; then
       echo "User has chosen to run Docker commands without 'sudo'."
       return
@@ -911,14 +917,6 @@ find_editor() {
     fi
   else
     echo "No editor specified. Exiting..."
-    exit 1
-  fi
-}
-
-# Check for root privileges
-require_root_privileges() {
-  if [[ "$EUID" -ne 0 ]]; then
-    echo "This action requires root privileges. Please run the script with 'sudo'."
     exit 1
   fi
 }
