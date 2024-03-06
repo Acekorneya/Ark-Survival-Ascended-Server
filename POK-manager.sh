@@ -539,7 +539,7 @@ root_tasks() {
   check_puid_pgid_user "$PUID" "$PGID"
   check_dependencies
   install_yq
-  adjust_ownership_and_permissions "${base_dir}/ServerFiles/arkserver"
+  adjust_ownership_and_permissions "${base_dir}/ServerFiles/arkserver/ShooterGame"
   adjust_ownership_and_permissions "${base_dir}/Cluster"
   echo "Root tasks completed. You're now ready to create an instance."
 }
