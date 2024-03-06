@@ -1452,8 +1452,8 @@ manage_service() {
     execute_rcon_command "$action" "$instance_name"
     ;;
   *)
-    echo "Invalid action. Usage: $0 {action} {instance_name} [additional_args...]"
-    echo "Actions include: -start, -stop, -update, -create, -setup, -status, -restart, -saveworld, -chat, -custom"
+    echo "Invalid action. Usage: $0 {action} [additional_args...] {instance_name}"
+    echo "Actions include: -start, -stop, -update, -create, -setup, -status, -restart, -saveworld, -chat, -custom, -backup, -restore"
     exit 1
     ;;
   esac
