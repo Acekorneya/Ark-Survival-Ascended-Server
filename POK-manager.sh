@@ -1268,6 +1268,112 @@ update_manager_and_instances() {
     fi
   done
 }
+backup_instance() {
+  local instance_name="$1"
+
+  if [[ "$instance_name" == "-all" ]]; then
+    local instances=($(list_instances))
+    for instance in "${instances[@]}"; do
+      backup_single_instance "$instance"
+    done
+  else
+    backup_single_instance "$instance_name"
+  fi
+
+  # Adjust ownership and permissions for the backup directory
+  local main_dir="${MAIN_DIR%/}"
+  local backup_dir="${main_dir}/backups"
+  adjust_ownership_and_permissions "$backup_dir"
+}
+
+backup_single_instance() {
+  local instance_name="$1"
+  # Remove the trailing slash from $MAIN_DIR if it exists
+  local main_dir="${MAIN_DIR%/}"
+  local backup_dir="${main_dir}/backups/${instance_name}"
+  local timestamp=$(date +"%Y-%m-%d_%H-%M-%S")
+  local backup_file="${backup_dir}/${instance_name}_backup_${timestamp}.tar.gz"
+
+  mkdir -p "$backup_dir"
+
+  local instance_dir="${main_dir}/Instance_${instance_name}"
+  local saved_arks_dir="${instance_dir}/Saved/SavedArks"
+  if [ -d "$saved_arks_dir" ]; then
+    echo "Creating backup for instance $instance_name..."
+    tar -czf "$backup_file" -C "$instance_dir/Saved" "SavedArks"
+    echo "Backup created: $backup_file"
+  else
+    echo "SavedArks directory not found for instance $instance_name. Skipping backup."
+  fi
+}
+restore_instance() {
+  local instance_name="$1"
+  # Remove the trailing slash from $MAIN_DIR if it exists
+  local main_dir="${MAIN_DIR%/}"
+  local backup_dir="${main_dir}/backups"
+
+  if [ -z "$instance_name" ]; then
+    echo "No instance name specified. Please select an instance to restore from the list below."
+    local instances=($(find "$backup_dir" -maxdepth 1 -mindepth 1 -type d -exec basename {} \;))
+    if [ ${#instances[@]} -eq 0 ]; then
+      echo "No instances found with backups."
+      return
+    fi
+    
+    for ((i=0; i<${#instances[@]}; i++)); do
+      echo "$((i+1)). ${instances[i]}"
+    done
+    
+    read -p "Enter the number of the instance to restore: " choice
+    if [[ $choice =~ ^[0-9]+$ ]] && [ $choice -ge 1 ] && [ $choice -le ${#instances[@]} ]; then
+      instance_name="${instances[$((choice-1))]}"
+    else
+      echo "Invalid choice. Exiting."
+      return
+    fi
+  fi
+
+  local instance_backup_dir="${backup_dir}/${instance_name}"
+
+  if [ -d "$instance_backup_dir" ]; then
+    local backup_files=($(ls -1 "$instance_backup_dir"/*.tar.gz 2>/dev/null))
+    if [ ${#backup_files[@]} -eq 0 ]; then
+      echo "No backups found for instance $instance_name."
+      return
+    fi
+
+    if [[ " $(list_running_instances) " =~ " $instance_name " ]]; then
+      echo "Stopping the server."
+      stop_instance "$instance_name"
+    fi
+
+    echo "Here is a list of all your backup archives:"
+    for ((i=0; i<${#backup_files[@]}; i++)); do
+      echo "$((i+1)) - - - - - File: $(basename "${backup_files[i]}")"
+    done
+
+    read -p "Please input the number of the archive you want to restore: " choice
+    if [[ $choice =~ ^[0-9]+$ ]] && [ $choice -ge 1 ] && [ $choice -le ${#backup_files[@]} ]; then
+      local selected_backup="${backup_files[$((choice-1))]}"
+      local instance_dir="${main_dir}/Instance_${instance_name}"
+      local saved_arks_dir="${instance_dir}/Saved/SavedArks"
+
+      echo "$(basename "$selected_backup") is getting restored ..."
+      mkdir -p "$saved_arks_dir"
+      tar -xzf "$selected_backup" -C "$instance_dir/Saved"
+      adjust_ownership_and_permissions "$saved_arks_dir"
+      echo "Backup restored successfully!"
+
+      echo "Starting server..."
+      start_instance "$instance_name"
+      echo "Server should be up in a few minutes."
+    else
+      echo "Invalid choice."
+    fi
+  else
+    echo "No backups found for instance $instance_name."
+  fi
+}
 manage_service() {
   get_docker_compose_cmd
   local action=$1
@@ -1316,6 +1422,19 @@ manage_service() {
   -start)
     start_instance "$instance_name"
     ;;
+  -backup)
+    if [[ -z "$instance_name" ]]; then
+      echo "No instance name or '-all' flag specified. Defaulting to backing up all instances."
+      backup_instance "-all"
+    elif [[ "$instance_name" == "-all" ]]; then
+      backup_instance "-all"
+    else
+      backup_instance "$instance_name"
+    fi
+    ;;
+  -restore)
+    restore_instance "$instance_name"
+    ;;
   -stop)
     stop_instance "$instance_name"
     ;;
@@ -1341,7 +1460,7 @@ manage_service() {
 }
 
 # Define valid actions for the script
-valid_actions=("-list" "-edit" "-setup" "-create" "-start" "-stop" "-shutdown" "-update" "-status" "-restart" "-saveworld" "-chat" "-custom")
+valid_actions=("-list" "-edit" "-setup" "-create" "-start" "-stop" "-shutdown" "-update" "-status" "-restart" "-saveworld" "-chat" "-custom" "-backup" "-restore")
 
 main() {
   # Check for required user and group at the start
