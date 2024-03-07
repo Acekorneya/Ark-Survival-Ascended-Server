@@ -1351,10 +1351,9 @@ check_for_POK_updates() {
       mv "$temp_file" "$0"
       chmod +x "$0"
       chown 1000:1000 "$0"
-      echo "POK-manager.sh has been updated. Please run the script again."
-      exit 0
+      echo "----- POK-manager.sh has been updated to the latest version -----"
     else
-      echo "POK-manager.sh is already up to date."
+      echo "----- POK-manager.sh is already up to date -----"
       rm "$temp_file"
     fi
   fi
