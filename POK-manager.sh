@@ -1370,6 +1370,7 @@ update_manager_and_instances() {
     if ! cmp -s "$0" "$temp_file"; then
       mv "$temp_file" "$BASE_DIR/POK-manager.sh"
       chmod +x "$BASE_DIR/POK-manager.sh"
+      adjust_ownership_and_permissions "$BASE_DIR"
       echo "----- POK-manager.sh has been updated -----"
       echo "Please run the script again to use the updated version."
       exit 0
