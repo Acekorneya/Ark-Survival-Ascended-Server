@@ -364,17 +364,30 @@ get_config_file_path() {
   echo "$config_dir/config.txt"
 }
 prompt_change_host_timezone() {
-  read -p "Do you want to change the host's timezone? (y/N): " change_tz
+  # Get the current host timezone
+  local current_tz=$(timedatectl show -p Timezone --value)
+
+  read -p "Do you want to change the host's timezone? Current timezone: $current_tz (y/N): " change_tz
   if [[ "$change_tz" =~ ^[Yy]$ ]]; then
     read -p "Enter the desired timezone (e.g., America/New_York): " new_tz
     if timedatectl set-timezone "$new_tz"; then
       echo "Host timezone set to $new_tz"
     else
       echo "Failed to set the host timezone to $new_tz"
+      read -p "Do you want to use the default UTC timezone instead? (Y/n): " use_default
+      if [[ ! "$use_default" =~ ^[Nn]$ ]]; then
+        if timedatectl set-timezone "UTC"; then
+          echo "Host timezone set to the default UTC"
+        else
+          echo "Failed to set the host timezone to the default UTC"
+        fi
+      fi
     fi
   else
     echo "Host timezone change skipped."
   fi
+
+  echo "You can always run './POK-manager.sh -setup' again to change the host's timezone later."
 }
 # Set timezone
 set_timezone() {
