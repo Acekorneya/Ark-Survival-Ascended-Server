@@ -1133,73 +1133,69 @@ execute_rcon_command() {
     local instance_name="$1"
     shift # Remove the instance name
     local message="$*" # Remaining arguments form the message/command
-    echo "Processing $action command on $instance_name..."
-    # Check if there are any running instances for the specified instance name
-    if [ -z "$(list_running_instances | grep -w "$instance_name")" ]; then
-      echo "---- No Running Instances Found for command: $action -----"
-      echo " To start an instance, use the -start -all or -start <instance_name> command."
-      return
-    fi
 
-    if ! validate_instance "$instance_name"; then
-      echo "Instance $instance_name is not running or does not exist."
-      return
-    fi
+    # Check if the instance is running before processing the command
+    if validate_instance "$instance_name"; then
+      echo "Processing $action command on $instance_name..."
 
-    if [[ "$action" == "-status" ]]; then
-      local container_name="asa_${instance_name}"
-      local pdb_file="/home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.pdb"
-      local update_flag="/home/pok/update.flag"
+      if [[ "$action" == "-status" ]]; then
+        local container_name="asa_${instance_name}"
+        local pdb_file="/home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.pdb"
+        local update_flag="/home/pok/update.flag"
 
-      if ! docker exec "$container_name" test -f "$pdb_file"; then
-        if docker exec "$container_name" test -f "$update_flag"; then
-          echo "Instance $instance_name is still updating/installing. Please wait until the update is complete before checking the status."
-          return
-        else
-          echo "Instance $instance_name has not fully started yet. Please wait a few minutes before checking the status."
-          return
+        if ! docker exec "$container_name" test -f "$pdb_file"; then
+          if docker exec "$container_name" test -f "$update_flag"; then
+            echo "Instance $instance_name is still updating/installing. Please wait until the update is complete before checking the status."
+            return
+          else
+            echo "Instance $instance_name has not fully started yet. Please wait a few minutes before checking the status."
+            return
+          fi
         fi
       fi
-    fi
 
-    if [[ "$action" == "-shutdown" ]]; then
-      local eta_seconds=$((wait_time * 60)) # Convert wait time to seconds
-      local eta_time=$(date -d "@$(($(date +%s) + eta_seconds))" "+%Y-%m-%d %H:%M:%S") # Calculate ETA as a human-readable timestamp
-      echo "Waiting for server $instance_name to finish with countdown... ETA: $eta_time"
-      echo "Shutdown command sent to $instance_name. ETA: $wait_time minute(s)."
-      inject_shutdown_flag_and_shutdown "$instance_name" "$message" "$wait_time" &
+      if [[ "$action" == "-shutdown" ]]; then
+        local eta_seconds=$((wait_time * 60)) # Convert wait time to seconds
+        local eta_time=$(date -d "@$(($(date +%s) + eta_seconds))" "+%Y-%m-%d %H:%M:%S") # Calculate ETA as a human-readable timestamp
+        echo "Waiting for server $instance_name to finish with countdown... ETA: $eta_time"
+        echo "Shutdown command sent to $instance_name. ETA: $wait_time minute(s)."
+        inject_shutdown_flag_and_shutdown "$instance_name" "$message" "$wait_time" &
 
-      # Start the live countdown in a background process
-      (
-        for ((i=eta_seconds; i>=0; i--)); do
-          # Clear the line
-          echo -ne "\033[2K\r"
+        # Start the live countdown in a background process
+        (
+          for ((i=eta_seconds; i>=0; i--)); do
+            # Clear the line
+            echo -ne "\033[2K\r"
 
-          # Format the remaining time as minutes and seconds
-          minutes=$((i / 60))
-          seconds=$((i % 60))
+            # Format the remaining time as minutes and seconds
+            minutes=$((i / 60))
+            seconds=$((i % 60))
 
-          # Print the countdown
-          echo -ne "ETA: ${minutes}m ${seconds}s\r"
-          sleep 1
-        done
-        # Print a newline after the countdown is finished
-        echo
-      ) &
+            # Print the countdown
+            echo -ne "ETA: ${minutes}m ${seconds}s\r"
+            sleep 1
+          done
+          # Print a newline after the countdown is finished
+          echo
+        ) &
 
-      wait # Wait for the shutdown process to complete
-      echo "----- Shutdown Complete for instance: $instance_name -----"
-      echo "Commands dispatched. Script exiting..."
-      exit 0 # Exit the script after the countdown and shutdown process are complete
-    elif [[ "$action" == "-restart" ]]; then
-      run_in_container_background "$instance_name" "$action" "$message" &
-      echo "Commands dispatched. Script exiting..."
-      exit 0 # Exit the script immediately after sending the restart command
-    elif [[ "$run_in_background" == "true" ]]; then
-      run_in_container_background "$instance_name" "$action" "$message"
-      exit 0 # Exit script after background job is complete
+        wait # Wait for the shutdown process to complete
+        echo "----- Shutdown Complete for instance: $instance_name -----"
+        echo "Commands dispatched. Script exiting..."
+        exit 0 # Exit the script after the countdown and shutdown process are complete
+      elif [[ "$action" == "-restart" ]]; then
+        run_in_container_background "$instance_name" "$action" "$message" &
+        echo "Commands dispatched. Script exiting..."
+        exit 0 # Exit the script immediately after sending the restart command
+      elif [[ "$run_in_background" == "true" ]]; then
+        run_in_container_background "$instance_name" "$action" "$message"
+        exit 0 # Exit script after background job is complete
+      else
+        run_in_container "$instance_name" "$action" "$message"
+      fi
     else
-      run_in_container "$instance_name" "$action" "$message"
+      echo "---- Instance $instance_name is not running or does not exist. -----"
+      echo " To start an instance, use the -start -all or -start <instance_name> command."
     fi
   fi
   #echo "Commands dispatched. Script exiting..."
@@ -1637,14 +1633,21 @@ manage_service() {
     update_manager_and_instances
     exit 0
     ;;
-  -shutdown)
-    execute_rcon_command "$action" "$instance_name" "${additional_args[@]}"
-    ;;
-  -restart)
+  -restart | -shutdown)
     execute_rcon_command "$action" "$instance_name" "${additional_args[@]}"
     ;;
   -saveworld |-status)
     execute_rcon_command "$action" "$instance_name"
+    ;;
+  -chat)
+    local message="$instance_name"
+    instance_name="$additional_args"
+    execute_rcon_command "$action" "$instance_name" "$message"
+    ;;
+  -custom)
+    local rcon_command="$instance_name"
+    instance_name="$additional_args"
+    execute_rcon_command "$action" "$instance_name" "$rcon_command"
     ;;
   -logs)
     local live=""
@@ -1749,19 +1752,24 @@ main() {
     fi
   fi
 
-  # Special check for -chat action to ensure message is quoted
+  # Special check for -chat action
   if [[ "$action" == "-chat" ]]; then
-    if [[ "$#" -lt 3 ]] || [[ "$instance_name" != \"*\" ]]; then
+    if [[ "$#" -lt 2 ]]; then
       echo "Error: -chat requires a quoted message and an instance name or -all."
+      echo "Usage: $0 -chat \"<message>\" <instance_name|-all>"
+      exit 1
+    fi
+    if [[ -z "$instance_name" ]]; then
+      echo "Error: -chat requires an instance name or -all."
       echo "Usage: $0 -chat \"<message>\" <instance_name|-all>"
       exit 1
     fi
   fi
 
-  # Special check for -custom action to ensure instance name or -all is provided
+  # Special check for -custom action
   if [[ "$action" == "-custom" ]]; then
-    if [[ "$#" -lt 3 ]] || [[ -z "$instance_name" && "$instance_name" != "-all" ]]; then
-      echo "Error: -custom requires additional arguments and an instance name or -all."
+    if [[ -z "$instance_name" && "$instance_name" != "-all" ]]; then
+      echo "Error: -custom requires an instance name or -all."
       echo "Usage: $0 -custom <additional_args> <instance_name|-all>"
       exit 1
     fi
