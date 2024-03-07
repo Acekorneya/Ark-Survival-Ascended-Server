@@ -408,7 +408,7 @@ set_timezone() {
   
   # Export the TZ variable for use in other functions
   export TZ
-  
+  export USER_TIMEZONE="$TZ"
   # Add TZ environment variable to the Docker Compose file for the instance
   echo "Configured Timezone: $TZ"
   echo "TZ=$TZ" >> "${instance_dir}/docker-compose-${instance_name}.yaml"
@@ -1456,8 +1456,11 @@ backup_single_instance() {
   local main_dir="${MAIN_DIR%/}"
   local backup_dir="${main_dir}/backups/${instance_name}"
   
+  # Get the current timezone using timedatectl
+  local timezone="${USER_TIMEZONE:-$(timedatectl show -p Timezone --value)}"
+  
   # Get the current timestamp based on the host's timezone
-  local timestamp=$(TZ="$(cat /etc/timezone)" date +"%Y-%m-%d_%I%p-%M-%S")
+  local timestamp=$(TZ="$timezone" date +"%Y-%m-%d_%I%p-%M-%S")
   
   # Format the backup file name
   local backup_file="${instance_name}_backup_${timestamp}.tar.gz"
