@@ -1,9 +1,94 @@
 
 ### Documentation for Ark Survival Ascended Server Docker Image
 
+🚀 **Enhanced Beta Script Setup Guide: ARK Survival Ascended Server** 🚀
+
+Hi everyone, I'm excited to introduce my new beta script for managing your ARK server instances. The script takes care of server clustering for you, just make sure the cluster ID is the same. You can view all available commands by running `POK-manager.sh`. More documentation will be provided soon, but in the meantime, feel free to play around with it and let me know if you find any issues.
+
+**1. Create or Modify User for Container**
+
+- For a new user named `pokuser`:
+```bash
+sudo useradd -u 1000 -g 1000 -m -s /bin/bash pokuser
+```
+
+- To modify an existing user:
+```bash
+sudo usermod -u 1000 <existing_username>
+sudo groupmod -g 1000 <existing_username>
+```
+
+**2. Configure System Settings**
+
+- Set `vm.max_map_count` temporarily:
+```bash
+sudo sysctl -w vm.max_map_count=262144
+```
+
+- For permanent setup, add `vm.max_map_count=262144` to `/etc/sysctl.conf`, save, and apply changes:
+```bash
+sudo sysctl -p
+```
+
+**3. Adjust Permissions (Optional)**
+
+- Adjust folder permissions if not using a separate user:
+```bash
+sudo chown -R 1000:1000 /path/to/your/instance/folder
+```
+
+**4. Download & Setup**
+
+- Simplified download and setup command:
+```bash
+git clone -b beta --single-branch https://github.com/Acekorneya/Ark-Survival-Ascended-Server.git && sudo chown -R 1000:1000 Ark-Survival-Ascended-Server && sudo mv Ark-Survival-Ascended-Server/POK-manager.sh . && sudo chmod +x POK-manager.sh && sudo mv Ark-Survival-Ascended-Server/defaults . && sudo rm -rf Ark-Survival-Ascended-Server
+```
+This command accomplishes several tasks efficiently:
+  - Clones the beta version of the ARK Survival Ascended Server.
+  - Changes the ownership of the downloaded files to `pokuser`.
+  - Moves the `POK-manager.sh` script to the current directory and makes it executable.
+  - Moves the `defaults` directory to the current directory.
+  - Cleans up by removing the cloned repository folder.
+
+**5. Run the POK-manager.sh Script**
+
+- To set up and start your ARK server instance:
+```bash
+./POK-manager.sh -setup
+./POK-manager.sh -create <instance_name>
+```
+
+**6. View Server Status**
+
+- To view the server status:
+```bash
+./POK-manager.sh -status -all
+```
+or for a specific instance:
+```bash
+./POK-manager.sh -status <instance_name>
+```
+
+**All Available Commands**
+
+- To explore all the script's capabilities:
+```bash
+./POK-manager.sh
+```
+
+**Note:** Use `sudo` with `POK-manager.sh` commands if you've set up folder permissions using it.
+
+This guide is designed to streamline your setup process. Please report any feedback or issues you encounter to help us refine the beta script. 
+
+⚠ **Important Notice:** As this is a beta version, please proceed with caution. Though we've addressed many bugs, there may still be unforeseen issues.
+
+
+⚡ **Additional Note:** The requirement for setting the PUID and PGID can be bypassed by prefixing commands with `sudo`. For example, you can use `sudo ./POK-manager.sh` for operations without needing to adjust the user's UID and GID. This is especially useful for quick tests or when you prefer not to modify user settings.
+
+
 #### Docker Image Details
 
-This Docker image is designed to run a dedicated server for the game Ark Survival Ascended. It's based on `scottyhardy/docker-wine` to enable the running of Windows applications. The image uses a bash script to handle startup, server installation, server update ,and setting up environment variables.
+This Docker image is designed to run a dedicated server for the game Ark Survival Ascended.
 
 #### Docker Hub Repository: https://hub.docker.com/r/acekorneya/asa_server
 
@@ -43,13 +128,8 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 
 #### Additional Information
 
-- **PUID and PGID**: These are important for setting the permissions of the folders that Docker will use. Make sure to set these values based on your host machine's user and group ID
-  
-- **Folder Creation**: Before starting the Docker Compose file, make sure to manually create any folders that you'll be using for volumes, especially if you're overriding the default folders.
-
 - **UPDATE_WINDOW_MINIMUM_TIME and UPDATE_WINDOW_MAXIMUM_TIME**: Combined, these two values can allow you to define a time window for when server updates should be performed. This can be useful to ensure update driven restarts only happen during off peak hours.
 
-- **SERVER TRANSFERS**: To ensure successful server transfer, ensure that the CLUSTER_ID is identical across all servers. Additionally, create a folder outside the server directory and modify the path (/Path/to/Cluster) in the docker-compose.yaml file within the volumes section. Verify that all other docker-compose.yaml files share the same path.
 
 ---
 
@@ -64,14 +144,6 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 #### Comments
 Query Port is not needed for Ark Ascended 
 
-#### Volumes
-When you run the docker compose up it should create this folders in the same folder as the docker-compose.yaml file unless changed by the user
-
-| Volume Path                                          | Description                                   |
-| ---------------------------------------------------- | ---------------------------------------------- |
-| `./ASA`                                              | Game files                                     |
-| `./ARK Survival Ascended Dedicated Server`           | Server files                                   |
-
 ---
 
 #### Recommended System Requirements
@@ -85,8 +157,6 @@ When you run the docker compose up it should create this folders in the same fol
 #### Usage
 
 ##### Docker Compose
-
-Create a `docker-compose.yaml` file and populate it with the service definition. 
 
 ```yaml
 version: '2.4'
@@ -134,21 +204,10 @@ services:
 
 
 ```
-
-If you're planning to change the volume directories, create those directories manually before starting the service.
-
-Then, run the following command to start the server:
-
-```bash
-sudo docker compose up
-```
-
----
-
 #### Additional server settings 
 
 Advanced Config
-For custom settings, edit GameUserSettings.ini in ASA/Saved/Config/WindowsServer. Modify and restart the container.
+For custom settings, edit GameUserSettings.ini in <Instance_name>/Saved/Config/WindowsServer. Modify and restart the container.
 
 ---
 ### Temp Fix ###
@@ -168,37 +227,22 @@ sudo -s echo "vm.max_map_count=262144" >> /etc/sysctl.conf && sysctl -p
 If you are using Proxmox as your virtual host make sure to set the CPU Type to "host" in your VM elsewise you'll get errors with the server.
 
 #### SERVER_MANAGER
-If you want to run Rcon_manager.sh download it just place it in the same folder as your docker-compose.yaml make it executable and launch it..
 
 you can also do automatic restart with CronJobs example below
 
 ```
- 0 3 * * * /path/to/start_rcon_manager.sh -restart 10
+ 0 3 * * * /path/to/POK-manager.sh -restart 10 -all
 ```
  this will schedule a restart every day at 3 AM with a 10-minute countdown
 
 #### UPDATING DOCKER IMAGE
 Open a terminal or command prompt.
 
-romove old docker image 
+Update the image / POK-manager.sh / Serverfiles
 ```
-docker rmi acekorneya/asa_server:latest
+./POK-manager.sh -update
 ```
-then run this command downloads the latest version of the Ark: Survival Ascended Docker image from Docker Hub.
-```
-docker pull acekorneya/asa_server:latest.
-```
-Restart the Docker Container
 
-First, bring down your current container with 
-```
-docker-compose down.
-```
-Then, start it again using 
-```
-docker-compose up.
-```
-These commands stop the currently running container and start a new one with the updated image.
 ## Discord Server 
 https://discord.gg/9GJKWjQuXy
 for Support 
