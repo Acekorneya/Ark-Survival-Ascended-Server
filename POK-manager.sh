@@ -1110,7 +1110,7 @@ execute_rcon_command() {
             else
               echo "Instance $instance has not fully started yet. Please wait a few minutes before checking the status."
               echo "If the instance is still not running, please check the logs for more information."
-              echo "you can use the -logs -live <instance_name> command to follow the logs."
+              echo "you can use the -logs -live $instance command to follow the logs."
               continue
             fi
           fi
