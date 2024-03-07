@@ -217,6 +217,38 @@ prompt_for_input() {
   esac
 }
 
+install_jq() {
+  if ! command -v jq &>/dev/null; then
+    echo "jq is not installed. Attempting to install jq..."
+    if [ -f /etc/debian_version ]; then
+      # Debian or Ubuntu
+      sudo apt-get update
+      sudo apt-get install -y jq
+    elif [ -f /etc/redhat-release ]; then
+      # Red Hat, CentOS, or Fedora
+      if command -v dnf &>/dev/null; then
+        sudo dnf install -y jq
+      else
+        sudo yum install -y jq
+      fi
+    elif [ -f /etc/arch-release ]; then
+      # Arch Linux
+      sudo pacman -Sy --noconfirm jq
+    else
+      echo "Unsupported Linux distribution. Please install jq manually and run the setup again."
+      return 1
+    fi
+    
+    if command -v jq &>/dev/null; then
+      echo "jq has been successfully installed."
+    else
+      echo "Failed to install jq. Please install it manually and run the setup again."
+      return 1
+    fi
+  else
+    echo "jq is already installed."
+  fi
+}
 
 check_dependencies() {
   # Check if Docker is installed
@@ -546,7 +578,9 @@ root_tasks() {
   check_vm_max_map_count
   check_puid_pgid_user "$PUID" "$PGID"
   check_dependencies
+  install_jq
   install_yq
+  install_steamcmd
   adjust_ownership_and_permissions "${base_dir}/ServerFiles/arkserver/ShooterGame"
   adjust_ownership_and_permissions "${base_dir}/Cluster"
   echo "Root tasks completed. You're now ready to create an instance."
@@ -1219,13 +1253,69 @@ run_in_container_background() {
     echo "Instance ${instance} is not running or does not exist."
   fi
 }
+get_build_id_from_acf() {
+  local acf_file="$BASE_DIR/ServerFiles/arkserver/appmanifest_2430930.acf"
+
+  if [ -f "$acf_file" ]; then
+    local build_id=$(grep -E "^\s+\"buildid\"\s+" "$acf_file" | grep -o '[[:digit:]]*')
+    echo "$build_id"
+  else
+    echo "error: appmanifest_2430930.acf file not found"
+    return 1
+  fi
+}
+install_steamcmd() {
+  local steamcmd_dir="$BASE_DIR/config/POK-manager/steamcmd"
+  local steamcmd_script="$steamcmd_dir/steamcmd.sh"
+
+  if [ ! -f "$steamcmd_script" ]; then
+    echo "SteamCMD not found. Attempting to install SteamCMD..."
+
+    mkdir -p "$steamcmd_dir"
+
+    if [ -f /etc/debian_version ]; then
+      # Debian or Ubuntu
+      sudo apt-get update
+      sudo apt-get install -y curl
+    elif [ -f /etc/redhat-release ]; then
+      # Red Hat, CentOS, or Fedora
+      if command -v dnf &>/dev/null; then
+        sudo dnf install -y curl
+      else
+        sudo yum install -y curl
+      fi
+    elif [ -f /etc/arch-release ]; then
+      # Arch Linux
+      sudo pacman -Sy --noconfirm curl
+    else
+      echo "Unsupported Linux distribution. Please install curl manually and run the setup again."
+      return 1
+    fi
+
+    curl -s "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz" | tar -xz -C "$steamcmd_dir"
+
+    if [ -f "$steamcmd_script" ]; then
+      echo "SteamCMD has been successfully installed."
+    else
+      echo "Failed to install SteamCMD. Please install it manually and run the setup again."
+      return 1
+    fi
+  else
+    echo "SteamCMD is already installed."
+  fi
+}
+get_current_build_id() {
+  local app_id="2430930"
+  local build_id=$(curl -sX GET "https://api.steamcmd.net/v1/info/$app_id" | jq -r ".data.\"$app_id\".depots.branches.public.buildid")
+  echo "$build_id"
+}
 # Function to update an instance
 update_manager_and_instances() {
-  echo "Initiating update for POK-manager.sh and all instances..."
+  echo "----- Initiating update for POK-manager.sh and all instances -----"
 
   # Update POK-manager.sh
-  echo "Checking for updates to POK-manager.sh..."
-  local script_url="https://raw.githubusercontent.com/yourusername/your-repo/main/POK-manager.sh"
+  echo "----- Checking for updates to POK-manager.sh -----"
+  local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/beta/POK-manager.sh"
   local temp_file="/tmp/POK-manager.sh"
 
   if command -v wget &>/dev/null; then
@@ -1234,14 +1324,15 @@ update_manager_and_instances() {
     curl -s -o "$temp_file" "$script_url"
   else
     echo "Neither wget nor curl is available. Unable to download the update for POK-manager.sh."
+    return 1
   fi
 
   if [ -f "$temp_file" ]; then
     if ! cmp -s "$0" "$temp_file"; then
-      mv "$temp_file" "$0"
+      mv "$temp_file" "$BASE_DIR/POK-manager.sh"
       echo "POK-manager.sh has been updated. Please make sure to make it executable again using 'chmod +x POK-manager.sh'."
     else
-      echo "POK-manager.sh is already up to date."
+      echo "----- POK-manager.sh is already up to date -----"
       rm "$temp_file"
     fi
   fi
@@ -1250,26 +1341,24 @@ update_manager_and_instances() {
   echo "Pulling latest Docker image..."
   docker pull acekorneya/asa_server:beta
 
-  # Find all running instances and update them
-  local running_instances=($(list_running_instances))
-  if [ ${#running_instances[@]} -eq 0 ]; then
-    echo "No running instances found. Please start an instance to update the ARK server files."
-    return 1 # Exit the function with an error state
+  # Check for updates to the ARK server files
+  local current_build_id=$(get_build_id_from_acf)
+  local latest_build_id=$(get_current_build_id)
+
+  if [ "$current_build_id" != "$latest_build_id" ]; then
+    echo "---- New server build available. Updating ARK server files -----"
+
+    # Run SteamCMD to update the server files
+    docker run --rm -v "${BASE_DIR}/ServerFiles/arkserver:/home/pok/arkserver" \
+      -e STEAMCMD_NO_COLORS=1 \
+      "$BASE_DIR/config/POK-manager/steamcmd/steamcmd.sh" +force_install_dir "$BASE_DIR/ServerFiles/arkserver" +login anonymous +app_update 2430930 +quit
+
+    echo "----- ARK server files updated successfully to build id: $latest_build_id -----"
+  else
+    echo "----- ARK server files are already up to date with build id: $current_build_id -----"
   fi
 
-  for instance_name in "${running_instances[@]}"; do
-    local container_name="asa_${instance_name}"
-    echo "Updating instance ${instance_name}..."
-
-    # Execute the update script inside the container
-    echo "Executing update script inside ${container_name}..."
-    docker exec "$container_name" /bin/bash -c "/home/pok/scripts/update_server.sh"
-    if [ $? -ne 0 ]; then
-      echo "Failed to execute update script inside ${instance_name}."
-    else
-      echo "${instance_name} updated successfully."
-    fi
-  done
+  echo "----- Update process completed -----"
 }
 backup_instance() {
   local instance_name="$1"
