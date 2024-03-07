@@ -1381,6 +1381,59 @@ restore_instance() {
     echo "No backups found for instance $instance_name."
   fi
 }
+select_instance() {
+  local instances=($(list_instances))
+  if [ ${#instances[@]} -eq 0 ]; then
+    echo "No instances found."
+    exit 1
+  fi
+  echo "Available instances:"
+  for ((i=0; i<${#instances[@]}; i++)); do
+    echo "$((i+1)). ${instances[i]}"
+  done
+  while true; do
+    read -p "Enter the number of the instance: " choice
+    if [[ $choice =~ ^[0-9]+$ ]] && [ $choice -ge 1 ] && [ $choice -le ${#instances[@]} ]; then
+      echo "${instances[$((choice-1))]}"
+      break
+    else
+      echo "Invalid choice. Please try again."
+    fi
+  done
+}
+
+validate_instance() {
+  local instance_name="$1"
+  if ! docker ps -q -f name=^/asa_${instance_name}$ > /dev/null; then
+    echo "Instance $instance_name is not running or does not exist."
+    return 1
+  fi
+}
+
+display_logs() {
+  local instance_name="$1"
+  local live="$2"
+
+  if ! validate_instance "$instance_name"; then
+    instance_name=$(select_instance)
+  fi
+
+  display_single_instance_logs "$instance_name" "$live"
+}
+
+display_single_instance_logs() {
+  local instance_name="$1"
+  local live="$2"
+  local container_name="asa_${instance_name}"
+
+  if [[ "$live" == "-live" ]]; then
+    echo "Displaying live logs for instance $instance_name. Press Ctrl+C to exit."
+    docker logs -f "$container_name"
+  else
+    echo "Displaying logs for instance $instance_name:"
+    docker logs "$container_name"
+  fi
+}
 manage_service() {
   get_docker_compose_cmd
   local action=$1
@@ -1458,6 +1511,35 @@ manage_service() {
   -saveworld |-status)
     execute_rcon_command "$action" "$instance_name"
     ;;
+  -logs)
+    local live=""
+    if [[ "$instance_name" == "-live" ]]; then
+      live="-live"
+      instance_name="$additional_args"
+    fi
+
+    if [[ -z "$instance_name" ]]; then
+      echo "Available running instances:"
+      local instances=($(list_running_instances))
+      if [ ${#instances[@]} -eq 0 ]; then
+        echo "No running instances found."
+        exit 1
+      fi
+      for ((i=0; i<${#instances[@]}; i++)); do
+        echo "$((i+1)). ${instances[i]}"
+      done
+      while true; do
+        read -p "Enter the number of the running instance: " choice
+        if [[ $choice =~ ^[0-9]+$ ]] && [ $choice -ge 1 ] && [ $choice -le ${#instances[@]} ]; then
+          instance_name="${instances[$((choice-1))]}"
+          break
+        else
+          echo "Invalid choice. Please try again."
+        fi
+      done
+    fi
+    display_logs "$instance_name" "$live"
+    ;;
   *)
     echo "Invalid action. Usage: $0 {action} [additional_args...] {instance_name}"
     echo "Actions include: -start, -stop, -update, -create, -setup, -status, -restart, -saveworld, -chat, -custom, -backup, -restore"
@@ -1465,7 +1547,7 @@ manage_service() {
     ;;
   esac
 }
-valid_actions=("-list" "-edit" "-setup" "-create" "-start" "-stop" "-shutdown" "-update" "-status" "-restart" "-saveworld" "-chat" "-custom" "-backup" "-restore")
+valid_actions=("-list" "-edit" "-setup" "-create" "-start" "-stop" "-shutdown" "-update" "-status" "-restart" "-saveworld" "-chat" "-custom" "-backup" "-restore" "-logs")
 
 display_usage() {
   echo "Usage: $0 {action} [instance_name|-all] [additional_args...]"
@@ -1486,6 +1568,7 @@ display_usage() {
   echo "  -custom <command> <instance_name|-all>    Execute a custom command on an instance or all instances"
   echo "  -backup [instance_name|-all]              Backup an instance or all instances (defaults to all if not specified)"
   echo "  -restore [instance_name]                  Restore an instance from a backup"
+  echo "  -logs [-live] <instance_name>             Display logs for an instance (optionally live)"
 }
 main() {
   # Check for required user and group at the start
