@@ -1093,6 +1093,27 @@ execute_rcon_command() {
       declare -A instance_outputs
       echo "----- Processing $action command for all running instances Please wait... -----"
       for instance in $(list_running_instances); do
+        if ! validate_instance "$instance"; then
+          echo "Instance $instance is not running or does not exist. Skipping..."
+          continue
+        fi
+
+        if [[ "$action" == "-status" ]]; then
+          local container_name="asa_${instance}"
+          local pdb_file="/home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.pdb"
+          local update_flag="/home/pok/update.flag"
+
+          if ! docker exec "$container_name" test -f "$pdb_file"; then
+            if docker exec "$container_name" test -f "$update_flag"; then
+              echo "Instance $instance is still updating/installing. Please wait until the update is complete before checking the status."
+              continue
+            else
+              echo "Instance $instance has not fully started yet. Please wait a few minutes before checking the status."
+              continue
+            fi
+          fi
+        fi
+
         # Capture the command output in a variable
         instance_outputs["$instance"]=$(run_in_container "$instance" "$action" "$message")
       done
@@ -1119,6 +1140,28 @@ execute_rcon_command() {
       echo " To start an instance, use the -start -all or -start <instance_name> command."
       return
     fi
+
+    if ! validate_instance "$instance_name"; then
+      echo "Instance $instance_name is not running or does not exist."
+      return
+    fi
+
+    if [[ "$action" == "-status" ]]; then
+      local container_name="asa_${instance_name}"
+      local pdb_file="/home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.pdb"
+      local update_flag="/home/pok/update.flag"
+
+      if ! docker exec "$container_name" test -f "$pdb_file"; then
+        if docker exec "$container_name" test -f "$update_flag"; then
+          echo "Instance $instance_name is still updating/installing. Please wait until the update is complete before checking the status."
+          return
+        else
+          echo "Instance $instance_name has not fully started yet. Please wait a few minutes before checking the status."
+          return
+        fi
+      fi
+    fi
+
     if [[ "$action" == "-shutdown" ]]; then
       local eta_seconds=$((wait_time * 60)) # Convert wait time to seconds
       local eta_time=$(date -d "@$(($(date +%s) + eta_seconds))" "+%Y-%m-%d %H:%M:%S") # Calculate ETA as a human-readable timestamp
