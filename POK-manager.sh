@@ -1812,7 +1812,7 @@ main() {
   # Special check for -chat action
   if [[ "$action" == "-chat" ]]; then
     if [[ "$#" -lt 2 ]]; then
-      echo "Error: -chat requires a quoted message and an instance name or -all."
+      echo "Error: -chat requires a quoted message and an instance name or -all"
       echo "Usage: $0 -chat \"<message>\" <instance_name|-all>"
       exit 1
     fi
