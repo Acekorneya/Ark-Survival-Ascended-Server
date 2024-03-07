@@ -1450,10 +1450,10 @@ manage_service() {
     exit 0
     ;;
   -shutdown)
-    execute_rcon_command "$action" "$additional_args" "$instance_name" 
+    execute_rcon_command "$action" "$instance_name" "${additional_args[@]}"
     ;;
-  -restart | -chat | -custom)
-    execute_rcon_command "$action" "$additional_args" "$instance_name" 
+  -restart)
+    execute_rcon_command "$action" "$instance_name" "${additional_args[@]}"
     ;;
   -saveworld |-status)
     execute_rcon_command "$action" "$instance_name"
@@ -1465,36 +1465,86 @@ manage_service() {
     ;;
   esac
 }
-
-# Define valid actions for the script
 valid_actions=("-list" "-edit" "-setup" "-create" "-start" "-stop" "-shutdown" "-update" "-status" "-restart" "-saveworld" "-chat" "-custom" "-backup" "-restore")
 
+display_usage() {
+  echo "Usage: $0 {action} [instance_name|-all] [additional_args...]"
+  echo
+  echo "Actions:"
+  echo "  -list                                     List all instances"
+  echo "  -edit                                     Edit an instance's configuration"
+  echo "  -setup                                    Perform initial setup tasks"
+  echo "  -create <instance_name>                   Create a new instance"
+  echo "  -start <instance_name|-all>               Start an instance or all instances"
+  echo "  -stop <instance_name|-all>                Stop an instance or all instances"
+  echo "  -shutdown [minutes] <instance_name|-all>  Shutdown an instance or all instances with an optional countdown"
+  echo "  -update                                   Update POK-manager.sh and all instances"
+  echo "  -status <instance_name|-all>              Show the status of an instance or all instances"
+  echo "  -restart [minutes] <instance_name|-all>   Restart an instance or all instances"
+  echo "  -saveworld <instance_name|-all>           Save the world of an instance or all instances"
+  echo "  -chat \"<message>\" <instance_name|-all>    Send a chat message to an instance or all instances"
+  echo "  -custom <command> <instance_name|-all>    Execute a custom command on an instance or all instances"
+  echo "  -backup [instance_name|-all]              Backup an instance or all instances (defaults to all if not specified)"
+  echo "  -restore [instance_name]                  Restore an instance from a backup"
+}
 main() {
   # Check for required user and group at the start
   check_puid_pgid_user "$PUID" "$PGID"
   if [ "$#" -lt 1 ]; then
-    echo "Usage: $0 {action} [instance_name] [additional_args...]"
-    echo "Actions include: ${valid_actions[*]}"
+    display_usage
     exit 1
   fi
 
   local action="$1"
-  local instance_name="${2:-}" # Default to empty if not provided
-  local additional_args="${@:3}" # Capture any additional arguments
+  shift # Remove the action from the argument list
+  local instance_name="${1:-}" # Default to empty if not provided
+  local additional_args="${@:2}" # Capture any additional arguments
 
   # Check if the provided action is valid
   if [[ ! " ${valid_actions[*]} " =~ " ${action} " ]]; then
     echo "Invalid action '${action}'."
-    echo "Valid actions are: ${valid_actions[*]}"
+    display_usage
     exit 1
+  fi
+
+  # Check if instance_name or -all is provided for actions that require it
+  if [[ "$action" =~ ^(-start|-stop|-saveworld|-status)$ ]] && [[ -z "$instance_name" ]]; then
+    echo "Error: $action requires an instance name or -all."
+    echo "Usage: $0 $action <instance_name|-all>"
+    exit 1
+  elif [[ "$action" =~ ^(-shutdown|-restart)$ ]]; then
+    if [[ -z "$instance_name" ]]; then
+      echo "Error: $action requires a timer (in minutes) and an instance name or -all."
+      echo "Usage: $0 $action <minutes> <instance_name|-all>"
+      exit 1
+    elif [[ "$instance_name" =~ ^[0-9]+$ ]]; then
+      if [[ -z "$additional_args" ]]; then
+        echo "Error: $action requires an instance name or -all after the timer."
+        echo "Usage: $0 $action <minutes> <instance_name|-all>"
+        exit 1
+      else
+        # Store the timer value separately
+        local timer="$instance_name"
+        instance_name="$additional_args"
+        additional_args=("$timer")
+      fi
+    fi
   fi
 
   # Special check for -chat action to ensure message is quoted
   if [[ "$action" == "-chat" ]]; then
-    if [[ "$#" -gt 3 ]]; then # More arguments than expected
-      echo "It seems like the chat message was not properly quoted."
-      echo "Please ensure the chat message is enclosed in quotes. Example:"
-      echo "./POK-manager.sh -chat \"Your message here\" [instance_name|-all]"
+    if [[ "$#" -lt 3 ]] || [[ "$instance_name" != \"*\" ]]; then
+      echo "Error: -chat requires a quoted message and an instance name or -all."
+      echo "Usage: $0 -chat \"<message>\" <instance_name|-all>"
+      exit 1
+    fi
+  fi
+
+  # Special check for -custom action to ensure instance name or -all is provided
+  if [[ "$action" == "-custom" ]]; then
+    if [[ "$#" -lt 3 ]] || [[ -z "$instance_name" && "$instance_name" != "-all" ]]; then
+      echo "Error: -custom requires additional arguments and an instance name or -all."
+      echo "Usage: $0 -custom <additional_args> <instance_name|-all>"
       exit 1
     fi
   fi
