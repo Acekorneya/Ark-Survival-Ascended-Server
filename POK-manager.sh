@@ -1373,7 +1373,10 @@ update_manager_and_instances() {
   if [ -f "$temp_file" ]; then
     if ! cmp -s "$0" "$temp_file"; then
       mv "$temp_file" "$BASE_DIR/POK-manager.sh"
-      echo "POK-manager.sh has been updated. Please make sure to make it executable again using 'chmod +x POK-manager.sh'."
+      chmod +x "$BASE_DIR/POK-manager.sh"
+      echo "----- POK-manager.sh has been updated -----"
+      echo "Please run the script again to use the updated version."
+      exit 0
     else
       echo "----- POK-manager.sh is already up to date -----"
       rm "$temp_file"
