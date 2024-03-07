@@ -1326,12 +1326,12 @@ restore_instance() {
       echo "No instances found with backups."
       return
     fi
-    
+      
     for ((i=0; i<${#instances[@]}; i++)); do
       echo "$((i+1)). ${instances[i]}"
     done
-    
-    read -p "Enter the number of the instance to restore: " choice
+    echo "----- Warning: This will stop the server if it is running. -----"
+    read -p "Enter the number of the instance to restore: " choice  
     if [[ $choice =~ ^[0-9]+$ ]] && [ $choice -ge 1 ] && [ $choice -le ${#instances[@]} ]; then
       instance_name="${instances[$((choice-1))]}"
     else
