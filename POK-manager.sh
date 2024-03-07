@@ -1372,7 +1372,7 @@ update_manager_and_instances() {
       chmod +x "$BASE_DIR/POK-manager.sh"
       chown 1000:1000 "$BASE_DIR/POK-manager.sh"
       echo "----- POK-manager.sh has been updated -----"
-      echo "Please run the script again to use the updated version."
+      echo "Please run POK-manager again to use the updated version."
       exit 0
     else
       echo "----- POK-manager.sh is already up to date -----"
