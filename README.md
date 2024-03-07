@@ -196,10 +196,6 @@ services:
     ports:
       - "7777:7777/tcp"
       - "7777:7777/udp"
-    volumes:
-      - "./ASA:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server/ShooterGame"
-      - "./ARK Survival Ascended Dedicated Server:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server"
-      - "/Path/to/Cluster:/usr/games/.wine/drive_c/POK/Steam/steamapps/common/ARK Survival Ascended Dedicated Server/ShooterGame/Saved/clusters"
     mem_limit: 16G 
 
 
