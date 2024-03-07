@@ -1354,7 +1354,7 @@ get_current_build_id() {
 }
 # Function to update an instance
 update_manager_and_instances() {
-  echo "----- Initiating update for POK-manager.sh and all instances -----"
+  echo "----- Initiating update for POK-manager.sh / Docker image / Server files -----"
 
   # Update POK-manager.sh
   echo "----- Checking for updates to POK-manager.sh -----"
