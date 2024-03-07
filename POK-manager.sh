@@ -1379,9 +1379,6 @@ get_current_build_id() {
 }
 # Function to update an instance
 update_manager_and_instances() {
-  echo "----- Initiating update for POK-manager.sh / Docker image / Server files -----"
-
-  # Update POK-manager.sh
   echo "----- Checking for updates to POK-manager.sh -----"
   local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/beta/POK-manager.sh"
   local temp_file="/tmp/POK-manager.sh"
@@ -1391,23 +1388,23 @@ update_manager_and_instances() {
   elif command -v curl &>/dev/null; then
     curl -s -o "$temp_file" "$script_url"
   else
-    echo "Neither wget nor curl is available. Unable to download the update for POK-manager.sh."
-    return 1
+    echo "Neither wget nor curl is available. Unable to check for updates to POK-manager.sh."
+    return
   fi
 
   if [ -f "$temp_file" ]; then
     if ! cmp -s "$0" "$temp_file"; then
-      mv "$temp_file" "$BASE_DIR/POK-manager.sh"
-      chmod +x "$BASE_DIR/POK-manager.sh"
-      chown 1000:1000 "$BASE_DIR/POK-manager.sh"
-      echo "----- POK-manager.sh has been updated -----"
-      echo "Please run POK-manager again to use the updated version."
-      exit 0
+      mv "$temp_file" "$0"
+      chmod +x "$0"
+      chown 1000:1000 "$0"
+      echo "POK-manager.sh has been updated. Please run the script again to use the updated version."
     else
-      echo "----- POK-manager.sh is already up to date -----"
+      echo "POK-manager.sh is already up to date."
       rm "$temp_file"
     fi
   fi
+
+  echo "----- Checking for updates to Docker image and server files -----"
 
   # Pull the latest image
   echo "Pulling latest Docker image..."
@@ -1744,6 +1741,7 @@ display_usage() {
 main() {
   # Check for required user and group at the start
   check_puid_pgid_user "$PUID" "$PGID"
+  update_manager_and_instances
   if [ "$#" -lt 1 ]; then
     display_usage
     exit 1
