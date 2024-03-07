@@ -1332,6 +1332,33 @@ get_build_id_from_acf() {
     return 1
   fi
 }
+check_for_POK_updates() {
+  echo "Checking for updates to POK-manager.sh..."
+  local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/beta/POK-manager.sh"
+  local temp_file="/tmp/POK-manager.sh"
+
+  if command -v wget &>/dev/null; then
+    wget -q -O "$temp_file" "$script_url"
+  elif command -v curl &>/dev/null; then
+    curl -s -o "$temp_file" "$script_url"
+  else
+    echo "Neither wget nor curl is available. Unable to check for updates."
+    return
+  fi
+
+  if [ -f "$temp_file" ]; then
+    if ! cmp -s "$0" "$temp_file"; then
+      mv "$temp_file" "$0"
+      chmod +x "$0"
+      chown 1000:1000 "$0"
+      echo "POK-manager.sh has been updated. Please run the script again."
+      exit 0
+    else
+      echo "POK-manager.sh is already up to date."
+      rm "$temp_file"
+    fi
+  fi
+}
 install_steamcmd() {
   local steamcmd_dir="$BASE_DIR/config/POK-manager/steamcmd"
   local steamcmd_script="$steamcmd_dir/steamcmd.sh"
@@ -1741,7 +1768,7 @@ display_usage() {
 main() {
   # Check for required user and group at the start
   check_puid_pgid_user "$PUID" "$PGID"
-  update_manager_and_instances
+  check_for_POK_updates
   if [ "$#" -lt 1 ]; then
     display_usage
     exit 1
