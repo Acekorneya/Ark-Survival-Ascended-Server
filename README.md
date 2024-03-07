@@ -130,7 +130,25 @@ This Docker image is designed to run a dedicated server for the game Ark Surviva
 
 - **UPDATE_WINDOW_MINIMUM_TIME and UPDATE_WINDOW_MAXIMUM_TIME**: Combined, these two values can allow you to define a time window for when server updates should be performed. This can be useful to ensure update driven restarts only happen during off peak hours.
 
-
+**All Possible Commands For Server Operations:**
+```bash
+-list                                     List all instances"
+-edit                                     Edit an instance's configuration"
+-setup                                    Perform initial setup tasks"
+-create <instance_name>                   Create a new instance"
+-start <instance_name|-all>               Start an instance or all instances"
+-stop <instance_name|-all>                Stop an instance or all instances"
+-shutdown [minutes] <instance_name|-all>  Shutdown an instance or all instances with an optional countdown"
+-update                                   Update POK-manager.sh and all instances"
+-status <instance_name|-all>              Show the status of an instance or all instances"
+-restart [minutes] <instance_name|-all>   Restart an instance or all instances"
+-saveworld <instance_name|-all>           Save the world of an instance or all instances"
+-chat \"<message>\" <instance_name|-all>  Send a chat message to an instance or all instances"
+-custom <command> <instance_name|-all>    Execute a custom command on an instance or all instances"
+-backup [instance_name|-all]              Backup an instance or all instances (defaults to all if not specified)"
+-restore [instance_name]                  Restore an instance from a backup"
+-logs [-live] <instance_name>             Display logs for an instance (optionally live)"
+```
 ---
 
 #### Ports
