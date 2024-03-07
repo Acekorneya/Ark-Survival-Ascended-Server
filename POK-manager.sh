@@ -363,6 +363,19 @@ get_config_file_path() {
   mkdir -p "$config_dir"
   echo "$config_dir/config.txt"
 }
+prompt_change_host_timezone() {
+  read -p "Do you want to change the host's timezone? (y/N): " change_tz
+  if [[ "$change_tz" =~ ^[Yy]$ ]]; then
+    read -p "Enter the desired timezone (e.g., America/New_York): " new_tz
+    if timedatectl set-timezone "$new_tz"; then
+      echo "Host timezone set to $new_tz"
+    else
+      echo "Failed to set the host timezone to $new_tz"
+    fi
+  else
+    echo "Host timezone change skipped."
+  fi
+}
 # Set timezone
 set_timezone() {
   # Try to read the current timezone from /etc/timezone or equivalent
@@ -583,6 +596,7 @@ root_tasks() {
   install_steamcmd
   adjust_ownership_and_permissions "${base_dir}/ServerFiles/arkserver/ShooterGame"
   adjust_ownership_and_permissions "${base_dir}/Cluster"
+  prompt_change_host_timezone  
   echo "Root tasks completed. You're now ready to create an instance."
 }
 
