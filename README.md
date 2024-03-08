@@ -1,4 +1,4 @@
-# POK-manager.sh: Ark Survival Ascended Server Management Script
+# POK Ark Survival Ascended Server Management Script
 
 ## Introduction
 
