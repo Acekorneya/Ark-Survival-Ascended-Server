@@ -179,12 +179,12 @@ If you're new to cron jobs, follow these steps to set up a cron job for running 
 
 5. Each cron job consists of two parts: the schedule and the command to execute. The schedule is specified using five fields separated by spaces, representing the minute, hour, day of the month, month, and day of the week. An asterisk (*) in a field means "every".
 
-   For example, to run a command every 30 minutes, you would use the following schedule:
+   - For example, to run a command every 30 minutes, you would use the following schedule:
    ```
    */30 * * * *
    ```
 
-   To run a command every day at 3 AM, you would use:
+   - To run a command every day at 3 AM, you would use:
    ```
    0 3 * * *
    ```
@@ -194,7 +194,7 @@ If you're new to cron jobs, follow these steps to set up a cron job for running 
    */30 * * * * /path/to/POK-manager.sh -saveworld instance_name
    ```
 
-   Replace `/path/to/POK-manager.sh` with the actual path to your POK-manager.sh script, and `instance_name` with the name of your server instance.
+   - Replace `/path/to/POK-manager.sh` with the actual path to your POK-manager.sh script, and `instance_name` with the name of your server instance.
 
 7. Save the changes and exit the editor. In nano, you can do this by pressing `Ctrl+X`, then `Y`, and finally `Enter`.
 
@@ -202,15 +202,15 @@ If you're new to cron jobs, follow these steps to set up a cron job for running 
 
 Here are a few more examples of cron jobs using POK-manager.sh:
 
-- Backup all instances every day at 2 AM:
-  ```
-  0 2 * * * /path/to/POK-manager.sh -backup -all
-  ```
+  - Backup all instances every day at 2 AM:
+    ```
+    0 2 * * * /path/to/POK-manager.sh -backup -all
+    ```
 
-- Restart a specific instance every Sunday at 12 AM:
-  ```
-  0 0 * * 0 /path/to/POK-manager.sh -restart instance_name
-  ```
+  - Restart a specific instance every Sunday at 12 AM:
+    ```
+    0 0 * * 0 /path/to/POK-manager.sh -restart instance_name
+    ```
 
 Remember to replace `/path/to/POK-manager.sh` with the actual path to your POK-manager.sh script, and `instance_name` with the name of your server instance.
 
