@@ -16,6 +16,7 @@ POK-manager.sh is a powerful and user-friendly script for managing Ark Survival 
     - [Starting and Stopping Instances](#starting-and-stopping-instances)
     - [Sending Chat Messages](#sending-chat-messages)
     - [Scheduling Automatic Restarts with Cron](#scheduling-automatic-restarts-with-cron)
+    - [Scheduling Automatic Tasks with Cron](#scheduling-automatic-tasks-with-cron)
     - [Custom RCON Commands](#custom-rcon-commands)
     - [Backing Up and Restoring Instances](#backing-up-and-restoring-instances)
 - [User Permissions](#user-permissions)
@@ -160,6 +161,52 @@ You can execute custom RCON commands using the `-custom` flag followed by the co
   ```bash
   ./POK-manager.sh -custom "giveitem \"Blueprint'/Game/Mods/ArkModularWeapon/Weapons/IronSword/PrimalItem_IronSword.PrimalItem_IronSword'\" 1 0 0" my_instance
   ```
+
+#### Scheduling Automatic Tasks with Cron
+
+Cron is a time-based job scheduler in Unix-like operating systems that allows you to run commands or scripts automatically at specified intervals. You can use cron to schedule tasks like automated backups or saving the world state of your Ark Survival Ascended Server instances.
+
+To set up a cron job for running POK-manager.sh commands, follow these steps:
+
+1. Open the terminal and type `crontab -e` to edit your user's crontab file. If prompted, choose an editor (e.g., nano).
+
+2. In the crontab file, add a new line for each command you want to schedule. The format of a cron job is as follows:
+   ```
+   * * * * * /path/to/command
+   ```
+   - The asterisks (`*`) represent the minute, hour, day of the month, month, and day of the week, respectively.
+   - Replace `/path/to/command` with the actual command you want to run.
+
+   For example, to save the world state of an instance named "my_instance" every 30 minutes, add the following line:
+   ```
+   */30 * * * * /path/to/POK-manager.sh -saveworld my_instance
+   ```
+   This command will run every 30 minutes, on the hour and half-hour (e.g., 12:00, 12:30, 1:00, 1:30, etc.).
+
+   To create a backup of an instance named "my_instance" every 6 hours, add the following line:
+   ```
+   0 */6 * * * /path/to/POK-manager.sh -backup my_instance
+   ```
+   This command will run every 6 hours, starting at midnight (e.g., 12:00 AM, 6:00 AM, 12:00 PM, 6:00 PM).
+
+3. Save the changes and exit the editor. The cron jobs will now run automatically at the specified intervals.
+
+Here are a few more examples of commonly used cron job schedules:
+
+- Every minute: `* * * * *`
+- Every hour: `0 * * * *`
+- Every day at midnight: `0 0 * * *`
+- Every Sunday at 3:00 AM: `0 3 * * 0`
+- Every month on the 1st day at 5:30 AM: `30 5 1 * *`
+
+You can use online cron job generators like [Crontab Guru](https://crontab.guru/) to help you create and validate your cron job schedules.
+
+Remember to replace `/path/to/POK-manager.sh` with the actual path to your POK-manager.sh script, and adjust the instance names and commands according to your requirements.
+
+By scheduling automatic tasks with cron, you can ensure regular backups, world saves, and other maintenance tasks are performed without manual intervention, providing a more reliable and convenient server management experience.
+```
+
+This explanation provides step-by-step instructions on how to set up a cron job, including opening the crontab file, adding command lines, and saving the changes. It also includes examples of common cron job schedules and mentions online tools like Crontab Guru that can assist in creating and validating cron job schedules.
 
 #### Backing Up and Restoring Instances
 POK-manager.sh provides commands for backing up and restoring server instances. Here's how you can use them:
