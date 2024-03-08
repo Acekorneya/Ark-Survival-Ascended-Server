@@ -1,4 +1,4 @@
-
+Here's an updated version of your README.md with the requested additions:
 
 # POK-manager.sh: Ark Survival Ascended Server Management Script
 
@@ -18,6 +18,8 @@ POK-manager.sh is a powerful and user-friendly script for managing Ark Survival 
     - [Starting and Stopping Instances](#starting-and-stopping-instances)
     - [Sending Chat Messages](#sending-chat-messages)
     - [Scheduling Automatic Restarts with Cron](#scheduling-automatic-restarts-with-cron)
+    - [Custom RCON Commands](#custom-rcon-commands)
+- [User Permissions](#user-permissions)
 - [Docker Compose Configuration](#docker-compose-configuration)
 - [Ports](#ports)
 - [Troubleshooting](#troubleshooting)
@@ -130,6 +132,36 @@ To schedule automatic restarts using cron, add an entry to your crontab file. He
   ```
   */30 * * * * /path/to/POK-manager.sh -saveworld -all
   ```
+
+#### Custom RCON Commands
+You can execute custom RCON commands using the `-custom` flag followed by the command and the instance name or `-all` for all instances. Here are a few examples:
+
+- Broadcast a message to all players on a specific instance:
+  ```bash
+  ./POK-manager.sh -custom "broadcast Hello, players!" my_instance
+  ```
+
+- List all players on all instances:
+  ```bash
+  ./POK-manager.sh -custom "listplayers" -all
+  ```
+
+- Give an item to a player on a specific instance:
+  ```bash
+  ./POK-manager.sh -custom "giveitem \"Blueprint'/Game/Mods/ArkModularWeapon/Weapons/IronSword/PrimalItem_IronSword.PrimalItem_IronSword'\" 1 0 0" my_instance
+  ```
+
+## User Permissions
+
+POK-manager.sh can work with any user as long as it has the correct PUID and PGID of 1000:1000. This is required for the container to have the necessary permissions for volumes and to avoid running as root, which enhances security.
+
+If you prefer not to modify the user's UID and GID, you can bypass the permission checks by running the script with `sudo`. For example:
+
+```bash
+sudo ./POK-manager.sh -create my_instance
+```
+
+Using `sudo` grants the script the necessary privileges to change permissions to 1000:1000 as required by the container.
 
 ## Docker Compose Configuration
 
