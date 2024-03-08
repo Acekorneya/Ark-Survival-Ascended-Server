@@ -25,6 +25,7 @@ POK-manager.sh is a powerful and user-friendly script for managing Ark Survival 
 - [Links](#links)
 - [Support](#support)
 - [Conclusion](#conclusion)
+- [Star History](#star-history)
 
 ## Prerequisites
 
@@ -318,3 +319,13 @@ If you need assistance or have any questions, please join our Discord server: [K
 ## Conclusion
 
 POK-manager.sh is a comprehensive and user-friendly solution for managing Ark Survival Ascended Server instances using Docker. With its wide range of commands and ease of use, it simplifies the process of setting up, configuring, and maintaining server instances. Whether you're a beginner or an experienced user, POK-manager.sh provides a streamlined approach to server management, allowing you to focus on enjoying the game with your community. If you encounter any issues or have questions, don't hesitate to reach out for support on our Discord server.
+
+## Star History
+
+<a href="https://star-history.com/#Acekorneya/Ark-Survival-Ascended-Server&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Acekorneya/Ark-Survival-Ascended-Server&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Acekorneya/Ark-Survival-Ascended-Server&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Acekorneya/Ark-Survival-Ascended-Server&type=Date" />
+  </picture>
+</a>
