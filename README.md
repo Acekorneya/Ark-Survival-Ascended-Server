@@ -71,12 +71,12 @@ Before using POK-manager.sh, ensure that you have the following prerequisites in
 4. Download and set up POK-manager.sh:
    - Option 1: Run the following command to download and set up POK-manager.sh in a single step:
      ```bash
-     git clone -b beta --single-branch https://github.com/Acekorneya/Ark-Survival-Ascended-Server.git && sudo chown -R 1000:1000 Ark-Survival-Ascended-Server && sudo mv Ark-Survival-Ascended-Server/POK-manager.sh . && sudo chmod +x POK-manager.sh && sudo mv Ark-Survival-Ascended-Server/defaults . && sudo rm -rf Ark-Survival-Ascended-Server
+     git clone https://github.com/Acekorneya/Ark-Survival-Ascended-Server.git && sudo chown -R 1000:1000 Ark-Survival-Ascended-Server && sudo mv Ark-Survival-Ascended-Server/POK-manager.sh . && sudo chmod +x POK-manager.sh && sudo mv Ark-Survival-Ascended-Server/defaults . && sudo rm -rf Ark-Survival-Ascended-Server
      ```
 
    - Option 2: Follow these step-by-step commands:
      ```bash
-     git clone -b beta --single-branch https://github.com/Acekorneya/Ark-Survival-Ascended-Server.git
+     git clone https://github.com/Acekorneya/Ark-Survival-Ascended-Server.git
      sudo chown -R 1000:1000 Ark-Survival-Ascended-Server
      sudo mv Ark-Survival-Ascended-Server/POK-manager.sh .
      sudo chmod +x POK-manager.sh
