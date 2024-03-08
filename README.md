@@ -80,8 +80,8 @@ Before using POK-manager.sh, ensure that you have the following prerequisites in
      sudo mv Ark-Survival-Ascended-Server/defaults .
      sudo rm -rf Ark-Survival-Ascended-Server
      ```
-```
 
+     
 ## Usage
 
 ### Commands
