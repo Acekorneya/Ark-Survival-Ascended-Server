@@ -1,5 +1,3 @@
-Here's an updated version of your README.md with the requested additions:
-
 # POK-manager.sh: Ark Survival Ascended Server Management Script
 
 ## Introduction
@@ -81,7 +79,7 @@ Before using POK-manager.sh, ensure that you have the following prerequisites in
      sudo rm -rf Ark-Survival-Ascended-Server
      ```
 
-     
+
 ## Usage
 
 ### Commands
