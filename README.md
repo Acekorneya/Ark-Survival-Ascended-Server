@@ -330,7 +330,6 @@ If you find POK-manager.sh useful and would like to support its development, you
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/acekorneyab)
 
 Your contributions will go towards:
-- Covering hosting and development costs
 - Implementing new features and enhancements
 - Providing ongoing support and maintenance
 
