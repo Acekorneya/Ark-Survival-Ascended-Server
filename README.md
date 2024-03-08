@@ -241,7 +241,7 @@ version: '2.4'
 services:
   asaserver:
     build: .
-    image: acekorneya/asa_server:beta
+    image: acekorneya/asa_server:2_0_latest
     container_name: asa_my_instance
     restart: unless-stopped
     environment:
