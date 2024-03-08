@@ -614,7 +614,7 @@ root_tasks() {
 }
 
 pull_docker_image() {
-  local image_name="acekorneya/asa_server:beta"
+  local image_name="acekorneya/asa_server:2_0_latest"
   echo "Pulling Docker image: $image_name"
   docker pull "$image_name"
 }
@@ -697,7 +697,7 @@ version: '2.4'
 services:
   asaserver:
     build: .
-    image: acekorneya/asa_server:beta
+    image: acekorneya/asa_server:2_0_latest
     container_name: asa_${instance_name} 
     restart: unless-stopped
     environment:
@@ -1434,7 +1434,7 @@ update_manager_and_instances() {
 
   # Pull the latest image
   echo "Pulling latest Docker image..."
-  docker pull acekorneya/asa_server:beta
+  docker pull acekorneya/asa_server:2_0_latest
 
   # Check for updates to the ARK server files
   local current_build_id=$(get_build_id_from_acf)
