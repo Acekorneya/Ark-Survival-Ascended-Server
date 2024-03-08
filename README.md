@@ -308,11 +308,12 @@ sudo sysctl -p
 - [Docker Compose Installation](https://docs.docker.com/compose/install/)
 - [Git Downloads](https://git-scm.com/downloads)
 - [Ark Survival Ascended Server Docker Image](https://hub.docker.com/r/acekorneya/asa_server)
+- [Server Configuration](https://ark.wiki.gg/wiki/Server_configuration)
 - [POK-manager.sh GitHub Repository](https://github.com/Acekorneya/Ark-Survival-Ascended-Server)
 
 ## Support
 
-If you need assistance or have any questions, please join our Discord server: [https://discord.gg/9GJKWjQuXy](https://discord.gg/9GJKWjQuXy)
+If you need assistance or have any questions, please join our Discord server: [KNY SERVERS](https://discord.gg/9GJKWjQuXy)
 
 ## Conclusion
 
