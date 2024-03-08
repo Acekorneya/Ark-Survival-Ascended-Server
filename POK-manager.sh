@@ -1455,16 +1455,60 @@ update_manager_and_instances() {
 
   echo "----- Update process completed -----"
 }
+read_backup_config() {
+  local instance_name="$1"
+  local config_file="${MAIN_DIR%/}/config/POK-manager/backup_${instance_name}.conf"
+
+  if [ -f "$config_file" ]; then
+    source "$config_file"
+    max_backups=${MAX_BACKUPS:-10}
+    max_size_gb=${MAX_SIZE_GB:-10}
+  else
+    max_backups=
+    max_size_gb=
+  fi
+}
+
+write_backup_config() {
+  local instance_name="$1"
+  local max_backups="$2"
+  local max_size_gb="$3"
+
+  local config_file="${MAIN_DIR%/}/config/POK-manager/backup_${instance_name}.conf"
+  local config_dir=$(dirname "$config_file")
+  
+  mkdir -p "$config_dir"
+  
+  cat > "$config_file" <<EOF
+MAX_BACKUPS=$max_backups
+MAX_SIZE_GB=$max_size_gb
+EOF
+}
+
 backup_instance() {
   local instance_name="$1"
 
   if [[ "$instance_name" == "-all" ]]; then
     local instances=($(list_instances))
     for instance in "${instances[@]}"; do
+      read_backup_config "$instance"
+      if [ -z "$max_backups" ] || [ -z "$max_size_gb" ]; then
+        read -p "Enter the maximum number of backups to keep for instance $instance: " max_backups
+        read -p "Enter the maximum size limit (in GB) for instance $instance backups: " max_size_gb
+        write_backup_config "$instance" "$max_backups" "$max_size_gb"
+      fi
       backup_single_instance "$instance"
+      manage_backup_rotation "$instance" "$max_backups" "$max_size_gb"
     done
   else
+    read_backup_config "$instance_name"
+    if [ -z "$max_backups" ] || [ -z "$max_size_gb" ]; then
+      read -p "Enter the maximum number of backups to keep for instance $instance_name: " max_backups
+      read -p "Enter the maximum size limit (in GB) for instance $instance_name backups: " max_size_gb
+      write_backup_config "$instance_name" "$max_backups" "$max_size_gb"
+    fi
     backup_single_instance "$instance_name"
+    manage_backup_rotation "$instance_name" "$max_backups" "$max_size_gb"
   fi
 
   # Adjust ownership and permissions for the backup directory

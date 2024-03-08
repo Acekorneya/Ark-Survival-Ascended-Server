@@ -17,6 +17,7 @@ POK-manager.sh is a powerful and user-friendly script for managing Ark Survival 
     - [Sending Chat Messages](#sending-chat-messages)
     - [Scheduling Automatic Restarts with Cron](#scheduling-automatic-restarts-with-cron)
     - [Custom RCON Commands](#custom-rcon-commands)
+    - [Backing Up and Restoring Instances](#backing-up-and-restoring-instances)
 - [User Permissions](#user-permissions)
 - [Docker Compose Configuration](#docker-compose-configuration)
 - [Ports](#ports)
@@ -155,6 +156,33 @@ You can execute custom RCON commands using the `-custom` flag followed by the co
   ```bash
   ./POK-manager.sh -custom "giveitem \"Blueprint'/Game/Mods/ArkModularWeapon/Weapons/IronSword/PrimalItem_IronSword.PrimalItem_IronSword'\" 1 0 0" my_instance
   ```
+#### Backing Up and Restoring Instances
+POK-manager.sh provides commands for backing up and restoring server instances. Here's how you can use them:
+
+- Backup a specific instance:
+  ```bash
+  ./POK-manager.sh -backup my_instance
+  ```
+
+- Backup all instances:
+  ```bash
+  ./POK-manager.sh -backup -all
+  ```
+
+- Restore a specific instance from a backup:
+  ```bash
+  ./POK-manager.sh -restore my_instance
+  ```
+
+When you run the `-backup` command for the first time, POK-manager.sh will prompt you to specify the maximum number of backups to keep and the maximum size limit (in GB) for each instance's backup folder. These settings will be saved in a configuration file (`backup_<instance_name>.conf`) located in the `config/POK-manager` directory.
+
+Subsequent runs of the `-backup` command will use the saved configuration. If you want to change the backup settings, you can manually edit the configuration file or delete it to be prompted again.
+
+The `-backup` command creates a compressed tar archive of the `SavedArks` directory for each instance, which contains the saved game data. The backups are stored in the `backups/<instance_name>` directory.
+
+The `-restore` command allows you to restore a specific instance from a backup. When you run the command, POK-manager.sh will display a list of available backup archives for the specified instance. You can choose the desired backup by entering its corresponding number. The script will then extract the backup and replace the current `SavedArks` directory with the backed-up version.
+
+Note: Restoring a backup will overwrite the current saved game data for the specified instance.
 
 ## User Permissions
 
