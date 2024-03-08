@@ -35,6 +35,9 @@ Before using POK-manager.sh, ensure that you have the following prerequisites in
 - [Docker Compose](https://docs.docker.com/compose/install/)
 - [Git](https://git-scm.com/downloads)
 - `sudo` access
+- 16GB of RAM (or more) for each instance
+- 60 GB for Server data
+- Linux Host OS (Ubuntu, Debian, CentOS, etc.)
 
 ## Installation
 
