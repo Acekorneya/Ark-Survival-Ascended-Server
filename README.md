@@ -204,9 +204,7 @@ You can use online cron job generators like [Crontab Guru](https://crontab.guru/
 Remember to replace `/path/to/POK-manager.sh` with the actual path to your POK-manager.sh script, and adjust the instance names and commands according to your requirements.
 
 By scheduling automatic tasks with cron, you can ensure regular backups, world saves, and other maintenance tasks are performed without manual intervention, providing a more reliable and convenient server management experience.
-```
 
-This explanation provides step-by-step instructions on how to set up a cron job, including opening the crontab file, adding command lines, and saving the changes. It also includes examples of common cron job schedules and mentions online tools like Crontab Guru that can assist in creating and validating cron job schedules.
 
 #### Backing Up and Restoring Instances
 POK-manager.sh provides commands for backing up and restoring server instances. Here's how you can use them:
