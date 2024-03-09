@@ -425,15 +425,14 @@ adjust_ownership_and_permissions() {
   if [ ! -d "$dir" ]; then
     echo "Creating directory: $dir"
     mkdir -p "$dir"
-    chown 1000:1000 "$dir"
-    chmod 755 "$dir"
   fi
 
   echo "Checking and adjusting ownership and permissions for $dir..."
-  find "$dir" -type d -exec chown 1000:1000 {} \;
-  find "$dir" -type d -exec chmod 755 {} \;
-  find "$dir" -type f -exec chown 1000:1000 {} \;
-  find "$dir" -type f -exec chmod 644 {} \;
+
+  run_as_user "find '$dir' -type d -exec chown $PUID:$PGID {} \;" "$(id -un $PUID)" "$(id -gn $PGID)"
+  run_as_user "find '$dir' -type d -exec chmod 755 {} \;" "$(id -un $PUID)" "$(id -gn $PGID)"
+  run_as_user "find '$dir' -type f -exec chown $PUID:$PGID {} \;" "$(id -un $PUID)" "$(id -gn $PGID)"
+  run_as_user "find '$dir' -type f -exec chmod 644 {} \;" "$(id -un $PUID)" "$(id -gn $PGID)"
 
   # Set executable bit for POK-manager.sh
   chmod +x "$(dirname "$(realpath "$0")")/POK-manager.sh"
@@ -461,7 +460,7 @@ check_puid_pgid_user() {
   local pgid="$2"
 
   # Check if the script is run with sudo (EUID is 0)
-  if [ "${EUID}" -eq 0 ]; then
+  if is_sudo; then
     echo "Running with sudo privileges. Skipping PUID and PGID check."
     return
   fi
@@ -1334,7 +1333,7 @@ get_build_id_from_acf() {
 }
 check_for_POK_updates() {
   echo "Checking for updates to POK-manager.sh..."
-  local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/master/POK-manager.sh"
+  local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/beta/POK-manager.sh"
   local temp_file="/tmp/POK-manager.sh"
 
   if command -v wget &>/dev/null; then
@@ -1398,6 +1397,13 @@ install_steamcmd() {
     echo "SteamCMD is already installed."
   fi
 }
+is_sudo() {
+  if [ "$EUID" -eq 0 ]; then
+    return 0
+  else
+    return 1
+  fi
+}
 get_current_build_id() {
   local app_id="2430930"
   local build_id=$(curl -sX GET "https://api.steamcmd.net/v1/info/$app_id" | jq -r ".data.\"$app_id\".depots.branches.public.buildid")
@@ -1406,7 +1412,7 @@ get_current_build_id() {
 # Function to update an instance
 update_manager_and_instances() {
   echo "----- Checking for updates to POK-manager.sh -----"
-  local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/master/POK-manager.sh"
+  local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/beta/POK-manager.sh"
   local temp_file="/tmp/POK-manager.sh"
 
   if command -v wget &>/dev/null; then
@@ -1443,10 +1449,23 @@ update_manager_and_instances() {
   if [ "$current_build_id" != "$latest_build_id" ]; then
     echo "---- New server build available. Updating ARK server files -----"
 
-    # Run SteamCMD to update the server files
-    docker run --rm -v "${BASE_DIR}/ServerFiles/arkserver:/home/pok/arkserver" \
-      -e STEAMCMD_NO_COLORS=1 \
+    # Check if any running instance has the update_server.sh script
+    local update_script_found=false
+    for instance in $(list_running_instances); do
+      if docker exec "asa_${instance}" test -f /home/pok/scripts/update_server.sh; then
+        update_script_found=true
+        echo "Running update_server.sh script in the container for instance: $instance"
+        docker exec -it "asa_${instance}" /bin/bash -c "/home/pok/scripts/update_server.sh" | while read -r line; do
+          echo "[$instance] $line"
+        done
+        break
+      fi
+    done
+
+    if [ "$update_script_found" = false ]; then
+      echo "No running instance found with the update_server.sh script. Updating server files using SteamCMD..."
       "$BASE_DIR/config/POK-manager/steamcmd/steamcmd.sh" +force_install_dir "$BASE_DIR/ServerFiles/arkserver" +login anonymous +app_update 2430930 +quit
+    fi
 
     echo "----- ARK server files updated successfully to build id: $latest_build_id -----"
   else
