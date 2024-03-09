@@ -1388,6 +1388,9 @@ install_steamcmd() {
 
     curl -s "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz" | tar -xz -C "$steamcmd_dir"
 
+    # Set executable permissions on steamcmd.sh
+    chmod +x "$steamcmd_script"
+
     if [ -f "$steamcmd_script" ]; then
       echo "SteamCMD has been successfully installed."
     else
