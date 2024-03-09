@@ -121,7 +121,7 @@ start_server() {
   fi
 
   # Construct the full server start command
-  local server_command="proton run /home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.exe $MAP_PATH?listen?$session_name_arg?Port=${ASA_PORT}${rcon_args}${server_password_arg}?ServerAdminPassword=${SERVER_ADMIN_PASSWORD} -clusterid=${CLUSTER_ID} -servergamelog $custom_args $mods_arg $battleye_arg $passive_mods_arg"
+  local server_command="proton run /home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.exe $MAP_PATH?listen?$session_name_arg?Port=${ASA_PORT}${rcon_args}${server_password_arg}?ServerAdminPassword=${SERVER_ADMIN_PASSWORD}  -WinLiveMaxPlayers=${MAX_PLAYERS} -clusterid=${CLUSTER_ID} -servergamelog -servergamelogincludetribelogs -ServerRCONOutputTribeLogs -NotifyAdminCommandsInChat $custom_args $mods_arg $battleye_arg $passive_mods_arg"
 
   # Start the server using Proton-GE
   echo "Starting server with Proton-GE..."
