@@ -1426,16 +1426,6 @@ ensure_steamcmd_executable() {
     echo "SteamCMD script not found. Please make sure it is installed correctly."
     exit 1
   fi
-
-  if [ -f "$steamcmd_binary" ]; then
-    if [ ! -x "$steamcmd_binary" ]; then
-      echo "Making SteamCMD binary executable..."
-      chmod +x "$steamcmd_binary"
-    fi
-  else
-    echo "SteamCMD binary not found. Please make sure it is installed correctly."
-    exit 1
-  fi
 }
 # Function to update an instance
 update_manager_and_instances() {
