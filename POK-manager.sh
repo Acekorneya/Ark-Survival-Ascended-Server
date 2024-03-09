@@ -1483,7 +1483,7 @@ update_manager_and_instances() {
     if [ "$update_script_found" = false ]; then
       echo "No running instance found with the update_server.sh script. Updating server files using SteamCMD..."
       ensure_steamcmd_executable  # Make sure SteamCMD is executable
-      "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +login anonymous +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +login anonymous +app_update 2430930 +quit
+      sudo "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +login anonymous +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +login anonymous +app_update 2430930 +quit
     fi
     echo "----- ARK server files updated successfully to build id: $latest_build_id -----"
   else
