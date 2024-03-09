@@ -1483,11 +1483,11 @@ update_manager_and_instances() {
     echo "---- ARK server files not found. Installing server files using SteamCMD -----"
     ensure_steamcmd_executable # Make sure SteamCMD is executable
     if sudo "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +login anonymous +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +app_update 2430930 validate +quit; then
-      echo "ARK server files installed successfully."
+      echo "----- ARK server files installed successfully -----"
       # Move the appmanifest_2430930.acf file to the correct location
       if [ -f "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" ]; then
-        mv "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" "${BASE_DIR%/}/ServerFiles/arkserver/"
-        echo "Moved appmanifest_2430930.acf to the correct location."
+        cp "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" "${BASE_DIR%/}/ServerFiles/arkserver/"
+        echo "Copied appmanifest_2430930.acf to the correct location."
       else
         echo "appmanifest_2430930.acf not found in steamapps directory. Skipping move."
       fi
