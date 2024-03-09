@@ -1359,9 +1359,9 @@ check_for_POK_updates() {
   fi
 }
 install_steamcmd() {
-  local steamcmd_dir="${BASE_DIR%/}/config/POK-manager/steamcmd"
+  local steamcmd_dir="$BASE_DIR/config/POK-manager/steamcmd"
   local steamcmd_script="$steamcmd_dir/steamcmd.sh"
-  local steamcmd_binary="$steamcmd_dir/steamcmd"
+  local steamcmd_binary="$steamcmd_dir/linux32/steamcmd"
 
   if [ ! -f "$steamcmd_script" ] || [ ! -f "$steamcmd_binary" ]; then
     echo "SteamCMD not found. Attempting to install SteamCMD..."
@@ -1388,11 +1388,6 @@ install_steamcmd() {
     fi
 
     curl -s "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz" | tar -xz -C "$steamcmd_dir"
-
-    # Move the steamcmd binary to the expected location
-    if [ -f "$steamcmd_dir/linux32/steamcmd" ]; then
-      mv "$steamcmd_dir/linux32/steamcmd" "$steamcmd_binary"
-    fi
 
     # Set executable permissions on steamcmd.sh and steamcmd binary
     chmod +x "$steamcmd_script"
@@ -1421,9 +1416,9 @@ get_current_build_id() {
   echo "$build_id"
 }
 ensure_steamcmd_executable() {
-  local steamcmd_dir="${BASE_DIR%/}/config/POK-manager/steamcmd"
+  local steamcmd_dir="$BASE_DIR/config/POK-manager/steamcmd"
   local steamcmd_script="$steamcmd_dir/steamcmd.sh"
-  local steamcmd_binary="$steamcmd_dir/steamcmd"
+  local steamcmd_binary="$steamcmd_dir/linux32/steamcmd"
 
   if [ -f "$steamcmd_script" ]; then
     if [ ! -x "$steamcmd_script" ]; then
@@ -1477,23 +1472,13 @@ update_manager_and_instances() {
   # Pull the latest image
   echo "Pulling latest Docker image..."
   docker pull acekorneya/asa_server:2_0_latest
-
   # Check if SteamCMD is installed, and install it if necessary
   install_steamcmd
-
-  # Move the steamcmd binary to the expected location
-  local steamcmd_dir="${BASE_DIR%/}/config/POK-manager/steamcmd"
-  local steamcmd_binary="$steamcmd_dir/steamcmd"
-  if [ -f "$steamcmd_dir/linux32/steamcmd" ]; then
-    mv "$steamcmd_dir/linux32/steamcmd" "$steamcmd_binary"
-    chmod +x "$steamcmd_binary"
-  fi
-
   # Check if the server files are installed
   if [ ! -f "${BASE_DIR%/}/ServerFiles/arkserver/appmanifest_2430930.acf" ]; then
     echo "---- ARK server files not found. Installing server files using SteamCMD -----"
     ensure_steamcmd_executable  # Make sure SteamCMD is executable
-    if "$steamcmd_dir/steamcmd.sh" +login anonymous +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +login anonymous +app_update 2430930 validate +quit; then
+    if sudo "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +login anonymous +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +login anonymous +app_update 2430930 validate +quit; then
       echo "ARK server files installed successfully."
     else
       echo "Failed to install ARK server files using SteamCMD. Please check the logs for more information."
@@ -1523,7 +1508,7 @@ update_manager_and_instances() {
       if [ "$update_script_found" = false ]; then
         echo "No running instance found with the update_server.sh script. Updating server files using SteamCMD..."
         ensure_steamcmd_executable  # Make sure SteamCMD is executable
-        if "$steamcmd_dir/steamcmd.sh" +login anonymous +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +login anonymous +app_update 2430930 validate +quit; then
+        if sudo "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +login anonymous +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +login anonymous +app_update 2430930 validate +quit; then
           echo "SteamCMD update completed successfully."
         else
           echo "SteamCMD update failed. Please check the logs for more information."
