@@ -413,6 +413,17 @@ set_timezone() {
   echo "Configured Timezone: $TZ"
   echo "TZ=$TZ" >> "${instance_dir}/docker-compose-${instance_name}.yaml"
 }
+run_as_user() {
+  local cmd="$1"
+  local user="$2"
+  local group="$3"
+
+  if is_sudo; then
+    sudo -u "$user" -g "$group" bash -c "$cmd"
+  else
+    bash -c "$cmd"
+  fi
+}
 # Adjust file ownership and permissions on the host
 adjust_ownership_and_permissions() {
   local dir="$1"
