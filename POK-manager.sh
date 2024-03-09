@@ -1394,7 +1394,7 @@ install_steamcmd() {
     adjust_ownership_and_permissions "$steamcmd_dir"
     chmod +x "$steamcmd_script"
     chmod +x "$steamcmd_binary"
-    
+
     if [ -f "$steamcmd_script" ] && [ -f "$steamcmd_binary" ]; then
       echo "SteamCMD has been successfully installed."
     else
@@ -1484,6 +1484,13 @@ update_manager_and_instances() {
     ensure_steamcmd_executable # Make sure SteamCMD is executable
     if sudo "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +login anonymous +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +app_update 2430930 validate +quit; then
       echo "ARK server files installed successfully."
+      # Move the appmanifest_2430930.acf file to the correct location
+      if [ -f "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" ]; then
+        mv "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" "${BASE_DIR%/}/ServerFiles/arkserver/"
+        echo "Moved appmanifest_2430930.acf to the correct location."
+      else
+        echo "appmanifest_2430930.acf not found in steamapps directory. Skipping move."
+      fi
     else
       echo "Failed to install ARK server files using SteamCMD. Please check the logs for more information."
       exit 1
@@ -1514,6 +1521,13 @@ update_manager_and_instances() {
         ensure_steamcmd_executable # Make sure SteamCMD is executable
         if sudo "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +login anonymous +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +app_update 2430930 validate +quit; then
           echo "SteamCMD update completed successfully."
+          # Move the appmanifest_2430930.acf file to the correct location
+          if [ -f "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" ]; then
+            cp "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" "${BASE_DIR%/}/ServerFiles/arkserver/"
+            echo "Copied appmanifest_2430930.acf arkserver directory."
+          else
+            echo "appmanifest_2430930.acf not found in steamapps directory. Skipping move."
+          fi
         else
           echo "SteamCMD update failed. Please check the logs for more information."
           exit 1
