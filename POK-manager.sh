@@ -1416,6 +1416,7 @@ get_current_build_id() {
 ensure_steamcmd_executable() {
   local steamcmd_dir="$BASE_DIR/config/POK-manager/steamcmd"
   local steamcmd_script="$steamcmd_dir/steamcmd.sh"
+  local steamcmd_binary="$steamcmd_dir/linux32/steamcmd"
 
   if [ -f "$steamcmd_script" ]; then
     if [ ! -x "$steamcmd_script" ]; then
@@ -1424,6 +1425,16 @@ ensure_steamcmd_executable() {
     fi
   else
     echo "SteamCMD script not found. Please make sure it is installed correctly."
+    exit 1
+  fi
+
+  if [ -f "$steamcmd_binary" ]; then
+    if [ ! -x "$steamcmd_binary" ]; then
+      echo "Making SteamCMD binary executable..."
+      chmod +x "$steamcmd_binary"
+    fi
+  else
+    echo "SteamCMD binary not found. Please make sure it is installed correctly."
     exit 1
   fi
 }
