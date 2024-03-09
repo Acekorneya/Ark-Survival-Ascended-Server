@@ -1472,7 +1472,8 @@ update_manager_and_instances() {
   # Pull the latest image
   echo "Pulling latest Docker image..."
   docker pull acekorneya/asa_server:2_0_latest
-
+  # Check if SteamCMD is installed, and install it if necessary
+  install_steamcmd
   # Check if the server files are installed
   if [ ! -f "${BASE_DIR%/}/ServerFiles/arkserver/appmanifest_2430930.acf" ]; then
     echo "---- ARK server files not found. Installing server files using SteamCMD -----"
