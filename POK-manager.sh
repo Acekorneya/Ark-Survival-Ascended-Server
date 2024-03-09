@@ -1414,8 +1414,9 @@ get_current_build_id() {
   echo "$build_id"
 }
 ensure_steamcmd_executable() {
-  local steamcmd_dir="${BASE_DIR%/}/config/POK-manager/steamcmd"
+  local steamcmd_dir="$BASE_DIR/config/POK-manager/steamcmd"
   local steamcmd_script="$steamcmd_dir/steamcmd.sh"
+  local steamcmd_binary="$steamcmd_dir/linux32/steamcmd"
 
   if [ -f "$steamcmd_script" ]; then
     if [ ! -x "$steamcmd_script" ]; then
@@ -1424,6 +1425,16 @@ ensure_steamcmd_executable() {
     fi
   else
     echo "SteamCMD script not found. Please make sure it is installed correctly."
+    exit 1
+  fi
+
+  if [ -f "$steamcmd_binary" ]; then
+    if [ ! -x "$steamcmd_binary" ]; then
+      echo "Making SteamCMD binary executable..."
+      chmod +x "$steamcmd_binary"
+    fi
+  else
+    echo "SteamCMD binary not found. Please make sure it is installed correctly."
     exit 1
   fi
 }
@@ -1460,42 +1471,59 @@ update_manager_and_instances() {
   echo "Pulling latest Docker image..."
   docker pull acekorneya/asa_server:2_0_latest
 
-  # Check for updates to the ARK server files
-  local current_build_id=$(get_build_id_from_acf)
-  local latest_build_id=$(get_current_build_id)
-
-  if [ "$current_build_id" != "$latest_build_id" ]; then
-    echo "---- New server build available. Updating ARK server files -----"
-
-    # Check if any running instance has the update_server.sh script
-    local update_script_found=false
-    for instance in $(list_running_instances); do
-      if docker exec "asa_${instance}" test -f /home/pok/scripts/update_server.sh; then
-        update_script_found=true
-        echo "Running update_server.sh script in the container for instance: $instance"
-        docker exec -it "asa_${instance}" /bin/bash -c "/home/pok/scripts/update_server.sh" | while read -r line; do
-          echo "[$instance] $line"
-        done
-        break
-      fi
-    done
-
-    if [ "$update_script_found" = false ]; then
-      echo "No running instance found with the update_server.sh script. Updating server files using SteamCMD..."
-      ensure_steamcmd_executable  # Make sure SteamCMD is executable
-      "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +login anonymous +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +login anonymous +app_update 2430930 +quit
-    fi
-
-    # Check if the server files were updated successfully
-    local updated_build_id=$(get_build_id_from_acf)
-    if [ "$updated_build_id" == "$latest_build_id" ]; then
-      echo "----- ARK server files updated successfully to build id: $latest_build_id -----"
+  # Check if the server files are installed
+  if [ ! -f "${BASE_DIR%/}/ServerFiles/arkserver/appmanifest_2430930.acf" ]; then
+    echo "---- ARK server files not found. Installing server files using SteamCMD -----"
+    ensure_steamcmd_executable  # Make sure SteamCMD is executable
+    if "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +login anonymous +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +login anonymous +app_update 2430930 validate +quit; then
+      echo "ARK server files installed successfully."
     else
-      echo "----- Failed to update ARK server files to the latest build. Current build id: $updated_build_id -----"
-      exit 1  # Exit with an error status to indicate the update failure
+      echo "Failed to install ARK server files using SteamCMD. Please check the logs for more information."
+      exit 1
     fi
   else
-    echo "----- ARK server files are already up to date with build id: $current_build_id -----"
+    # Check for updates to the ARK server files
+    local current_build_id=$(get_build_id_from_acf)
+    local latest_build_id=$(get_current_build_id)
+
+    if [ "$current_build_id" != "$latest_build_id" ]; then
+      echo "---- New server build available. Updating ARK server files -----"
+
+      # Check if any running instance has the update_server.sh script
+      local update_script_found=false
+      for instance in $(list_running_instances); do
+        if docker exec "asa_${instance}" test -f /home/pok/scripts/update_server.sh; then
+          update_script_found=true
+          echo "Running update_server.sh script in the container for instance: $instance"
+          docker exec -it "asa_${instance}" /bin/bash -c "/home/pok/scripts/update_server.sh" | while read -r line; do
+            echo "[$instance] $line"
+          done
+          break
+        fi
+      done
+
+      if [ "$update_script_found" = false ]; then
+        echo "No running instance found with the update_server.sh script. Updating server files using SteamCMD..."
+        ensure_steamcmd_executable  # Make sure SteamCMD is executable
+        if "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +login anonymous +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +login anonymous +app_update 2430930 validate +quit; then
+          echo "SteamCMD update completed successfully."
+        else
+          echo "SteamCMD update failed. Please check the logs for more information."
+          exit 1
+        fi
+      fi
+
+      # Check if the server files were updated successfully
+      local updated_build_id=$(get_build_id_from_acf)
+      if [ "$updated_build_id" == "$latest_build_id" ]; then
+        echo "----- ARK server files updated successfully to build id: $latest_build_id -----"
+      else
+        echo "----- Failed to update ARK server files to the latest build. Current build id: $updated_build_id -----"
+        exit 1
+      fi
+    else
+      echo "----- ARK server files are already up to date with build id: $current_build_id -----"
+    fi
   fi
 
   echo "----- Update process completed -----"
