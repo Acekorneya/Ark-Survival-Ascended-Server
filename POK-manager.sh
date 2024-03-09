@@ -1370,20 +1370,21 @@ install_steamcmd() {
 
     if [ -f /etc/debian_version ]; then
       # Debian or Ubuntu
+      sudo dpkg --add-architecture i386
       sudo apt-get update
-      sudo apt-get install -y curl
+      sudo apt-get install -y curl lib32gcc-s1
     elif [ -f /etc/redhat-release ]; then
       # Red Hat, CentOS, or Fedora
       if command -v dnf &>/dev/null; then
-        sudo dnf install -y curl
+        sudo dnf install -y curl glibc.i686 libstdc++.i686
       else
-        sudo yum install -y curl
+        sudo yum install -y curl glibc.i686 libstdc++.i686
       fi
     elif [ -f /etc/arch-release ]; then
       # Arch Linux
-      sudo pacman -Sy --noconfirm curl
+      sudo pacman -Sy --noconfirm curl lib32-gcc-libs
     else
-      echo "Unsupported Linux distribution. Please install curl manually and run the setup again."
+      echo "Unsupported Linux distribution. Please install curl and 32-bit libraries manually and run the setup again."
       return 1
     fi
 
@@ -1472,12 +1473,14 @@ update_manager_and_instances() {
   # Pull the latest image
   echo "Pulling latest Docker image..."
   docker pull acekorneya/asa_server:2_0_latest
+
   # Check if SteamCMD is installed, and install it if necessary
   install_steamcmd
+
   # Check if the server files are installed
   if [ ! -f "${BASE_DIR%/}/ServerFiles/arkserver/appmanifest_2430930.acf" ]; then
     echo "---- ARK server files not found. Installing server files using SteamCMD -----"
-    ensure_steamcmd_executable  # Make sure SteamCMD is executable
+    ensure_steamcmd_executable # Make sure SteamCMD is executable
     if sudo "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +login anonymous +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +app_update 2430930 validate +quit; then
       echo "ARK server files installed successfully."
     else
@@ -1507,7 +1510,7 @@ update_manager_and_instances() {
 
       if [ "$update_script_found" = false ]; then
         echo "No running instance found with the update_server.sh script. Updating server files using SteamCMD..."
-        ensure_steamcmd_executable  # Make sure SteamCMD is executable
+        ensure_steamcmd_executable # Make sure SteamCMD is executable
         if sudo "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +login anonymous +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +app_update 2430930 validate +quit; then
           echo "SteamCMD update completed successfully."
         else
