@@ -1393,7 +1393,7 @@ install_steamcmd() {
     # Set executable permissions on steamcmd.sh and steamcmd binary
     chmod +x "$steamcmd_script"
     chmod +x "$steamcmd_binary"
-
+    adjust_ownership_and_permissions "$steamcmd_dir"
     if [ -f "$steamcmd_script" ] && [ -f "$steamcmd_binary" ]; then
       echo "SteamCMD has been successfully installed."
     else
