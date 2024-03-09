@@ -1501,7 +1501,7 @@ update_manager_and_instances() {
     local latest_build_id=$(get_current_build_id)
 
     if [ "$current_build_id" != "$latest_build_id" ]; then
-      echo "---- New server build available. Updating ARK server files -----"
+      echo "---- New server build available: $latest_build_id Updating ARK server files -----"
 
       # Check if any running instance has the update_server.sh script
       local update_script_found=false
