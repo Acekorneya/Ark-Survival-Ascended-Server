@@ -1342,7 +1342,7 @@ check_for_POK_updates() {
   elif command -v curl &>/dev/null; then
     curl -s -o "$temp_file" "$script_url"
   else
-    echo "Neither wget nor curl is available. Unable to check for updates"
+    echo "Neither wget nor curl is available. Unable to check for updates."
     return
   fi
 
