@@ -1361,8 +1361,9 @@ check_for_POK_updates() {
 install_steamcmd() {
   local steamcmd_dir="$BASE_DIR/config/POK-manager/steamcmd"
   local steamcmd_script="$steamcmd_dir/steamcmd.sh"
+  local steamcmd_binary="$steamcmd_dir/linux32/steamcmd"
 
-  if [ ! -f "$steamcmd_script" ]; then
+  if [ ! -f "$steamcmd_script" ] || [ ! -f "$steamcmd_binary" ]; then
     echo "SteamCMD not found. Attempting to install SteamCMD..."
 
     mkdir -p "$steamcmd_dir"
@@ -1388,10 +1389,11 @@ install_steamcmd() {
 
     curl -s "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz" | tar -xz -C "$steamcmd_dir"
 
-    # Set executable permissions on steamcmd.sh
+    # Set executable permissions on steamcmd.sh and steamcmd binary
     chmod +x "$steamcmd_script"
+    chmod +x "$steamcmd_binary"
 
-    if [ -f "$steamcmd_script" ]; then
+    if [ -f "$steamcmd_script" ] && [ -f "$steamcmd_binary" ]; then
       echo "SteamCMD has been successfully installed."
     else
       echo "Failed to install SteamCMD. Please install it manually and run the setup again."
