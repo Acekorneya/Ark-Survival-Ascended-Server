@@ -413,17 +413,6 @@ set_timezone() {
   echo "Configured Timezone: $TZ"
   echo "TZ=$TZ" >> "${instance_dir}/docker-compose-${instance_name}.yaml"
 }
-run_as_user() {
-  local cmd="$1"
-  local user="$2"
-  local group="$3"
-
-  if is_sudo; then
-    sudo -u "$user" -g "$group" bash -c "$cmd"
-  else
-    bash -c "$cmd"
-  fi
-}
 # Adjust file ownership and permissions on the host
 adjust_ownership_and_permissions() {
   local dir="$1"
@@ -436,14 +425,15 @@ adjust_ownership_and_permissions() {
   if [ ! -d "$dir" ]; then
     echo "Creating directory: $dir"
     mkdir -p "$dir"
+    chown 1000:1000 "$dir"
+    chmod 755 "$dir"
   fi
 
   echo "Checking and adjusting ownership and permissions for $dir..."
-
-  run_as_user "find '$dir' -type d -exec chown $PUID:$PGID {} \;" "$(id -un $PUID)" "$(id -gn $PGID)"
-  run_as_user "find '$dir' -type d -exec chmod 755 {} \;" "$(id -un $PUID)" "$(id -gn $PGID)"
-  run_as_user "find '$dir' -type f -exec chown $PUID:$PGID {} \;" "$(id -un $PUID)" "$(id -gn $PGID)"
-  run_as_user "find '$dir' -type f -exec chmod 644 {} \;" "$(id -un $PUID)" "$(id -gn $PGID)"
+  find "$dir" -type d -exec chown 1000:1000 {} \;
+  find "$dir" -type d -exec chmod 755 {} \;
+  find "$dir" -type f -exec chown 1000:1000 {} \;
+  find "$dir" -type f -exec chmod 644 {} \;
 
   # Set executable bit for POK-manager.sh
   chmod +x "$(dirname "$(realpath "$0")")/POK-manager.sh"
@@ -1475,7 +1465,7 @@ update_manager_and_instances() {
 
     if [ "$update_script_found" = false ]; then
       echo "No running instance found with the update_server.sh script. Updating server files using SteamCMD..."
-      "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +login anonymous +app_update 2430930 +quit
+      sudo "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +login anonymous +app_update 2430930 +quit
     fi
 
     echo "----- ARK server files updated successfully to build id: $latest_build_id -----"
