@@ -1454,6 +1454,16 @@ update_manager_and_instances() {
     fi
   fi
 
+  echo "----- Checking for updates to Docker image and server files -----"
+
+  # Pull the latest image
+  echo "Pulling latest Docker image..."
+  docker pull acekorneya/asa_server:2_0_latest
+
+  # Check for updates to the ARK server files
+  local current_build_id=$(get_build_id_from_acf)
+  local latest_build_id=$(get_current_build_id)
+
   if [ "$current_build_id" != "$latest_build_id" ]; then
     echo "---- New server build available. Updating ARK server files -----"
 
