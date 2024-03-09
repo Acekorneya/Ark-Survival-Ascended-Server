@@ -1454,16 +1454,6 @@ update_manager_and_instances() {
     fi
   fi
 
-  echo "----- Checking for updates to Docker image and server files -----"
-
-  # Pull the latest image
-  echo "Pulling latest Docker image..."
-  docker pull acekorneya/asa_server:2_0_latest
-
-  # Check for updates to the ARK server files
-  local current_build_id=$(get_build_id_from_acf)
-  local latest_build_id=$(get_current_build_id)
-
   if [ "$current_build_id" != "$latest_build_id" ]; then
     echo "---- New server build available. Updating ARK server files -----"
 
@@ -1483,9 +1473,17 @@ update_manager_and_instances() {
     if [ "$update_script_found" = false ]; then
       echo "No running instance found with the update_server.sh script. Updating server files using SteamCMD..."
       ensure_steamcmd_executable  # Make sure SteamCMD is executable
-      sudo "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +login anonymous +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +login anonymous +app_update 2430930 +quit
+      "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +login anonymous +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +login anonymous +app_update 2430930 +quit
     fi
-    echo "----- ARK server files updated successfully to build id: $latest_build_id -----"
+
+    # Check if the server files were updated successfully
+    local updated_build_id=$(get_build_id_from_acf)
+    if [ "$updated_build_id" == "$latest_build_id" ]; then
+      echo "----- ARK server files updated successfully to build id: $latest_build_id -----"
+    else
+      echo "----- Failed to update ARK server files to the latest build. Current build id: $updated_build_id -----"
+      exit 1  # Exit with an error status to indicate the update failure
+    fi
   else
     echo "----- ARK server files are already up to date with build id: $current_build_id -----"
   fi
