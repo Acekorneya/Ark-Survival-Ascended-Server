@@ -1413,6 +1413,20 @@ get_current_build_id() {
   local build_id=$(curl -sX GET "https://api.steamcmd.net/v1/info/$app_id" | jq -r ".data.\"$app_id\".depots.branches.public.buildid")
   echo "$build_id"
 }
+ensure_steamcmd_executable() {
+  local steamcmd_dir="${BASE_DIR%/}/config/POK-manager/steamcmd"
+  local steamcmd_script="$steamcmd_dir/steamcmd.sh"
+
+  if [ -f "$steamcmd_script" ]; then
+    if [ ! -x "$steamcmd_script" ]; then
+      echo "Making SteamCMD script executable..."
+      chmod +x "$steamcmd_script"
+    fi
+  else
+    echo "SteamCMD script not found. Please make sure it is installed correctly."
+    exit 1
+  fi
+}
 # Function to update an instance
 update_manager_and_instances() {
   echo "----- Checking for updates to POK-manager.sh -----"
@@ -1468,7 +1482,8 @@ update_manager_and_instances() {
 
     if [ "$update_script_found" = false ]; then
       echo "No running instance found with the update_server.sh script. Updating server files using SteamCMD..."
-      sudo "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +login anonymous +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +login anonymous +app_update 2430930 +quit
+      ensure_steamcmd_executable  # Make sure SteamCMD is executable
+      "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +login anonymous +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +login anonymous +app_update 2430930 +quit
     fi
     echo "----- ARK server files updated successfully to build id: $latest_build_id -----"
   else
