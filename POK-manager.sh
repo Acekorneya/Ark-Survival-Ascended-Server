@@ -745,19 +745,11 @@ adjust_docker_permissions() {
         sudo usermod -aG docker $USER
         echo "User $USER has been added to the 'docker' group."
         
-        read -r -p "Do you want to restart the Docker daemon now? This will stop any running containers. [y/N] " restart_daemon
-        if [[ "$restart_daemon" =~ ^[Yy]$ ]]; then
-          echo "Stopping all running containers..."
-          docker stop $(docker ps -aq)
-          echo "Restarting the Docker daemon..."
-          sudo systemctl restart docker
-          echo "Docker daemon restarted. You can now run Docker commands without 'sudo'."
-          echo "false" > "$config_file"
-        else
-          echo "Please restart the Docker daemon manually for the changes to take effect."
-          echo "Until then, you may need to use 'sudo' for Docker commands."
-          echo "true" > "$config_file"
-        fi
+        echo "Changing ownership of /var/run/docker.sock to $USER..."
+        sudo chown $USER /var/run/docker.sock
+        
+        echo "You can now run Docker commands without 'sudo'."
+        echo "false" > "$config_file"
         
         return
       else
@@ -997,11 +989,40 @@ start_instance() {
   local docker_compose_file="./Instance_${instance_name}/docker-compose-${instance_name}.yaml"
   echo "-----Starting ${instance_name} Server-----"
   if [ -f "$docker_compose_file" ]; then
-    get_docker_compose_cmd #  get the correct Docker Compose command
+    get_docker_compose_cmd
     echo "Using $DOCKER_COMPOSE_CMD for ${instance_name}..."
-    pull_docker_image # A pull the Docker image before starting the instance
-    check_vm_max_map_count  #  check if the VM has the max_map_count setting set
-    sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d
+    
+    local use_sudo
+    local config_file=$(get_config_file_path)
+    if [ -f "$config_file" ]; then
+      use_sudo=$(cat "$config_file")
+    else
+      use_sudo="true"
+    fi
+    
+    if [ "$use_sudo" = "true" ]; then
+      echo "Using 'sudo' for Docker commands..."
+      sudo docker pull acekorneya/asa_server:2_0_latest
+      sudo check_vm_max_map_count
+      sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d
+    else
+      docker pull acekorneya/asa_server:2_0_latest || {
+        local pull_exit_code=$?
+        if [ $pull_exit_code -eq 1 ] && [[ $(docker pull acekorneya/asa_server:2_0_latest 2>&1) =~ "permission denied" ]]; then
+          echo "Permission denied error occurred while pulling the Docker image."
+          echo "It seems the user is not set up correctly to run Docker commands without 'sudo'."
+          echo "Falling back to using 'sudo' for Docker commands."
+          sudo docker pull acekorneya/asa_server:2_0_latest
+          sudo check_vm_max_map_count
+          sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d
+        else
+          echo "An error occurred while pulling the Docker image:"
+          echo "$(docker pull acekorneya/asa_server:2_0_latest 2>&1)"
+          exit 1
+        fi
+      }
+    fi
+    
     echo "-----Server Started for ${instance_name} -----"
     echo "You can check the status of your server by running -status -all or -status ${instance_name}."
     if [ $? -ne 0 ]; then
@@ -1021,23 +1042,54 @@ stop_instance() {
 
   echo "-----Stopping ${instance_name} Server-----"
 
-  # If Docker Compose file exists, use Docker Compose to stop the service
-  if [ -f "$docker_compose_file" ]; then
-    sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down
-    if [ $? -eq 0 ]; then
-      echo "${instance_name} stopped successfully."
+  local use_sudo
+  local config_file=$(get_config_file_path)
+  if [ -f "$config_file" ]; then
+    use_sudo=$(cat "$config_file")
+  else
+    use_sudo="true"
+  fi
+
+  if [ "$use_sudo" = "true" ]; then
+    echo "Using 'sudo' for Docker commands..."
+    if [ -f "$docker_compose_file" ]; then
+      sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down
     else
-      echo "Failed to stop ${instance_name} using Docker Compose."
+      sudo docker stop -t 30 "asa_${instance_name}"
     fi
   else
-    # Direct Docker command if Docker Compose file is missing
-    local container_name="asa_${instance_name}"
-    if docker ps -q -f name=^/${container_name}$ > /dev/null; then
-      docker stop -t 30 "${container_name}" && echo "Container ${container_name} stopped successfully." || echo "Failed to stop container ${container_name}."
+    if [ -f "$docker_compose_file" ]; then
+      $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down || {
+        local exit_code=$?
+        if [ $exit_code -eq 1 ] && [[ $($DOCKER_COMPOSE_CMD -f "$docker_compose_file" down 2>&1) =~ "permission denied" ]]; then
+          echo "Permission denied error occurred while stopping the instance."
+          echo "It seems the user is not set up correctly to run Docker commands without 'sudo'."
+          echo "Falling back to using 'sudo' for Docker commands."
+          sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down
+        else
+          echo "An error occurred while stopping the instance:"
+          echo "$($DOCKER_COMPOSE_CMD -f "$docker_compose_file" down 2>&1)"
+          exit 1
+        fi
+      }
     else
-      echo "Container ${container_name} is not running or does not exist. No action taken."
+      docker stop -t 30 "asa_${instance_name}" || {
+        local exit_code=$?
+        if [ $exit_code -eq 1 ] && [[ $(docker stop -t 30 "asa_${instance_name}" 2>&1) =~ "permission denied" ]]; then
+          echo "Permission denied error occurred while stopping the container."
+          echo "It seems the user is not set up correctly to run Docker commands without 'sudo'."
+          echo "Falling back to using 'sudo' for Docker commands."
+          sudo docker stop -t 30 "asa_${instance_name}"
+        else
+          echo "An error occurred while stopping the container:"
+          echo "$(docker stop -t 30 "asa_${instance_name}" 2>&1)"
+          exit 1
+        fi
+      }
     fi
   fi
+
+  echo "Instance ${instance_name} stopped successfully."
 }
 list_running_instances() {
   local instances=($(list_instances))
@@ -1478,8 +1530,7 @@ update_manager_and_instances() {
   echo "----- Checking for updates to Docker image and server files -----"
 
   # Pull the latest image
-  echo "Pulling latest Docker image..."
-  sudo docker pull acekorneya/asa_server:2_0_latest
+  pull_docker_image
 
   # Check if SteamCMD is installed, and install it if necessary
   install_steamcmd
@@ -1777,7 +1828,7 @@ manage_service() {
 
   # Adjust Docker permissions only for actions that explicitly require Docker interaction
   case $action in
-  -start | -stop | -update | -create)
+  -start | -stop | -update | -create | -edit | -restore | -logs | -setup | -backup | -restart | -shutdown | -status | -chat | -saveworld)
     adjust_docker_permissions
     ;;
   esac
@@ -1797,7 +1848,6 @@ manage_service() {
     edit_instance
     ;;
   -setup)
-    check_puid_pgid_user "$PUID" "$PGID"
     root_tasks
     echo "Setup completed. Please run './POK-manager.sh -create <instance_name>' to create an instance."
     ;;
