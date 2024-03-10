@@ -23,6 +23,7 @@ POK-manager.sh is a powerful and user-friendly script for managing Ark Survival 
 - [Docker Compose Configuration](#docker-compose-configuration)
 - [Ports](#ports)
 - [Troubleshooting](#troubleshooting)
+- [Hypervisor](#hypervisor)
 - [Links](#links)
 - [Support](#support)
 - [Conclusion](#conclusion)
@@ -351,6 +352,11 @@ To make the change permanent, add the following line to `/etc/sysctl.conf` and a
 echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf
 sudo sysctl -p
 ```
+## Hypervisors
+Proxmox VM
+
+The default CPU type (kvm64) in proxmox for linux VMs does not seem to implement all features needed to run the server. When running the docker contain
+In that case just change your CPU type to host in the hardware settings of your VM. After a restart of the VM the container should work without any issues.
 
 ## Links
 
