@@ -456,7 +456,6 @@ check_vm_max_map_count() {
 }
 
 check_puid_pgid_user() {
-
   local puid="$1"
   local pgid="$2"
 
@@ -474,40 +473,7 @@ check_puid_pgid_user() {
     echo "You are not running the script as the user with the correct PUID (${puid}) and PGID (${pgid})."
     echo "Your current user '${current_user}' has UID ${current_uid} and GID ${current_gid}."
     echo "Please switch to the correct user or update your current user's UID and GID to match the required values."
-    echo "Alternatively, you can run the script with sudo to bypass this check: sudo .POK-manager.sh <commands>"
-    exit 1
-  fi
-  
-  # Check if a user with the specified PUID exists
-  local puid_user=$(getent passwd "${puid}" | cut -d: -f1)
-  if [ -z "${puid_user}" ]; then
-    echo "No user found with UID (${puid}). You may need to create a user with this UID or change an existing user's UID."
-    echo "To create a new user with the specified UID, run the following command:"
-    echo "sudo useradd -u ${puid} -m -s /bin/bash <username>"
-    echo "Replace <username> with your preferred username."
-    exit 1
-  else
-    echo "Found user with UID ${puid}: ${puid_user}. Proceeding..."
-  fi
-
-  # Check if a group with the specified PGID exists
-  local pgid_group=$(getent group "${pgid}" | cut -d: -f1)
-  if [ -z "${pgid_group}" ]; then
-    echo "No group found with GID (${pgid}). You may need to create a group with this GID or change an existing group's GID."
-    echo "To create a new group with the specified GID, run the following command:"
-    echo "sudo groupadd -g ${pgid} <groupname>"
-    echo "Replace <groupname> with your preferred group name."
-    exit 1
-  else
-    echo "Found group with GID ${pgid}: ${pgid_group}. Proceeding..."
-  fi
-
-  # Check if the user is a member of the group
-  local user_groups=$(groups "${puid_user}")
-  if ! echo "${user_groups}" | grep -qw "${pgid_group}"; then
-    echo "The user '${puid_user}' is not a member of the group '${pgid_group}'. You may need to add the user to the group."
-    echo "To add the user to the group, run the following command:"
-    echo "sudo usermod -aG ${pgid_group} ${puid_user}"
+    echo "Alternatively, you can run the script with sudo to bypass this check: sudo ./POK-manager.sh <commands>"
     exit 1
   fi
 }
@@ -1342,7 +1308,7 @@ check_for_POK_updates() {
   elif command -v curl &>/dev/null; then
     curl -s -o "$temp_file" "$script_url"
   else
-    echo "Neither wget nor curl is available. Unable to check for updates."
+    echo "Neither wget nor curl is available. Unable to check for updates"
     return
   fi
 
@@ -1766,7 +1732,7 @@ manage_service() {
   local additional_args="${@:3}"
   # Ensure root privileges for specific actions
   if [[ "$action" == "-setup" ]]; then
-  check_puid_pgid_user
+  check_puid_pgid_user "$PUID" "$PGID"
   fi
 
   # Adjust Docker permissions only for actions that explicitly require Docker interaction
@@ -1791,7 +1757,7 @@ manage_service() {
     edit_instance
     ;;
   -setup)
-    check_puid_pgid_user
+    check_puid_pgid_user "$PUID" "$PGID"
     root_tasks
     echo "Setup completed. Please run './POK-manager.sh -create <instance_name>' to create an instance."
     ;;
