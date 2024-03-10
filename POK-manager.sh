@@ -977,18 +977,11 @@ start_instance() {
   local docker_compose_file="./Instance_${instance_name}/docker-compose-${instance_name}.yaml"
   echo "-----Starting ${instance_name} Server-----"
   if [ -f "$docker_compose_file" ]; then
-    get_docker_compose_cmd
+    get_docker_compose_cmd #  get the correct Docker Compose command
     echo "Using $DOCKER_COMPOSE_CMD for ${instance_name}..."
-    pull_docker_image
-    check_vm_max_map_count
-
-    if ! check_puid_pgid_user "$PUID" "$PGID"; then
-      echo "User's PUID and PGID do not match 1000:1000. Using sudo to start the instance."
-      sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d
-    else
-      sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d
-    fi
-
+    pull_docker_image # A pull the Docker image before starting the instance
+    check_vm_max_map_count  #  check if the VM has the max_map_count setting set
+    sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d
     echo "-----Server Started for ${instance_name} -----"
     echo "You can check the status of your server by running -status -all or -status ${instance_name}."
     if [ $? -ne 0 ]; then
