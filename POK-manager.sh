@@ -1014,29 +1014,7 @@ start_instance() {
       check_vm_max_map_count
       sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d
     else
-      docker pull acekorneya/asa_server:2_0_latest || {
-        local pull_exit_code=$?
-        if [ $pull_exit_code -eq 1 ] && [[ $(docker pull acekorneya/asa_server:2_0_latest 2>&1) =~ "permission denied" ]]; then
-          echo "Permission denied error occurred while pulling the Docker image."
-          echo "It seems the Docker daemon hasn't been restarted after adding the user to the 'docker' group."
-          read -r -p "Do you want to restart the Docker daemon now? This will stop any running containers. [y/N] " restart_daemon
-          if [[ "$restart_daemon" =~ ^[Yy]$ ]]; then
-            echo "Stopping all running containers..."
-            sudo docker stop $(docker ps -aq)
-            echo "Restarting the Docker daemon..."
-            sudo systemctl restart docker
-            echo "Docker daemon restarted. Retrying the pull command..."
-            docker pull acekorneya/asa_server:2_0_latest
-          else
-            echo "Please restart the Docker daemon manually and try again."
-            exit 1
-          fi
-        else
-          echo "An error occurred while pulling the Docker image:"
-          echo "$(docker pull acekorneya/asa_server:2_0_latest 2>&1)"
-          exit 1
-        fi
-      }
+      docker pull acekorneya/asa_server:2_0_latest
       check_vm_max_map_count
       $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d
     fi
