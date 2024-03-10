@@ -1010,7 +1010,7 @@ stop_instance() {
 
   # If Docker Compose file exists, use Docker Compose to stop the service
   if [ -f "$docker_compose_file" ]; then
-    $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down
+    sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down
     if [ $? -eq 0 ]; then
       echo "${instance_name} stopped successfully."
     else
