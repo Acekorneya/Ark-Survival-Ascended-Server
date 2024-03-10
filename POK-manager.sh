@@ -740,13 +740,12 @@ adjust_docker_permissions() {
       return
     fi
   else
-    read -r -p "User $USER is not in the docker group. Would you like to add the user to the docker group? [y/N] " response
-    if [[ "$response" =~ ^[Yy]$ ]]; then
-      sudo usermod -aG docker $USER
-      echo "User $USER has been added to the docker group."
-      echo "false" > "$config_file"
-      return
-    fi
+    echo "Adding user $USER to the 'docker' group..."
+    sudo usermod -aG docker $USER
+    echo "User $USER has been added to the 'docker' group."
+    echo "Please log out and log back in for the changes to take effect."
+    echo "false" > "$config_file"
+    return
   fi
 
   echo "true" > "$config_file"
