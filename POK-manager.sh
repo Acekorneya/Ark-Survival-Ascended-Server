@@ -668,6 +668,7 @@ services:
     restart: unless-stopped
     environment:
       - INSTANCE_NAME=${instance_name}
+      - TZ=$TZ
 EOF
 
   # Iterate over the config_order to maintain the order in Docker Compose
