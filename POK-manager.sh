@@ -736,12 +736,33 @@ adjust_docker_permissions() {
     read -r -p "Would you like to run Docker commands without 'sudo'? [y/N] " response
     if [[ "$response" =~ ^[Yy]$ ]]; then
       echo "false" > "$config_file"
-      echo "User preference saved. You may need to log out and back in for this to take effect."
+      echo "User preference saved."
+      return
+    fi
+  else
+    read -r -p "User $USER is not in the docker group. Would you like to add the user to the docker group? [y/N] " response
+    if [[ "$response" =~ ^[Yy]$ ]]; then
+      sudo usermod -aG docker $USER
+      echo "User $USER has been added to the docker group."
+      echo "false" > "$config_file"
       return
     fi
   fi
 
+  echo "true" > "$config_file"
   echo "Please ensure to use 'sudo' for Docker commands or run this script with 'sudo'."
+}
+
+get_docker_preference() {
+  local config_file=$(get_config_file_path)
+
+  if [ -f "$config_file" ]; then
+    local use_sudo
+    use_sudo=$(cat "$config_file")
+    echo "$use_sudo"
+  else
+    echo "true"
+  fi
 }
 
 prompt_for_instance_name() {
