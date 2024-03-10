@@ -582,7 +582,7 @@ root_tasks() {
 pull_docker_image() {
   local image_name="acekorneya/asa_server:2_0_latest"
   echo "Pulling Docker image: $image_name"
-  docker pull "$image_name"
+  sudo docker pull "$image_name"
 }
 
 read_docker_compose_config() {
