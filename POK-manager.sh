@@ -1003,7 +1003,7 @@ start_instance() {
     if [ "$use_sudo" = "true" ]; then
       echo "Using 'sudo' for Docker commands..."
       sudo docker pull acekorneya/asa_server:2_0_latest
-      sudo check_vm_max_map_count
+      check_vm_max_map_count
       sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d
     else
       docker pull acekorneya/asa_server:2_0_latest || {
@@ -1013,7 +1013,7 @@ start_instance() {
           echo "It seems the user is not set up correctly to run Docker commands without 'sudo'."
           echo "Falling back to using 'sudo' for Docker commands."
           sudo docker pull acekorneya/asa_server:2_0_latest
-          sudo check_vm_max_map_count
+          check_vm_max_map_count
           sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d
         else
           echo "An error occurred while pulling the Docker image:"
