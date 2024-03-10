@@ -986,7 +986,7 @@ start_instance() {
       echo "User's PUID and PGID do not match 1000:1000. Using sudo to start the instance."
       sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d
     else
-      $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d
+      sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d
     fi
 
     echo "-----Server Started for ${instance_name} -----"
@@ -1466,7 +1466,7 @@ update_manager_and_instances() {
 
   # Pull the latest image
   echo "Pulling latest Docker image..."
-  docker pull acekorneya/asa_server:2_0_latest
+  sudo docker pull acekorneya/asa_server:2_0_latest
 
   # Check if SteamCMD is installed, and install it if necessary
   install_steamcmd
