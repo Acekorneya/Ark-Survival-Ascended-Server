@@ -993,7 +993,7 @@ start_instance() {
   if [ -f "$docker_compose_file" ]; then
     get_docker_compose_cmd
     echo "Using $DOCKER_COMPOSE_CMD for ${instance_name}..."
-    
+    $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d
     local use_sudo
     local config_file=$(get_config_file_path)
     if [ -f "$config_file" ]; then
