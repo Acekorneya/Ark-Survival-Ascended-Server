@@ -23,7 +23,7 @@ POK-manager.sh is a powerful and user-friendly script for managing Ark Survival 
 - [Docker Compose Configuration](#docker-compose-configuration)
 - [Ports](#ports)
 - [Troubleshooting](#troubleshooting)
-- [Hypervisor](#hypervisor)
+- [Hypervisor](#hypervisors)
 - [Links](#links)
 - [Support](#support)
 - [Conclusion](#conclusion)
