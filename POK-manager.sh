@@ -734,8 +734,10 @@ adjust_docker_permissions() {
       echo "User $USER is already in the docker group."
       read -r -p "Would you like to run Docker commands without 'sudo'? [y/N] " response
       if [[ "$response" =~ ^[Yy]$ ]]; then
+        echo "Changing ownership of /var/run/docker.sock to $USER..."
+        sudo chown $USER /var/run/docker.sock
         echo "false" > "$config_file"
-        echo "User preference saved."
+        echo "User preference saved. You can now run Docker commands without 'sudo'."
         return
       fi
     else
