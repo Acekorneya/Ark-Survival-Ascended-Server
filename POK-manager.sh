@@ -729,23 +729,43 @@ adjust_docker_permissions() {
       echo "User has chosen to run Docker commands without 'sudo'."
       return
     fi
-  fi
-
-  if groups $USER | grep -q '\bdocker\b'; then
-    echo "User $USER is already in the docker group."
-    read -r -p "Would you like to run Docker commands without 'sudo'? [y/N] " response
-    if [[ "$response" =~ ^[Yy]$ ]]; then
-      echo "false" > "$config_file"
-      echo "User preference saved."
-      return
-    fi
   else
-    echo "Adding user $USER to the 'docker' group..."
-    sudo usermod -aG docker $USER
-    echo "User $USER has been added to the 'docker' group."
-    echo "Please log out and log back in for the changes to take effect."
-    echo "false" > "$config_file"
-    return
+    if groups $USER | grep -q '\bdocker\b'; then
+      echo "User $USER is already in the docker group."
+      read -r -p "Would you like to run Docker commands without 'sudo'? [y/N] " response
+      if [[ "$response" =~ ^[Yy]$ ]]; then
+        echo "false" > "$config_file"
+        echo "User preference saved."
+        return
+      fi
+    else
+      read -r -p "Config file not found. Do you want to add user $USER to the 'docker' group? [y/N] " add_to_group
+      if [[ "$add_to_group" =~ ^[Yy]$ ]]; then
+        echo "Adding user $USER to the 'docker' group..."
+        sudo usermod -aG docker $USER
+        echo "User $USER has been added to the 'docker' group."
+        
+        read -r -p "Do you want to restart the Docker daemon now? This will stop any running containers. [y/N] " restart_daemon
+        if [[ "$restart_daemon" =~ ^[Yy]$ ]]; then
+          echo "Stopping all running containers..."
+          docker stop $(docker ps -aq)
+          echo "Restarting the Docker daemon..."
+          sudo systemctl restart docker
+          echo "Docker daemon restarted. You can now run Docker commands without 'sudo'."
+          echo "false" > "$config_file"
+        else
+          echo "Please restart the Docker daemon manually for the changes to take effect."
+          echo "Until then, you may need to use 'sudo' for Docker commands."
+          echo "true" > "$config_file"
+        fi
+        
+        return
+      else
+        echo "true" > "$config_file"
+        echo "Please ensure to use 'sudo' for Docker commands or run this script with 'sudo'."
+        return
+      fi
+    fi
   fi
 
   echo "true" > "$config_file"
@@ -977,11 +997,50 @@ start_instance() {
   local docker_compose_file="./Instance_${instance_name}/docker-compose-${instance_name}.yaml"
   echo "-----Starting ${instance_name} Server-----"
   if [ -f "$docker_compose_file" ]; then
-    get_docker_compose_cmd #  get the correct Docker Compose command
+    get_docker_compose_cmd
     echo "Using $DOCKER_COMPOSE_CMD for ${instance_name}..."
-    pull_docker_image # A pull the Docker image before starting the instance
-    check_vm_max_map_count  #  check if the VM has the max_map_count setting set
-    sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d
+    
+    local use_sudo
+    local config_file=$(get_config_file_path)
+    if [ -f "$config_file" ]; then
+      use_sudo=$(cat "$config_file")
+    else
+      use_sudo="true"
+    fi
+    
+    if [ "$use_sudo" = "true" ]; then
+      echo "Using 'sudo' for Docker commands..."
+      sudo docker pull acekorneya/asa_server:2_0_latest
+      check_vm_max_map_count
+      sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d
+    else
+      docker pull acekorneya/asa_server:2_0_latest || {
+        local pull_exit_code=$?
+        if [ $pull_exit_code -eq 1 ] && [[ $(docker pull acekorneya/asa_server:2_0_latest 2>&1) =~ "permission denied" ]]; then
+          echo "Permission denied error occurred while pulling the Docker image."
+          echo "It seems the Docker daemon hasn't been restarted after adding the user to the 'docker' group."
+          read -r -p "Do you want to restart the Docker daemon now? This will stop any running containers. [y/N] " restart_daemon
+          if [[ "$restart_daemon" =~ ^[Yy]$ ]]; then
+            echo "Stopping all running containers..."
+            sudo docker stop $(docker ps -aq)
+            echo "Restarting the Docker daemon..."
+            sudo systemctl restart docker
+            echo "Docker daemon restarted. Retrying the pull command..."
+            docker pull acekorneya/asa_server:2_0_latest
+          else
+            echo "Please restart the Docker daemon manually and try again."
+            exit 1
+          fi
+        else
+          echo "An error occurred while pulling the Docker image:"
+          echo "$(docker pull acekorneya/asa_server:2_0_latest 2>&1)"
+          exit 1
+        fi
+      }
+      check_vm_max_map_count
+      $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d
+    fi
+    
     echo "-----Server Started for ${instance_name} -----"
     echo "You can check the status of your server by running -status -all or -status ${instance_name}."
     if [ $? -ne 0 ]; then
