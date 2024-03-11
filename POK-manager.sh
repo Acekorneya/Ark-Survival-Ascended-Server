@@ -1690,6 +1690,7 @@ backup_instance() {
     for instance in "${instances[@]}"; do
       read_backup_config "$instance"
       if [ -z "$max_backups" ] || [ -z "$max_size_gb" ]; then
+        echo "Backup configuration missing or incomplete for instance $instance."
         read -p "Enter the maximum number of backups to keep for instance $instance: " max_backups
         read -p "Enter the maximum size limit (in GB) for instance $instance backups: " max_size_gb
         write_backup_config "$instance" "$max_backups" "$max_size_gb"
@@ -1700,6 +1701,7 @@ backup_instance() {
   else
     read_backup_config "$instance_name"
     if [ -z "$max_backups" ] || [ -z "$max_size_gb" ]; then
+      echo "Backup configuration missing or incomplete for instance $instance_name."
       read -p "Enter the maximum number of backups to keep for instance $instance_name: " max_backups
       read -p "Enter the maximum size limit (in GB) for instance $instance_name backups: " max_size_gb
       write_backup_config "$instance_name" "$max_backups" "$max_size_gb"
