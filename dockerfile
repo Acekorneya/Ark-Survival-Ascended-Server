@@ -63,7 +63,7 @@ RUN set -ex; \
 # Copy scripts and defaults folders into the container, ensure they are executable
 COPY --chown=pok:pok scripts/ /home/pok/scripts/
 COPY --chown=pok:pok defaults/ /home/pok/defaults/
-RUN sed -i 's/\r$//' /home/pok/scripts/*.sh && chmod +x /home/pok/scripts/*.sh
+
 # Switch back to root to run the entrypoint script
 USER pok
 WORKDIR /home/pok
