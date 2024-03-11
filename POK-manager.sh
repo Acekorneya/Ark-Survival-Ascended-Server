@@ -1682,6 +1682,13 @@ MAX_SIZE_GB=$max_size_gb
 EOF
 }
 
+prompt_backup_config() {
+  local instance_name="$1"
+  read -p "Enter the maximum number of backups to keep for instance $instance_name: " max_backups
+  read -p "Enter the maximum size limit (in GB) for instance $instance_name backups: " max_size_gb
+  write_backup_config "$instance_name" "$max_backups" "$max_size_gb"
+}
+
 backup_instance() {
   local instance_name="$1"
 
@@ -1691,9 +1698,7 @@ backup_instance() {
       read_backup_config "$instance"
       if [ -z "$max_backups" ] || [ -z "$max_size_gb" ]; then
         echo "Backup configuration missing or incomplete for instance $instance."
-        read -p "Enter the maximum number of backups to keep for instance $instance: " max_backups
-        read -p "Enter the maximum size limit (in GB) for instance $instance backups: " max_size_gb
-        write_backup_config "$instance" "$max_backups" "$max_size_gb"
+        prompt_backup_config "$instance"
       fi
       backup_single_instance "$instance"
       manage_backup_rotation "$instance" "$max_backups" "$max_size_gb"
@@ -1702,9 +1707,7 @@ backup_instance() {
     read_backup_config "$instance_name"
     if [ -z "$max_backups" ] || [ -z "$max_size_gb" ]; then
       echo "Backup configuration missing or incomplete for instance $instance_name."
-      read -p "Enter the maximum number of backups to keep for instance $instance_name: " max_backups
-      read -p "Enter the maximum size limit (in GB) for instance $instance_name backups: " max_size_gb
-      write_backup_config "$instance_name" "$max_backups" "$max_size_gb"
+      prompt_backup_config "$instance_name"
     fi
     backup_single_instance "$instance_name"
     manage_backup_rotation "$instance_name" "$max_backups" "$max_size_gb"
