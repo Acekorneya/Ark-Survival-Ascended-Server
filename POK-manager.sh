@@ -1610,6 +1610,48 @@ update_manager_and_instances() {
 
   echo "----- Update process completed -----"
 }
+manage_backup_rotation() {
+  local instance_name="$1"
+  local max_backups="$2"
+  local max_size_gb="$3"
+
+  local main_dir="${MAIN_DIR%/}"
+  local backup_dir="${main_dir}/backups/${instance_name}"
+
+  # Convert max_size_gb to bytes
+  local max_size_bytes=$((max_size_gb * 1024 * 1024 * 1024))
+
+  # Get a list of backup files sorted by modification time (oldest first)
+  local backup_files=($(ls -tr "${backup_dir}/"*.tar.gz 2>/dev/null))
+
+  # Check if the number of backups exceeds the maximum allowed
+  while [ ${#backup_files[@]} -gt $max_backups ]; do
+    # Remove the oldest backup
+    local oldest_backup="${backup_files[0]}"
+    echo "Removing old backup: $oldest_backup"
+    rm "$oldest_backup"
+    # Remove the oldest backup from the array
+    backup_files=("${backup_files[@]:1}")
+  done
+
+  # Calculate the total size of the backups
+  local total_size_bytes=0
+  for backup_file in "${backup_files[@]}"; do
+    total_size_bytes=$((total_size_bytes + $(stat -c%s "$backup_file")))
+  done
+
+  # Check if the total size exceeds the maximum allowed
+  while [ $total_size_bytes -gt $max_size_bytes ]; do
+    # Remove the oldest backup
+    local oldest_backup="${backup_files[0]}"
+    echo "Removing old backup due to size limit: $oldest_backup"
+    local backup_size_bytes=$(stat -c%s "$oldest_backup")
+    rm "$oldest_backup"
+    total_size_bytes=$((total_size_bytes - backup_size_bytes))
+    # Remove the oldest backup from the array
+    backup_files=("${backup_files[@]:1}")
+  done
+}
 read_backup_config() {
   local instance_name="$1"
   local config_file="${MAIN_DIR%/}/config/POK-manager/backup_${instance_name}.conf"
