@@ -383,8 +383,6 @@ If you find POK-manager.sh useful and would like to support its development, you
 
 Your contributions will go towards:
 - Implementing new features and enhancements
-- Providing ongoing support and maintenance
-
 Thank you for your support!
 
 ---
