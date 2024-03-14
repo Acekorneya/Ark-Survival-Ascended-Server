@@ -40,7 +40,7 @@ Before using POK-manager.sh, ensure that you have the following prerequisites in
 - `sudo` access
 - 16GB of RAM (or more) for each instance
 - 60 GB for Server data
-- Linux Host OS (Ubuntu, Debian, CentOS, etc.)
+- Linux Host OS (Ubuntu, Debian)
 
 ## Installation
 
