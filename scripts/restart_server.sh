@@ -3,7 +3,7 @@ source /home/pok/scripts/common.sh
 source /home/pok/scripts/shutdown_server.sh
 
 RESTART_MODE="$1" # Immediate or countdown
-COUNTDOWN_DURATION="${2:-5}" # Default to 5 minutes for countdown
+RESTART_NOTICE_MINUTES="${2:-5}" # Default to 5 minutes for countdown
 
 shutdown_and_restart() {
   if is_process_running; then
@@ -34,8 +34,8 @@ if [ "$RESTART_MODE" == "immediate" ]; then
   echo "Attempting immediate restart..."
   shutdown_and_restart
 else
-  echo "Scheduled restart with a countdown of $COUNTDOWN_DURATION minutes..."
-  initiate_restart "$COUNTDOWN_DURATION"
+  echo "Scheduled restart with a countdown of $RESTART_NOTICE_MINUTES minutes..."
+  initiate_restart "$RESTART_NOTICE_MINUTES"
   # Ensure PID file is removed after countdown to avoid any potential issue during launch
   rm -f "$PID_FILE"
   echo "PID file removed if it existed."
