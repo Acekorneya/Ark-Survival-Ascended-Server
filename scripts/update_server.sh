@@ -19,7 +19,7 @@ echo "---checking for server update---"
 if server_needs_update; then
   echo "A server update is available. Updating server to build ID $current_build_id..."
   touch /home/pok/updating.flag
-  /opt/steamcmd/steamcmd.sh +login anonymous +force_install_dir "$ASA_DIR" +app_update "$APPID" validate +quit
+  /opt/steamcmd/steamcmd.sh +login anonymous +force_install_dir "$ASA_DIR" +app_update "$APPID" +validate +quit
 
   # Copy the new appmanifest for future checks
   if [[ -f "$ASA_DIR/steamapps/appmanifest_$APPID.acf" ]]; then
