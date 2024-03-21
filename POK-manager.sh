@@ -1908,12 +1908,10 @@ manage_service() {
     check_puid_pgid_user "$PUID" "$PGID"
     generate_docker_compose "$instance_name" 
     adjust_ownership_and_permissions "$MAIN_DIR"
-    update_manager_and_instances
     # Ensure POK-manager.sh is executable
     start_instance "$instance_name"
     ;;
   -start)
-    update_manager_and_instances
     start_instance "$instance_name"
     ;;
   -backup)
