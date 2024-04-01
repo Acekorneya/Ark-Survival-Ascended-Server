@@ -380,8 +380,8 @@ We Also have Ark Servers for people who dont have the requirements to host a ful
 🎮 Join Our Community Cluster Server:
 Join Our PVE ARK Cluster Server: POK-PVE-Community-Cluster
 
-- Running Both Map in Cluster and More to Come as they release and added to the cluster 
-- PVE: A peaceful environment for your adventures.
+- Running Both Map in Cluster and More to Come as they release and added to the cluster. 
+- PVE: A peaceful environment for your adventures.
 - Flyer Carry Enabled: Explore the skies with your tamed creatures.
 - Official Server Rates: Balanced gameplay for an enjoyable experience.
 - Always Updated and Events run on time of released
