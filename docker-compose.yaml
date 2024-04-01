@@ -3,7 +3,7 @@ version: '2.4'
 services:
   asaserver:
     build: .
-    image: acekorneya/asa_server:latest
+    image: acekorneya/asa_server:2_0_latest
     container_name: asa_Server
     restart: unless-stopped
     environment:
@@ -21,7 +21,7 @@ services:
       - ENABLE_MOTD=FALSE                    # Enable or disable Message of the Day
       - MOTD=                                # Message of the Day
       - MOTD_DURATION=30                     # Duration for the Message of the Day
-      - MAP_NAME=TheIsland
+      - MAP_NAME=TheIsland                   # TheIsland, ScorchedEarth / TheIsland_WP, ScorchedEarth_WP / Are the current official maps available
       - SESSION_NAME=Server_name
       - SERVER_ADMIN_PASSWORD=MyPassword
       - SERVER_PASSWORD=                     # Set a server password or leave it blank (ONLY NUMBERS AND CHARACTERS ARE ALLOWED BY DEVS)

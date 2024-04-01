@@ -305,8 +305,7 @@ services:
       - ENABLE_MOTD=FALSE
       - MOTD=
       - MOTD_DURATION=30
-      - MAP_NAME=TheIsland
-      - SESSION_NAME=MyServer
+      - MAP_NAME=TheIsland                    # TheIsland, ScorchedEarth / TheIsland_WP, ScorchedEarth_WP / Are the current official maps available
       - SERVER_ADMIN_PASSWORD=myadminpassword
       - SERVER_PASSWORD=
       - ASA_PORT=7777
