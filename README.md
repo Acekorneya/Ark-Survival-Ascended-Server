@@ -375,6 +375,22 @@ If you need assistance or have any questions, please join our Discord server: [K
 
 POK-manager.sh is a comprehensive and user-friendly solution for managing Ark Survival Ascended Server instances using Docker. With its wide range of commands and ease of use, it simplifies the process of setting up, configuring, and maintaining server instances. Whether you're a beginner or an experienced user, POK-manager.sh provides a streamlined approach to server management, allowing you to focus on enjoying the game with your community. If you encounter any issues or have questions, don't hesitate to reach out for support on our Discord server.
 
+We Also have Ark Servers for people who dont have the requirements to host a full cluster of all the map when they release.
+
+🎮 Join Our Community Cluster Server:
+Join Our PVE ARK Cluster Server: POK-PVE-Community-Cluster
+
+- Running Both Map in Cluster and More to Come as they release and added to the cluster 
+- PVE: A peaceful environment for your adventures.
+- Flyer Carry Enabled: Explore the skies with your tamed creatures.
+- Official Server Rates: Balanced gameplay for an enjoyable experience.
+- Always Updated and Events run on time of released
+- Active Mods: We’re here to assist you whenever you need it.
+- Discord Community: Connect with our community and stay updated.
+- NO CRYPOD RESTRICTION USE THEM ANYWHERE!..
+
+Make sure to select "SHOW PLAYER SERVER" To be able to find it in unofficials Servers 
+
 ## Support the Project
 
 If you find POK-manager.sh useful and would like to support its development, you can buy me a coffee! Your support is greatly appreciated and helps me continue maintaining and improving the project.
