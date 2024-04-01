@@ -377,7 +377,7 @@ POK-manager.sh is a comprehensive and user-friendly solution for managing Ark Su
 
 We Also have Ark Servers for people who dont have the requirements to host a full cluster of all the map when they release.
 
-🎮 Join Our Community Cluster Server: POK-PVE-Community-Cluster
+🎮 Join Our Community Cluster Server:
 
 - Server Name: POK-PVE-Community-Cluster. 
 
