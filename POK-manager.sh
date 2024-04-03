@@ -711,6 +711,7 @@ cat >> "$docker_compose_file" <<-EOF
     ports:
       - "${config_values[ASA Port]}:${config_values[ASA Port]}/tcp"
       - "${config_values[ASA Port]}:${config_values[ASA Port]}/udp"
+      - "${config_values[RCON Port]}:${config_values[RCON Port]}/tcp"
     volumes:
       - "${base_dir}/ServerFiles/arkserver:/home/pok/arkserver"
       - "${instance_dir}/Saved:/home/pok/arkserver/ShooterGame/Saved"
