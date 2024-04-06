@@ -3,7 +3,7 @@ source /home/pok/scripts/common.sh
 source /home/pok/scripts/shutdown_server.sh
 
 RESTART_MODE="$1" # Immediate or countdown
-RESTART_NOTICE_MINUTES="${2:-5}" # Default to 5 minutes for countdown
+RESTART_NOTICE_MINUTES="${RESTART_NOTICE_MINUTES:-5}" # Default to 5 minutes for countdown
 
 shutdown_and_restart() {
   if is_process_running; then
@@ -29,6 +29,14 @@ shutdown_and_restart() {
   /home/pok/scripts/init.sh
   echo "Server restart initiated."
 }
+
+# Check if the server is currently updating (based on the presence of the updating.flag file)
+if [ -f "/home/pok/updating.flag" ]; then
+  echo "Update in progress, waiting for it to complete before restarting..."
+  while [ -f "/home/pok/updating.flag" ]; do
+    sleep 10
+  done
+fi
 
 if [ "$RESTART_MODE" == "immediate" ]; then
   echo "Attempting immediate restart..."

@@ -11,7 +11,7 @@ if [[ -z "$saved_build_id" || "$saved_build_id" != "$current_build_id" ]]; then
   echo "-----Installing ARK server-----"
   touch /home/pok/updating.flag
   echo "Current build ID is $current_build_id, initiating installation.."
-  /opt/steamcmd/steamcmd.sh +login anonymous +force_install_dir "$ASA_DIR" +app_update "$APPID" validate +quit
+  /opt/steamcmd/steamcmd.sh +force_install_dir "$ASA_DIR" +login anonymous +app_update "$APPID" +quit
 
   # Check for success and copy the appmanifest file
   if [[ -f "$ASA_DIR/steamapps/appmanifest_$APPID.acf" ]]; then
