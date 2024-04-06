@@ -30,14 +30,6 @@ shutdown_and_restart() {
   echo "Server restart initiated."
 }
 
-# Check if the server is currently updating (based on the presence of the updating.flag file)
-if [ -f "/home/pok/updating.flag" ]; then
-  echo "Update in progress, waiting for it to complete before restarting..."
-  while [ -f "/home/pok/updating.flag" ]; do
-    sleep 10
-  done
-fi
-
 if [ "$RESTART_MODE" == "immediate" ]; then
   echo "Attempting immediate restart..."
   shutdown_and_restart
