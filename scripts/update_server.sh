@@ -22,8 +22,10 @@ if server_needs_update; then
   echo "A server update is available. Updating server to build ID $current_build_id..."
 
   # Acquire the lock
+  echo "Attempting to acquire lock..."
   exec 200>$lock_file
-  flock -n 200 || exit 1
+  flock -n 200 || { echo "Failed to acquire lock. Another instance may be updating the server."; exit 1; }
+  echo "Lock acquired successfully."
 
   touch /home/pok/updating.flag
   /opt/steamcmd/steamcmd.sh +force_install_dir "$ASA_DIR" +login anonymous +app_update "$APPID" +quit
@@ -39,7 +41,9 @@ if server_needs_update; then
   rm /home/pok/updating.flag
 
   # Release the lock
+  echo "Releasing lock..."
   flock -u 200
+  echo "Lock released."
 else
   echo "Server is already running the latest build ID: $current_build_id; no update needed."
 fi
