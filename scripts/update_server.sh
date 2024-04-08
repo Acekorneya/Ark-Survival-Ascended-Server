@@ -2,6 +2,8 @@
 source /home/pok/scripts/common.sh
 # Get the current build ID at the start to ensure it's defined for later use
 current_build_id=$(get_current_build_id)
+lock_file="/home/pok/arkserver/update.lock"
+
 # Function to check if the server needs to be updated
 server_needs_update() {
   local saved_build_id=$(get_build_id_from_acf)
@@ -18,6 +20,11 @@ echo "---checking for server update---"
 
 if server_needs_update; then
   echo "A server update is available. Updating server to build ID $current_build_id..."
+
+  # Acquire the lock
+  exec 200>$lock_file
+  flock -n 200 || exit 1
+
   touch /home/pok/updating.flag
   /opt/steamcmd/steamcmd.sh +force_install_dir "$ASA_DIR" +login anonymous +app_update "$APPID" +quit
 
@@ -30,6 +37,9 @@ if server_needs_update; then
     exit 1
   fi
   rm /home/pok/updating.flag
+
+  # Release the lock
+  flock -u 200
 else
   echo "Server is already running the latest build ID: $current_build_id; no update needed."
 fi

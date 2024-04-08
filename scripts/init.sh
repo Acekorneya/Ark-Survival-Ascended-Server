@@ -16,8 +16,23 @@ if [ ! -f "$PERSISTENT_ACF_FILE" ]; then
   echo "----Installing Ark Server----"
   /home/pok/scripts/install_server.sh
 else
-  echo "----Checking for new Ark Server version----"
-  /home/pok/scripts/update_server.sh
+  lock_file="/home/pok/arkserver/update.lock"
+  current_build_id=$(get_current_build_id)
+  saved_build_id=$(get_build_id_from_acf)
+
+  if [ -z "$saved_build_id" ] || [ "$saved_build_id" != "$current_build_id" ]; then
+    # Check if an update is in progress by another instance
+    while [ -f "$lock_file" ]; do
+        echo "Update in progress by another instance. Waiting for it to complete..."
+        sleep 30
+    done
+
+    # Run the update_server.sh script
+    echo "----Checking for new Ark Server version----"
+    /home/pok/scripts/update_server.sh
+  else
+    echo "----Server is already up to date with build ID: $current_build_id----"
+  fi
 fi
 
 # Start the main application

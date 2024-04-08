@@ -4,6 +4,7 @@ source /home/pok/scripts/common.sh
 
 NO_RESTART_FLAG="/home/pok/shutdown.flag"
 INITIAL_STARTUP_DELAY=120  # Delay in seconds before starting the monitoring
+lock_file="home/pok/arkserver/update.lock"
 
 # Restart update window
 RESTART_NOTICE_MINUTES=${RESTART_NOTICE_MINUTES:-30}  # Default to 30 minutes if not set
@@ -15,6 +16,13 @@ sleep $INITIAL_STARTUP_DELAY
 
 # Monitoring loop
 while true; do
+  # Check if an update is in progress by another instance
+  if [ -f "$lock_file" ]; then
+      echo "Update in progress by another instance. Skipping server status check and potential restart..."
+      sleep 30
+      continue
+  fi
+
   # Check if the server is currently updating (based on the presence of the updating.flag file)
   if is_server_updating; then
     echo "Update/Installation in progress, waiting for it to complete..."
@@ -42,7 +50,7 @@ while true; do
   # Check if the no_restart flag is present before checking the server running state
   if [ -f "$NO_RESTART_FLAG" ]; then
     echo "Shutdown flag is present, skipping server status check and potential restart..."
-    sleep 15 # Adjust sleep as needed
+    sleep 30 # Adjust sleep as needed
     continue # Skip the rest of this loop iteration, avoiding the server running state check and restart
   fi
 
@@ -52,5 +60,5 @@ while true; do
     /home/pok/scripts/restart_server.sh immediate
   fi
 
-  sleep 15 # Short sleep to prevent high CPU usage
+  sleep 60 # Short sleep to prevent high CPU usage
 done

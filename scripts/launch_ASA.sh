@@ -60,14 +60,6 @@ determine_map_path() {
   esac
 }
 
-# Find the last "Log file open" entry and return the line number
-find_new_log_entries() {
-  LOG_FILE="$ASA_DIR/ShooterGame/Saved/Logs/ShooterGame.log"
-  LAST_ENTRY_LINE=$(grep -n "Log file open" "$LOG_FILE" | tail -1 | cut -d: -f1)
-  echo $((LAST_ENTRY_LINE + 1)) # Return the line number after the last "Log file open"
-}
-
-
 start_server() {
   # Fix for Docker Compose exec / Docker exec parsing inconsistencies
   STEAM_COMPAT_DATA_PATH=$(eval echo "$STEAM_COMPAT_DATA_PATH")
@@ -124,7 +116,19 @@ start_server() {
   if [ -n "$CLUSTER_ID" ]; then
     cluster_id_arg="-clusterid=${CLUSTER_ID}"
   fi
-
+  
+  # Check if the server files exist
+  if [ ! -f "/home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.exe" ]; then
+    echo "Error: Server files not found. Please ensure the server is properly installed."
+    exit 1
+  fi
+  
+  # Check if the current user has the necessary permissions
+  #if [ ! -r "/home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.exe" ] || [ ! -x "/home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.exe" ]; then
+    #echo "Error: Insufficient permissions to run the server. Please check the file permissions."
+    #exit 1
+  #fi
+  
   # Construct the full server start command
   local server_command="proton run /home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.exe $MAP_PATH?listen?$session_name_arg?${rcon_args}${server_password_arg}?ServerAdminPassword=${SERVER_ADMIN_PASSWORD} -Port=${ASA_PORT} -WinLiveMaxPlayers=${MAX_PLAYERS} $cluster_id_arg -servergamelog -servergamelogincludetribelogs -ServerRCONOutputTribeLogs -NotifyAdminCommandsInChat $custom_args $mods_arg $battleye_arg $passive_mods_arg"
 
@@ -139,10 +143,19 @@ start_server() {
   echo $SERVER_PID > $PID_FILE
   echo "PID $SERVER_PID written to $PID_FILE"
 
-  # Check for the existence of the ShooterGame.log file before tailing
+  # Check for the existence of the ShooterGame.log file with a timeout
+  local timeout=30
+  local elapsed=0
   while [ ! -f "$ASA_DIR/ShooterGame/Saved/Logs/ShooterGame.log" ]; do
+    if [ $elapsed -ge $timeout ]; then
+      echo "Error: ShooterGame.log not created within the specified timeout. Server may have failed to start."
+      echo "Please check the server logs for more information."
+      kill $SERVER_PID
+      exit 1
+    fi
     echo "Waiting for ShooterGame.log to be created..."
     sleep 2
+    elapsed=$((elapsed + 2))
   done
 
   # Now that the file exists, start tailing it to the console
