@@ -19,14 +19,14 @@ while true; do
   # Check if an update is in progress by another instance
   if [ -f "$lock_file" ]; then
       echo "Update in progress by another instance. Skipping server status check and potential restart..."
-      sleep 30
+      sleep 15
       continue
   fi
 
   # Check if the server is currently updating (based on the presence of the updating.flag file)
   if is_server_updating; then
     echo "Update/Installation in progress, waiting for it to complete..."
-    sleep 60
+    sleep 30
     continue # Skip the rest of this loop iteration
   fi
 
@@ -60,5 +60,5 @@ while true; do
     /home/pok/scripts/restart_server.sh immediate
   fi
 
-  sleep 60 # Short sleep to prevent high CPU usage
+  sleep 30 # Short sleep to prevent high CPU usage
 done

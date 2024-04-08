@@ -24,7 +24,7 @@ else
     # Check if an update is in progress by another instance
     while [ -f "$lock_file" ]; do
         echo "Update in progress by another instance. Waiting for it to complete..."
-        sleep 30
+        sleep 15
     done
 
     # Run the update_server.sh script

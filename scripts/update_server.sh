@@ -43,6 +43,7 @@ if server_needs_update; then
   # Release the lock
   echo "Releasing lock..."
   flock -u 200
+  rm $lock_file
   echo "Lock released."
 else
   echo "Server is already running the latest build ID: $current_build_id; no update needed."
