@@ -39,8 +39,8 @@ Before using POK-manager.sh, ensure that you have the following prerequisites in
 - [Git](https://git-scm.com/downloads)
 - `sudo` access
 - 16GB of RAM (or more) for each instance
-- 60 GB for Server data
-- Linux Host OS (Ubuntu, Debian)
+- 80 GB for Server data
+- Linux Host OS (Ubuntu, Debian, Arch)
 
 ## Installation
 
