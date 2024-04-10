@@ -16,7 +16,7 @@ if [ ! -f "$PERSISTENT_ACF_FILE" ]; then
   echo "----Installing Ark Server----"
   /home/pok/scripts/install_server.sh
 else
-  lock_file="/home/pok/arkserver/update.lock"
+  lock_file="/home/pok/updating.flag"
   current_build_id=$(get_current_build_id)
   saved_build_id=$(get_build_id_from_acf)
 
