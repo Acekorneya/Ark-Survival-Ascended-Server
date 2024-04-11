@@ -83,6 +83,9 @@ initiate_restart() {
     if [ $seconds_remaining -le 10 ]; then
       # Notify every second for the last 10 seconds
       send_rcon_command "ServerChat Server restarting in $seconds_remaining second(s)"
+    elif [ $seconds_remaining -le 60 ]; then
+      # Notify at 1 minute intervals
+      send_rcon_command "ServerChat Server restarting in $minutes_remaining minute(s)"
     elif [ $((seconds_remaining % 300)) -eq 0 ] || [ $seconds_remaining -eq $total_seconds ]; then
       # Notify at 5 minute intervals
       send_rcon_command "ServerChat Server restarting in $minutes_remaining minute(s)"
@@ -135,6 +138,9 @@ initiate_shutdown() {
     if [ $seconds_remaining -le 10 ]; then
       # Notify every second for the last 10 seconds
       send_rcon_command "ServerChat Server Shuting Down in $seconds_remaining second(s)"
+    elif [ $seconds_remaining -le 60 ]; then
+      # Notify at 1 minute intervals
+      send_rcon_command "ServerChat Server Shuting Down in $minutes_remaining minute(s)"
     elif [ $((seconds_remaining % 300)) -eq 0 ] || [ $seconds_remaining -eq $total_seconds ]; then
       # Notify at 5 minute intervals
       send_rcon_command "ServerChat Server Shuting Down in $minutes_remaining minute(s)"
@@ -143,7 +149,6 @@ initiate_shutdown() {
     sleep 1
     ((seconds_remaining--))
   done
-
   send_rcon_command "saveworld"
   echo "World saved. Shuting Down the server..."
   send_rcon_command "DoExit"
