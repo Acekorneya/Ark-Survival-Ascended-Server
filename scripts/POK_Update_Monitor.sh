@@ -1,6 +1,6 @@
 #!/bin/bash
 source /home/pok/scripts/common.sh
-lock_file="/home/pok/arkserver/update.lock"
+lock_file="/home/pok/updating.flag"
 
 if [ -f "$lock_file" ]; then
     echo "Update in progress by another instance. Skipping restart."
