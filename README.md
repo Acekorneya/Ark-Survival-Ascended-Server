@@ -37,6 +37,7 @@ Before using POK-manager.sh, ensure that you have the following prerequisites in
 - [Docker](https://docs.docker.com/engine/install/)
 - [Docker Compose](https://docs.docker.com/compose/install/)
 - [Git](https://git-scm.com/downloads)
+- [yq](https://github.com/mikefarah/yq?tab=readme-ov-file#install)
 - `sudo` access
 - 16GB of RAM (or more) for each instance
 - 80 GB for Server data
@@ -47,6 +48,7 @@ Before using POK-manager.sh, ensure that you have the following prerequisites in
 1. Create or modify a user for the container:
    - For a new user named `pokuser`:
      ```bash
+     sudo groupadd -g 1000 pokuser
      sudo useradd -u 1000 -g 1000 -m -s /bin/bash pokuser
      ```
    - To modify an existing user:
