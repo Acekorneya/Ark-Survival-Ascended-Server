@@ -573,7 +573,7 @@ root_tasks() {
   install_jq
   install_yq
   install_steamcmd
-  adjust_ownership_and_permissions "${base_dir}/ServerFiles/arkserver/ShooterGame"
+  adjust_ownership_and_permissions "${base_dir}/ServerFiles/arkserver"
   adjust_ownership_and_permissions "${base_dir}/Cluster"
   prompt_change_host_timezone  
   echo "Root tasks completed. You're now ready to create an instance."
