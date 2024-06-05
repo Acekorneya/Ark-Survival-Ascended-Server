@@ -48,6 +48,9 @@ determine_map_path() {
   "ScorchedEarth")
     MAP_PATH="ScorchedEarth_WP" 
     ;;
+  "TheCenter")
+    MAP_PATH="TheCenter_WP"
+    ;;
   *)
     # Check if the custom MAP_NAME already ends with '_WP'
     if [[ "$MAP_NAME" == *"_WP" ]]; then
