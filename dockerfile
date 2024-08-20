@@ -13,7 +13,12 @@ ENV PGID=${PGID}
 RUN set -ex; \
     dpkg --add-architecture i386; \
     apt-get update; \
-    apt-get install -y --no-install-recommends jq curl wget tar unzip nano gzip iproute2 procps software-properties-common dbus lib32gcc-s1; \
+    apt-get install -y --no-install-recommends \
+    jq curl wget tar unzip nano gzip iproute2 procps software-properties-common dbus \
+    lib32gcc-s1 libglib2.0-0 libglib2.0-0:i386 libvulkan1 libvulkan1:i386 \
+    libnss3 libnss3:i386 libgconf-2-4 libgconf-2-4:i386 \
+    libfontconfig1 libfontconfig1:i386 libfreetype6 libfreetype6:i386 \
+    libcups2 libcups2:i386; \
     # Cleanup to keep the image lean
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*
@@ -64,7 +69,7 @@ RUN set -ex; \
 COPY --chown=pok:pok scripts/ /home/pok/scripts/
 COPY --chown=pok:pok defaults/ /home/pok/defaults/
 RUN  chmod +x /home/pok/scripts/*.sh
-# Switch back to root to run the entrypoint script
+# Switch back to pok to run the entrypoint script
 USER pok
 WORKDIR /home/pok
 
