@@ -1743,7 +1743,7 @@ backup_single_instance() {
   local timezone="${USER_TIMEZONE:-$(timedatectl show -p Timezone --value)}"
   
   # Get the current timestamp based on the host's timezone
-  local timestamp=$(TZ="$timezone" date +"%Y-%m-%d_%I%p-%M-%S")
+  local timestamp=$(TZ="$timezone" date +"%Y-%m-%d_%H-%M-%S")
   
   # Format the backup file name
   local backup_file="${instance_name}_backup_${timestamp}.tar.gz"
