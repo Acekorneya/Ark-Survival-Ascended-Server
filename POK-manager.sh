@@ -1411,13 +1411,10 @@ check_for_POK_updates() {
   fi
 
   if [ -f "$temp_file" ]; then
-    # Check if the downloaded file is not empty and has a minimum size (e.g., 1KB)
+    # Check if the downloaded file is at least 1KB in size
     if [ -s "$temp_file" ] && [ $(stat -c%s "$temp_file") -ge 1024 ]; then
-      # calculate MD5 checksums and compare them
-      local current_md5=$(md5sum "$0" | awk '{ print $1 }')
-      local new_md5=$(md5sum "$temp_file" | awk '{ print $1 }')
-
-      if [ "$current_md5" != "$new_md5" ]; then
+      # Compare the current file with the downloaded one using cmp
+      if ! cmp -s "$0" "$temp_file"; then
         mv "$temp_file" "$0"
         chmod +x "$0"
         chown 1000:1000 "$0"
@@ -1434,6 +1431,7 @@ check_for_POK_updates() {
     echo "Failed to download the update. Skipping update."
   fi
 }
+
 install_steamcmd() {
   local steamcmd_dir="$BASE_DIR/config/POK-manager/steamcmd"
   local steamcmd_script="$steamcmd_dir/steamcmd.sh"
@@ -1534,15 +1532,24 @@ update_manager_and_instances() {
   fi
 
   if [ -f "$temp_file" ]; then
-    if ! cmp -s "$0" "$temp_file"; then
-      mv "$temp_file" "$0"
-      chmod +x "$0"
-      chown 1000:1000 "$0"
-      echo "POK-manager.sh has been updated. Please run the script again to use the updated version."
+    # Check if the downloaded file is at least 1KB in size
+    if [ -s "$temp_file" ] && [ $(stat -c%s "$temp_file") -ge 1024 ]; then
+      # Compare the current file with the downloaded one using cmp
+      if ! cmp -s "$0" "$temp_file"; then
+        mv "$temp_file" "$0"
+        chmod +x "$0"
+        chown 1000:1000 "$0"
+        echo "POK-manager.sh has been updated. Please run the script again to use the updated version."
+      else
+        echo "POK-manager.sh is already up to date."
+        rm "$temp_file"
+      fi
     else
-      echo "POK-manager.sh is already up to date."
+      echo "Downloaded file is either empty or too small. Skipping update."
       rm "$temp_file"
     fi
+  else
+    echo "Failed to download the update. Skipping update."
   fi
 
   echo "----- Checking for updates to Docker image and server files -----"
