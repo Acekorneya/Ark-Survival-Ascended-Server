@@ -51,6 +51,9 @@ determine_map_path() {
   "TheCenter")
     MAP_PATH="TheCenter_WP"
     ;;
+  "Aberration")
+    MAP_PATH="Aberration_WP"
+    ;;
   *)
     # Check if the custom MAP_NAME already ends with '_WP'
     if [[ "$MAP_NAME" == *"_WP" ]]; then

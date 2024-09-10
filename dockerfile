@@ -8,6 +8,7 @@ ARG PGID=1000
 ENV TZ=UTC
 ENV PUID=${PUID}
 ENV PGID=${PGID}
+ENV PROTON_USE_ESYNC=1 
 
 # Install necessary packages
 RUN set -ex; \

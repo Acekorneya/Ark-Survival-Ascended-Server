@@ -39,6 +39,7 @@ Before using POK-manager.sh, ensure that you have the following prerequisites in
 - [Git](https://git-scm.com/downloads)
 - [yq](https://github.com/mikefarah/yq?tab=readme-ov-file#install)
 - `sudo` access
+- CPU - FX Series AMD Or Intel Second Gen Sandy Bridge CPU
 - 16GB of RAM (or more) for each instance
 - 80 GB for Server data
 - Linux Host OS (Ubuntu, Debian, Arch)
