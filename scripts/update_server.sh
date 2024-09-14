@@ -18,7 +18,7 @@ echo "---checking for server update---"
 
 if server_needs_update; then
   echo "A server update is available. Updating server to build ID $current_build_id..."
-  touch /home/pok/updating.flag
+  touch "$ASA_DIR/updating.flag"
   /opt/steamcmd/steamcmd.sh +force_install_dir "$ASA_DIR" +login anonymous +app_update "$APPID" +quit
 
   # Copy the new appmanifest for future checks
@@ -29,7 +29,7 @@ if server_needs_update; then
     echo "Error: appmanifest_$APPID.acf was not found after update."
     exit 1
   fi
-  rm /home/pok/updating.flag
+  rm "$ASA_DIR/updating.flag"
 else
   echo "Server is already running the latest build ID: $current_build_id; no update needed."
 fi

@@ -39,7 +39,7 @@ is_process_running() {
 
 # Function to check if server is updating
 is_server_updating() {
-  if [ -f "/home/pok/updating.flag" ]; then
+  if [ -f "$ASA_DIR/updating.flag" ]; then
     return 0
   else
     return 1

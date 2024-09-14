@@ -4,7 +4,7 @@ source /home/pok/scripts/common.sh
 
 NO_RESTART_FLAG="/home/pok/shutdown.flag"
 INITIAL_STARTUP_DELAY=120  # Delay in seconds before starting the monitoring
-lock_file="/home/pok/updating.flag"
+lock_file="$ASA_DIR/updating.flag"
 
 # Restart update window
 RESTART_NOTICE_MINUTES=${RESTART_NOTICE_MINUTES:-30}  # Default to 30 minutes if not set
