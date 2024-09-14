@@ -83,11 +83,11 @@ initiate_restart() {
     if [ $seconds_remaining -le 10 ]; then
       # Notify every second for the last 10 seconds
       send_rcon_command "ServerChat Server restarting in $seconds_remaining second(s)"
-    elif [ $seconds_remaining -le 60 ]; then
-      # Notify at 1 minute intervals
+    elif [ $seconds_remaining -eq 60 ]; then
+      # Notify when exactly 1 minute is remaining
       send_rcon_command "ServerChat Server restarting in $minutes_remaining minute(s)"
     elif [ $((seconds_remaining % 300)) -eq 0 ] || [ $seconds_remaining -eq $total_seconds ]; then
-      # Notify at 5 minute intervals
+      # Notify at 5-minute intervals and at the start
       send_rcon_command "ServerChat Server restarting in $minutes_remaining minute(s)"
     fi
 
@@ -101,7 +101,6 @@ initiate_restart() {
   rm -f "$PID_FILE"
   echo "----Server restart complete----"
 }
-
 # Function for shutdown sequence
 initiate_shutdown() {
   local duration_in_minutes
@@ -138,7 +137,7 @@ initiate_shutdown() {
     if [ $seconds_remaining -le 10 ]; then
       # Notify every second for the last 10 seconds
       send_rcon_command "ServerChat Server Shuting Down in $seconds_remaining second(s)"
-    elif [ $seconds_remaining -le 60 ]; then
+    elif [ $seconds_remaining -eq 60 ]; then
       # Notify at 1 minute intervals
       send_rcon_command "ServerChat Server Shuting Down in $minutes_remaining minute(s)"
     elif [ $((seconds_remaining % 300)) -eq 0 ] || [ $seconds_remaining -eq $total_seconds ]; then
