@@ -279,6 +279,7 @@ When creating a new server instance using POK-manager.sh, a Docker Compose confi
 | `ASA_PORT`                    | `7777`            | The game port for the server                                                              |
 | `RCON_PORT`                   | `27020`           | Rcon Port Use for Most Server Operations                                                  |
 | `MAX_PLAYERS`                 | `127`             | Max allowed players                                                                       |
+| `NOTIFY_ADMIN_COMMANDS_IN_CHAT`| `FALSE`          | Set to TRUE to notify admin commands in chat, FALSE to disable notifications              |
 | `CLUSTER_ID`                  | `cluster`         | The Cluster ID for Server Transfers                                                       | 
 | `PASSIVE_MODS`                | `123456`          | Replace with your passive mods IDs                                                        |
 | `MOD_IDS`                     | `123456`          | Add your mod IDs here, separated by commas, e.g., 123456789,987654321                     |
@@ -308,12 +309,13 @@ services:
       - ENABLE_MOTD=FALSE
       - MOTD=
       - MOTD_DURATION=30
-      - MAP_NAME=TheIsland                    # TheIsland, ScorchedEarth, TheCenter / TheIsland_WP, ScorchedEarth_WP, TheCenter_WP / Are the current official maps available
+      - MAP_NAME=TheIsland                    # TheIsland, ScorchedEarth, TheCenter, Aberration / TheIsland_WP, ScorchedEarth_WP, TheCenter_WP, Aberration_WP / Are the current official maps available
       - SERVER_ADMIN_PASSWORD=myadminpassword
       - SERVER_PASSWORD=
       - ASA_PORT=7777
       - RCON_PORT=27020
       - MAX_PLAYERS=70
+      - NOTIFY_ADMIN_COMMANDS_IN_CHAT=FALSE
       - CLUSTER_ID=cluster
       - MOD_IDS=
       - PASSIVE_MODS=
