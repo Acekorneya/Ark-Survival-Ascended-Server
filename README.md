@@ -309,7 +309,7 @@ services:
       - ENABLE_MOTD=FALSE                    # Enable or disable Message of the Day
       - MOTD=                                # Message of the Day
       - MOTD_DURATION=30                     # Duration for the Message of the Day
-      - MAP_NAME=TheIsland                   # TheIsland, ScorchedEarth / TheIsland_WP, ScorchedEarth_WP, TheCenter_WP / Are the current official maps available
+      - MAP_NAME=TheIsland                   # TheIsland, ScorchedEarth, TheCenter, Aberration / TheIsland_WP, ScorchedEarth_WP, TheCenter_WP, Aberration_WP / Are the current official maps available
       - SESSION_NAME=Server_name             # The name of the server session
       - SERVER_ADMIN_PASSWORD=MyPassword     # The admin password for the server 
       - SERVER_PASSWORD=                     # Set a server password or leave it blank (ONLY NUMBERS AND CHARACTERS ARE ALLOWED BY DEVS)
