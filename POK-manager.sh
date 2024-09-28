@@ -28,6 +28,7 @@ declare -a config_order=(
     "ASA Port"
     "RCON Port"
     "Max Players"
+    "Show Admin Commands In Chat"
     "Cluster ID"
     "Mod IDs"
     "Passive Mods"
@@ -55,6 +56,7 @@ declare -A default_config_values=(
     ["ASA Port"]=""7777""
     ["RCON Port"]="27020"
     ["Max Players"]="70"
+    ["Show Admin Commands In Chat"]="FALSE"
     ["Cluster ID"]="cluster"
     ["Mod IDs"]=
     ["Passive Mods"]=
@@ -181,7 +183,7 @@ prompt_for_input() {
 
   # Proceed with specific validation based on the config key
   case $config_key in
-    "BattleEye"|"RCON Enabled"|"POK Monitor Message"|"Update Server"|"MOTD Enabled")
+    "BattleEye"|"RCON Enabled"|"POK Monitor Message"|"Update Server"|"MOTD Enabled"|"Show Admin Commands In Chat")
       config_values[$config_key]=$(validate_boolean "$user_input" "$config_key")
       ;;
     "Update Window Start"|"Update Window End")
@@ -533,7 +535,7 @@ install_yq() {
       echo "Neither wget nor curl found. Attempting to install wget..."
       if command -v apt-get &>/dev/null; then
         sudo apt-get update && sudo apt-get install -y wget
-      elif command -v yum &>/dev/null; then  
+      elif command -v yum &>/dev/null; then
         sudo yum install -y wget
       elif command -v pacman &>/dev/null; then
         sudo pacman -Sy wget
@@ -626,6 +628,7 @@ read_docker_compose_config() {
     "ASA_PORT") config_key="ASA Port" ;;
     "RCON_PORT") config_key="RCON Port" ;;
     "MAX_PLAYERS") config_key="Max Players" ;;
+    "SHOW_ADMIN_COMMANDS_IN_CHAT") config_key="Show Admin Commands In Chat" ;;
     "CLUSTER_ID") config_key="Cluster ID" ;;
     "MOD_IDS") config_key="Mod IDs" ;;
     "PASSIVE_MODS") config_key="Passive Mods" ;;
@@ -693,6 +696,7 @@ EOF
       "Server Password") env_key="SERVER_PASSWORD" ;;
       "ASA Port") env_key="ASA_PORT" ;;
       "RCON Port") env_key="RCON_PORT" ;;
+      "Show Admin Commands In Chat") env_key="SHOW_ADMIN_COMMANDS_IN_CHAT" ;;      
       "Max Players") env_key="MAX_PLAYERS" ;;
       "Cluster ID") env_key="CLUSTER_ID" ;;
       "Mod IDs") env_key="MOD_IDS" ;;

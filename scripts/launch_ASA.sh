@@ -85,6 +85,7 @@ start_server() {
   local cluster_id_arg=""
   local server_password_arg=""
   local session_name_arg="SessionName=\"${SESSION_NAME}\""
+  local notify_admin_commands_arg=""
 
   # Check if MOD_IDS is set and not empty
   if [ -n "$MOD_IDS" ]; then
@@ -123,6 +124,11 @@ start_server() {
     cluster_id_arg="-clusterid=${CLUSTER_ID}"
   fi
   
+  # Set NotifyAdminCommandsInChat flag based on environment variable
+  if [ "$SHOW_ADMIN_COMMANDS_IN_CHAT" = "TRUE" ]; then
+    notify_admin_commands_arg="-NotifyAdminCommandsInChat"
+  fi
+
   # Check if the server files exist
   if [ ! -f "/home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.exe" ]; then
     echo "Error: Server files not found. Please ensure the server is properly installed."
@@ -136,7 +142,7 @@ start_server() {
   #fi
   
   # Construct the full server start command
-  local server_command="proton run /home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.exe $MAP_PATH?listen?$session_name_arg?${rcon_args}${server_password_arg}?ServerAdminPassword=${SERVER_ADMIN_PASSWORD} -Port=${ASA_PORT} -WinLiveMaxPlayers=${MAX_PLAYERS} $cluster_id_arg -servergamelog -servergamelogincludetribelogs -ServerRCONOutputTribeLogs -NotifyAdminCommandsInChat $custom_args $mods_arg $battleye_arg $passive_mods_arg"
+  local server_command="proton run /home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.exe $MAP_PATH?listen?$session_name_arg?${rcon_args}${server_password_arg}?ServerAdminPassword=${SERVER_ADMIN_PASSWORD} -Port=${ASA_PORT} -WinLiveMaxPlayers=${MAX_PLAYERS} $cluster_id_arg -servergamelog -servergamelogincludetribelogs -ServerRCONOutputTribeLogs $notify_admin_commands_arg $custom_args $mods_arg $battleye_arg $passive_mods_arg"
 
   # Start the server using Proton-GE
   echo "Starting server with Proton-GE..."
