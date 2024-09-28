@@ -296,29 +296,31 @@ services:
     container_name: asa_my_instance
     restart: unless-stopped
     environment:
-      - INSTANCE_NAME=my_instance
-      - BATTLEEYE=FALSE
-      - RCON_ENABLED=TRUE
-      - DISPLAY_POK_MONITOR_MESSAGE=FALSE
-      - UPDATE_SERVER=TRUE
-      - CHECK_FOR_UPDATE_INTERVAL=24
-      - UPDATE_WINDOW_MINIMUM_TIME=12:00 AM
-      - UPDATE_WINDOW_MAXIMUM_TIME=11:59 PM
-      - RESTART_NOTICE_MINUTES=30
-      - ENABLE_MOTD=FALSE
-      - MOTD=
-      - MOTD_DURATION=30
-      - MAP_NAME=TheIsland                    # TheIsland, ScorchedEarth, TheCenter, Aberration / TheIsland_WP, ScorchedEarth_WP, TheCenter_WP, Aberration_WP / Are the current official maps available
-      - SERVER_ADMIN_PASSWORD=myadminpassword
-      - SERVER_PASSWORD=
-      - ASA_PORT=7777
-      - RCON_PORT=27020
-      - MAX_PLAYERS=70
-      - NOTIFY_ADMIN_COMMANDS_IN_CHAT=FALSE
-      - CLUSTER_ID=cluster
-      - MOD_IDS=
-      - PASSIVE_MODS=
-      - CUSTOM_SERVER_ARGS=-UseDynamicConfig
+      - INSTANCE_NAME=Instance_name          # The name of the instance
+      - TZ=America/Los_Angeles               # Timezone setting: Change this to your local timezone. Ex.America/New_York, Europe/Berlin, Asia/Tokyo
+      - BATTLEEYE=FALSE                      # Set to TRUE to use BattleEye, FALSE to not use BattleEye
+      - RCON_ENABLED=TRUE                    # Needed for Graceful Shutdown / Updates / Server Notifications
+      - DISPLAY_POK_MONITOR_MESSAGE=FALSE    # Or TRUE to Show the Server Monitor Messages / Update Monitor 
+      - UPDATE_SERVER=TRUE                   # Enable or disable update checks
+      - CHECK_FOR_UPDATE_INTERVAL=24         # Check for Updates interval in hours
+      - UPDATE_WINDOW_MINIMUM_TIME=12:00 AM  # Defines the minimum time, relative to server time, when an update check should run
+      - UPDATE_WINDOW_MAXIMUM_TIME=11:59 PM  # Defines the maximum time, relative to server time, when an update 
+      - RESTART_NOTICE_MINUTES=30            # Duration in minutes for notifying players before a server restart due to updates
+      - ENABLE_MOTD=FALSE                    # Enable or disable Message of the Day
+      - MOTD=                                # Message of the Day
+      - MOTD_DURATION=30                     # Duration for the Message of the Day
+      - MAP_NAME=TheIsland                   # TheIsland, ScorchedEarth / TheIsland_WP, ScorchedEarth_WP, TheCenter_WP / Are the current official maps available
+      - SESSION_NAME=Server_name             # The name of the server session
+      - SERVER_ADMIN_PASSWORD=MyPassword     # The admin password for the server 
+      - SERVER_PASSWORD=                     # Set a server password or leave it blank (ONLY NUMBERS AND CHARACTERS ARE ALLOWED BY DEVS)
+      - ASA_PORT=7777                        # The port for the server
+      - RCON_PORT=27020                      # The port for the RCON
+      - MAX_PLAYERS=70                       # The maximum number of players allowed on the server
+      - NOTIFY_ADMIN_COMMANDS_IN_CHAT=FALSE  # Set to TRUE to notify admin commands in chat, FALSE to disable notifications
+      - CLUSTER_ID=cluster                   # The cluster ID for the server
+      - MOD_IDS=                             # Add your mod IDs here, separated by commas, e.g., 123456789,987654321
+      - PASSIVE_MODS=                        # Replace with your passive mods IDs
+      - CUSTOM_SERVER_ARGS=                  # If You need to add more Custom Args -ForceRespawnDinos -ForceAllowCaveFlyers
     ports:
       - "7777:7777/tcp"
       - "7777:7777/udp"
@@ -334,8 +336,12 @@ services:
 
 The following ports are used by the Ark Survival Ascended Server:
 
-- `7777/tcp`: Game port
-- `7777/udp`: Game port
+- `7777:7777/tcp`: Game port
+- `7777:7777/udp`: Game port
+
+the following ports are used by RCON
+
+- `27020:27020/tcp`: RCON port
 
 Note: The query port is not needed for Ark Ascended.
 
