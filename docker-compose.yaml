@@ -27,7 +27,7 @@ services:
       - ASA_PORT=7777                        # The port for the server
       - RCON_PORT=27020                      # The port for the RCON
       - MAX_PLAYERS=70                       # The maximum number of players allowed on the server
-      - NOTIFY_ADMIN_COMMANDS_IN_CHAT=FALSE  # Set to TRUE to notify admin commands in chat, FALSE to disable notifications
+      - SHOW_ADMIN_COMMANDS_IN_CHAT=FALSE    # Set to TRUE to notify admin commands in chat, FALSE to disable notifications
       - CLUSTER_ID=cluster                   # The cluster ID for the server
       - MOD_IDS=                             # Add your mod IDs here, separated by commas, e.g., 123456789,987654321
       - PASSIVE_MODS=                        # Replace with your passive mods IDs

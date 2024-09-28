@@ -107,9 +107,9 @@ start_server() {
   
   # Set RCON arguments based on RCON_ENABLED environment variable
   if [ "$RCON_ENABLED" = "TRUE" ]; then
-    rcon_args="?RCONEnabled=True?RCONPort=${RCON_PORT}"
+    rcon_args="RCONEnabled=True?RCONPort=${RCON_PORT}"
   elif [ "$RCON_ENABLED" = "FALSE" ]; then
-    rcon_args="?RCONEnabled=False"
+    rcon_args="RCONEnabled=False"
   fi
 
   if [ -n "$CUSTOM_SERVER_ARGS" ]; then
