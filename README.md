@@ -296,7 +296,7 @@ services:
     container_name: asa_my_instance
     restart: unless-stopped
     environment:
-      - INSTANCE_NAME=Instance_name          # The name of the instance
+      - INSTANCE_NAME=my_instance            # The name of the instance
       - TZ=America/Los_Angeles               # Timezone setting: Change this to your local timezone. Ex.America/New_York, Europe/Berlin, Asia/Tokyo
       - BATTLEEYE=FALSE                      # Set to TRUE to use BattleEye, FALSE to not use BattleEye
       - RCON_ENABLED=TRUE                    # Needed for Graceful Shutdown / Updates / Server Notifications
