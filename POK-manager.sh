@@ -288,30 +288,30 @@ check_dependencies() {
   if docker compose version &>/dev/null; then
     docker_compose_version_command="docker compose version"
     DOCKER_COMPOSE_CMD="docker compose"
-  elif docker-compose --version &>/dev/null; then
+  elif docker compose --version &>/dev/null; then
     # Fallback to Docker Compose V1 command if V2 is not available
-    docker_compose_version_command="docker-compose --version"
-    DOCKER_COMPOSE_CMD="docker-compose"
+    docker_compose_version_command="docker compose --version"
+    DOCKER_COMPOSE_CMD="docker compose"
   else
-    echo "Neither 'docker compose' (V2) nor 'docker-compose' (V1) command is available."
+    echo "Neither 'docker compose' (V2) nor 'docker compose' (V1) command is available."
     read -p "Do you want to install Docker Compose? [y/N]: " install_compose
     if [[ "$install_compose" =~ ^[Yy]$ ]]; then
       # Detect the OS and install Docker Compose accordingly
       if command -v apt-get &>/dev/null; then
         # Debian/Ubuntu
         sudo apt-get update
-        sudo apt-get install -y docker-compose
+        sudo apt-get install -y docker compose
       elif command -v dnf &>/dev/null; then
         # Fedora
-        sudo dnf install -y docker-compose
+        sudo dnf install -y docker compose
       elif command -v yum &>/dev/null; then
         # CentOS/RHEL
-        sudo yum install -y docker-compose
+        sudo yum install -y docker compose
       else
         echo "Unsupported Linux distribution. Please install Docker Compose manually and run the script again."
         exit 1
       fi
-      DOCKER_COMPOSE_CMD="docker-compose"
+      DOCKER_COMPOSE_CMD="docker compose"
     else
       echo "Docker Compose installation declined. Please install Docker Compose manually to proceed."
       exit 1
@@ -326,7 +326,7 @@ check_dependencies() {
   if [[ $major_version -ge 2 ]]; then
     DOCKER_COMPOSE_CMD="docker compose"
   else
-    DOCKER_COMPOSE_CMD="docker-compose"
+    DOCKER_COMPOSE_CMD="docker compose"
   fi
   echo "$DOCKER_COMPOSE_CMD" > ./config/POK-manager/docker_compose_cmd
   echo "Using Docker Compose command: '$DOCKER_COMPOSE_CMD'."
@@ -346,11 +346,11 @@ get_docker_compose_cmd() {
     # Check for the Docker Compose V2 command availability ('docker compose')
     if docker compose version &>/dev/null; then
       DOCKER_COMPOSE_CMD="docker compose"
-    elif docker-compose --version &>/dev/null; then
+    elif docker compose --version &>/dev/null; then
       # Fallback to Docker Compose V1 command if V2 is not available
-      DOCKER_COMPOSE_CMD="docker-compose"
+      DOCKER_COMPOSE_CMD="docker compose"
     else
-      echo "Neither 'docker compose' (V2) nor 'docker-compose' (V1) command is available."
+      echo "Neither 'docker compose' (V2) nor 'docker compose' (V1) command is available."
       echo "Please ensure Docker Compose is correctly installed."
       exit 1
     fi
@@ -413,7 +413,7 @@ set_timezone() {
   export USER_TIMEZONE="$TZ"
   # Add TZ environment variable to the Docker Compose file for the instance
   echo "Configured Timezone: $TZ"
-  echo "TZ=$TZ" >> "${instance_dir}/docker-compose-${instance_name}.yaml"
+  echo "TZ=$TZ" >> "${instance_dir}/docker compose-${instance_name}.yaml"
 }
 # Adjust file ownership and permissions on the host
 adjust_ownership_and_permissions() {
@@ -591,7 +591,7 @@ pull_docker_image() {
 read_docker_compose_config() {
   local instance_name="$1"
   local base_dir=$(dirname "$(realpath "$0")")
-  local docker_compose_file="${base_dir}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
+  local docker_compose_file="${base_dir}/Instance_${instance_name}/docker compose-${instance_name}.yaml"
   if [ ! -f "$docker_compose_file" ]; then
     echo "Docker compose file for ${instance_name} does not exist."
     exit 1
@@ -655,7 +655,7 @@ write_docker_compose_file() {
   local instance_name="$1"
   local base_dir=$(dirname "$(realpath "$0")")
   local instance_dir="${base_dir}/Instance_${instance_name}"
-  local docker_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
+  local docker_compose_file="${instance_dir}/docker compose-${instance_name}.yaml"
 
   # Ensure the instance directory exists
   mkdir -p "${instance_dir}"
@@ -889,7 +889,7 @@ edit_instance() {
   select instance in "${instances[@]}"; do
     if [ -n "$instance" ]; then
       local editor=$(find_editor)
-      local docker_compose_file="./Instance_$instance/docker-compose-$instance.yaml"
+      local docker_compose_file="./Instance_$instance/docker compose-$instance.yaml"
       echo "Opening $docker_compose_file for editing with $editor..."
       $editor "$docker_compose_file"
       break
@@ -916,7 +916,7 @@ generate_docker_compose() {
   # Path where Docker Compose files are located
   local base_dir=$(dirname "$(realpath "$0")")
   local instance_dir="${base_dir}/Instance_${instance_name}"
-  local docker_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
+  local docker_compose_file="${instance_dir}/docker compose-${instance_name}.yaml"
 
   # Check if the Docker Compose file already exists
   if [ -f "$docker_compose_file" ]; then
@@ -954,10 +954,10 @@ prompt_for_final_edit() {
 
 
 list_instances() {
-  local compose_files=($(find ./Instance_* -name 'docker-compose-*.yaml'))
+  local compose_files=($(find ./Instance_* -name 'docker compose-*.yaml'))
   local instances=()
   for file in "${compose_files[@]}"; do
-    local instance_name=$(echo "$file" | sed -E 's|.*/Instance_([^/]+)/docker-compose-.*\.yaml|\1|')
+    local instance_name=$(echo "$file" | sed -E 's|.*/Instance_([^/]+)/docker compose-.*\.yaml|\1|')
     instances+=("$instance_name")
   done
   echo "${instances[@]}"
@@ -995,7 +995,7 @@ find_editor() {
 # Function to start an instance
 start_instance() {
   local instance_name=$1
-  local docker_compose_file="./Instance_${instance_name}/docker-compose-${instance_name}.yaml"
+  local docker_compose_file="./Instance_${instance_name}/docker compose-${instance_name}.yaml"
   echo "-----Starting ${instance_name} Server-----"
   if [ -f "$docker_compose_file" ]; then
     get_docker_compose_cmd
@@ -1048,7 +1048,7 @@ start_instance() {
 # Function to stop an instance
 stop_instance() {
   local instance_name=$1
-  local docker_compose_file="./Instance_${instance_name}/docker-compose-${instance_name}.yaml"
+  local docker_compose_file="./Instance_${instance_name}/docker compose-${instance_name}.yaml"
 
   echo "-----Stopping ${instance_name} Server-----"
 
@@ -1318,7 +1318,7 @@ inject_shutdown_flag_and_shutdown() {
   local container_name="asa_${instance}" # Assuming container naming convention
   local base_dir=$(dirname "$(realpath "$0")")
   local instance_dir="${base_dir}/Instance_${instance}"
-  local docker_compose_file="${instance_dir}/docker-compose-${instance}.yaml"
+  local docker_compose_file="${instance_dir}/docker compose-${instance}.yaml"
 
   # Check if the container exists and is running
   if docker ps -q -f name=^/${container_name}$ > /dev/null; then
@@ -1331,7 +1331,7 @@ inject_shutdown_flag_and_shutdown() {
     # Wait for shutdown completion
     wait_for_shutdown "$instance" "$wait_time"
 
-    # Shutdown the container using docker-compose
+    # Shutdown the container using docker compose
     $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down
     echo "----- Shutdown Complete for instance: $instance-----"
   else

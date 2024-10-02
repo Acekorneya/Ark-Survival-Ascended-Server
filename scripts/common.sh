@@ -11,7 +11,7 @@ EOS_FILE="$ASA_DIR/eos_cred_file"
 PID_FILE="/home/pok/${INSTANCE_NAME}_ark_server.pid"
 # RCON connection details
 RCON_HOST="localhost"
-RCON_PORT=${RCON_PORT} # Default RCON port if not set in docker-compose
+RCON_PORT=${RCON_PORT} # Default RCON port if not set in docker compose
 RCON_PASSWORD=${SERVER_ADMIN_PASSWORD} # Server admin password used as RCON password
 export STEAM_COMPAT_DATA_PATH=${STEAM_COMPAT_DATA_PATH}
 export STEAM_COMPAT_CLIENT_INSTALL_PATH=${STEAM_COMPAT_CLIENT_INSTALL_PATH}

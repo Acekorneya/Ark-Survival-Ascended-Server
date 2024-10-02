@@ -20,7 +20,7 @@ POK-manager.sh is a powerful and user-friendly script for managing Ark Survival 
     - [Custom RCON Commands](#custom-rcon-commands)
     - [Backing Up and Restoring Instances](#backing-up-and-restoring-instances)
 - [User Permissions](#user-permissions)
-- [Docker Compose Configuration](#docker-compose-configuration)
+- [Docker Compose Configuration](#docker compose-configuration)
 - [Ports](#ports)
 - [Troubleshooting](#troubleshooting)
 - [Hypervisor](#hypervisors)
@@ -252,7 +252,7 @@ Using `sudo` grants the script the necessary privileges to change permissions to
 
 ## Docker Compose Configuration
 
-When creating a new server instance using POK-manager.sh, a Docker Compose configuration file (`docker-compose-<instance_name>.yaml`) is generated. Here's an example of the generated file:
+When creating a new server instance using POK-manager.sh, a Docker Compose configuration file (`docker compose-<instance_name>.yaml`) is generated. Here's an example of the generated file:
 
 #### Environment Variables
 
