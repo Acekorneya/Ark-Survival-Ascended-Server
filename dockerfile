@@ -53,7 +53,7 @@ WORKDIR /tmp/
 # Setup rcon-cli
 RUN set -ex; \
     wget -qO- https://github.com/gorcon/rcon-cli/releases/download/v0.10.3/rcon-0.10.3-amd64_linux.tar.gz | tar xvz && \
-    mv rcon-cli /usr/local/bin/rcon-cli && \
+    mv rcon-0.10.3-amd64_linux/rcon /usr/local/bin/rcon-cli && \
     chmod +x /usr/local/bin/rcon-cli
 
 # Install tini
