@@ -52,7 +52,7 @@ RUN set -ex; \
 WORKDIR /tmp/
 # Setup rcon-cli
 RUN set -ex; \
-    wget -qO- https://github.com/itzg/rcon-cli/releases/download/1.6.3/rcon-cli_1.6.3_linux_amd64.tar.gz | tar xvz && \
+    wget -qO- https://github.com/gorcon/rcon-cli/releases/download/v0.10.3/rcon-0.10.3-amd64_linux.tar.gz | tar xvz && \
     mv rcon-cli /usr/local/bin/rcon-cli && \
     chmod +x /usr/local/bin/rcon-cli
 
