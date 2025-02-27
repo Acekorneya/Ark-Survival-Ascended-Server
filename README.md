@@ -20,6 +20,9 @@ POK-manager.sh is a powerful and user-friendly script for managing Ark Survival 
     - [Custom RCON Commands](#custom-rcon-commands)
     - [Backing Up and Restoring Instances](#backing-up-and-restoring-instances)
 - [User Permissions](#user-permissions)
+- [Upgrading to Version 2.1+](#upgrading-to-version-21)
+- [Beta Testing](#beta-testing)
+- [Safe Update Mechanism](#safe-update-mechanism)
 - [Docker Compose Configuration](#docker-compose-configuration)
 - [Ports](#ports)
 - [Troubleshooting](#troubleshooting)
@@ -47,16 +50,17 @@ Before using POK-manager.sh, ensure that you have the following prerequisites in
 ## Installation
 
 1. Create or modify a user for the container:
-   - For a new user named `pokuser`:
+   - For a new user named `pokuser` with the new default UID/GID (7777):
+     ```bash
+     sudo groupadd -g 7777 pokuser
+     sudo useradd -u 7777 -g 7777 -m -s /bin/bash pokuser
+     ```
+   - For backward compatibility with earlier versions (UID/GID 1000):
      ```bash
      sudo groupadd -g 1000 pokuser
      sudo useradd -u 1000 -g 1000 -m -s /bin/bash pokuser
      ```
-   - To modify an existing user:
-     ```bash
-     sudo usermod -u 1000 <existing_username>
-     sudo groupmod -g 1000 <existing_username>
-     ```
+   - See [Upgrading to Version 2.1+](#upgrading-to-version-21) for more details on PUID/PGID changes.
 
 2. Configure system settings:
    - Set `vm.max_map_count` temporarily:
@@ -71,19 +75,19 @@ Before using POK-manager.sh, ensure that you have the following prerequisites in
 
 3. (Optional) Adjust folder permissions if not using a separate user:
    ```bash
-   sudo chown -R 1000:1000 /path/to/your/instance/folder
+   sudo chown -R 7777:7777 /path/to/your/instance/folder
    ```
 
 4. Download and set up POK-manager.sh:
    - Option 1: Run the following command to download and set up POK-manager.sh in a single step:
      ```bash
-     git clone https://github.com/Acekorneya/Ark-Survival-Ascended-Server.git && sudo chown -R 1000:1000 Ark-Survival-Ascended-Server && sudo mv Ark-Survival-Ascended-Server/POK-manager.sh . && sudo chmod +x POK-manager.sh && sudo mv Ark-Survival-Ascended-Server/defaults . && sudo rm -rf Ark-Survival-Ascended-Server
+     git clone https://github.com/Acekorneya/Ark-Survival-Ascended-Server.git && sudo chown -R 7777:7777 Ark-Survival-Ascended-Server && sudo mv Ark-Survival-Ascended-Server/POK-manager.sh . && sudo chmod +x POK-manager.sh && sudo mv Ark-Survival-Ascended-Server/defaults . && sudo rm -rf Ark-Survival-Ascended-Server
      ```
 
    - Option 2: Follow these step-by-step commands:
      ```bash
      git clone https://github.com/Acekorneya/Ark-Survival-Ascended-Server.git
-     sudo chown -R 1000:1000 Ark-Survival-Ascended-Server
+     sudo chown -R 7777:7777 Ark-Survival-Ascended-Server
      sudo mv Ark-Survival-Ascended-Server/POK-manager.sh .
      sudo chmod +x POK-manager.sh
      sudo mv Ark-Survival-Ascended-Server/defaults .
@@ -101,7 +105,8 @@ Before using POK-manager.sh, ensure that you have the following prerequisites in
 - `-start <instance_name|-all>`: Starts a specific server instance or all instances.
 - `-stop <instance_name|-all>`: Stops a specific server instance or all instances.
 - `-shutdown [minutes] <instance_name|-all>`: Shuts down a specific server instance or all instances with an optional countdown in minutes.
-- `-update`: Updates POK-manager.sh and all server instances.
+- `-update`: Checks for server files & Docker image updates (doesn't modify the script itself).
+- `-upgrade`: Upgrades POK-manager.sh script to the latest version (requires confirmation).
 - `-status <instance_name|-all>`: Shows the status of a specific server instance or all instances.
 - `-restart [minutes] <instance_name|-all>`: Restarts a specific server instance or all instances with an optional countdown in minutes.
 - `-saveworld <instance_name|-all>`: Saves the world of a specific server instance or all instances.
@@ -110,6 +115,9 @@ Before using POK-manager.sh, ensure that you have the following prerequisites in
 - `-backup [instance_name|-all]`: Backs up a specific server instance or all instances (defaults to all if not specified).
 - `-restore [instance_name]`: Restores a server instance from a backup.
 - `-logs [-live] <instance_name>`: Displays logs for a specific server instance (optionally live).
+- `-beta`: Switches to beta mode, using the beta branch for updates and beta Docker images.
+- `-stable`: Switches to stable mode, using the master branch for updates and stable Docker images.
+- `-version`: Displays the current version of POK-manager.
 
 ### Examples
 
@@ -242,15 +250,50 @@ Note: Restoring a backup will overwrite the current saved game data for the spec
 
 ## User Permissions
 
-POK-manager.sh can work with any user as long as it has the correct PUID and PGID of 1000:1000. This is required for the container to have the necessary permissions for volumes and to avoid running as root, which enhances security.
+**Important Change:** Starting with version 2.1, the default container user has changed from 1000:1000 to 7777:7777 to avoid conflicts with the default user ID on many Linux distributions.
 
-If you prefer not to modify the user's UID and GID, you can bypass the permission checks by running the script with `sudo`. For example:
+### For Existing Users (Running Prior Versions)
 
-```bash
-sudo ./POK-manager.sh -create my_instance
-```
+If you're upgrading from an earlier version, you have two options:
 
-Using `sudo` grants the script the necessary privileges to change permissions to 1000:1000 as required by the container.
+1. **Continue using 1000:1000 (backward compatibility):**
+   ```bash
+   # Specify the PUID/PGID values when running POK-manager.sh
+   CONTAINER_PUID=1000 CONTAINER_PGID=1000 ./POK-manager.sh <commands>
+   
+   # Or add these lines to your docker-compose files:
+   - PUID=1000
+   - PGID=1000
+   ```
+
+2. **Migrate to the new 7777:7777 user (recommended):**
+   ```bash
+   # Change ownership of your existing files
+   sudo chown -R 7777:7777 ./ServerFiles ./Instance_* ./Cluster
+   ```
+
+### For New Users
+
+POK-manager.sh can work with any user as long as it has the correct PUID and PGID (now 7777:7777 by default). This prevents running as root and enhances security.
+
+If you prefer to use a different UID/GID, you can:
+
+1. Set environment variables when running commands:
+   ```bash
+   CONTAINER_PUID=<your_uid> CONTAINER_PGID=<your_gid> ./POK-manager.sh <commands>
+   ```
+
+2. Modify your docker-compose files to include:
+   ```yaml
+   environment:
+     - PUID=<your_uid>
+     - PGID=<your_gid>
+   ```
+
+3. Run with `sudo` to bypass permission checks (not recommended for regular use):
+   ```bash
+   sudo ./POK-manager.sh <commands>
+   ```
 
 ## Docker Compose Configuration
 
@@ -261,6 +304,8 @@ When creating a new server instance using POK-manager.sh, a Docker Compose confi
 | Variable                      | Default           | Description                                                                               |
 | ------------------------------| ------------------| ------------------------------------------------------------------------------------------|
 | `INSTANCE_NAME`               | `Instance_name`   | The name of the instance                                                                  |
+| `PUID`                        | `7777`            | User ID for container processes and file ownership (was 1000 in versions before 2.1)      |
+| `PGID`                        | `7777`            | Group ID for container processes and file ownership (was 1000 in versions before 2.1)     |
 | `BATTLEEYE`                   | `TRUE`            | Set to TRUE to use BattleEye, FALSE to not use BattleEye                                  |
 | `TZ`                          | `America/Los_Angeles`| Timezone setting: Change this to your local timezone.                                  |
 | `RCON_ENABLED`                | `TRUE`            | Needed for Graceful Shutdown                                                              |
@@ -334,95 +379,42 @@ services:
     mem_limit: 16G
 ```
 
-## Ports
+## Safe Update Mechanism
 
-The following ports are used by the Ark Survival Ascended Server:
+POK-manager uses a safe update mechanism to ensure stability and prevent unexpected changes from affecting your server setup:
 
-- `7777:7777/tcp`: Game port
-- `7777:7777/udp`: Game port
+1. **Update Detection**: When you run a command interactively, POK-manager checks for updates
+2. **Notification Only**: If an update is available, the script notifies you without automatically installing it
+3. **Explicit Consent**: You must run the `-upgrade` command to explicitly accept an update
+4. **Non-Interactive Safety**: When running via cron jobs, update checks are skipped by default
+5. **Backup Creation**: Before applying an update, the script creates a backup of the current version
 
-the following ports are used by RCON
+This approach ensures that:
+- Your production servers won't be unexpectedly updated in an automated process
+- You have full control over when updates are applied
+- You can revert to a previous version if needed
 
-- `27020:27020/tcp`: RCON port
+### Understanding `-update` vs `-upgrade`
 
-Note: The query port is not needed for Ark Ascended.
+There are two separate update-related commands with different purposes:
 
-## Troubleshooting
+- **`-update`**: This checks for ARK server files and Docker image updates, but doesn't modify the POK-manager.sh script itself. Use this to keep your game servers updated.
 
-If you encounter the following error in your logs:
-```
-asa_pve_Server | [2023.11.06-03.55.48:449][  1]Allocator Stats for binned2 are not in this build set BINNED2_ALLOCATOR_STATS 1 in MallocBinned2.cpp
-```
+- **`-upgrade`**: This specifically upgrades the POK-manager.sh script to the latest version (after confirmation). Use this when you want to get new features or fixes for the management script itself.
 
-Run the following command to temporarily fix the issue:
+### To update POK-manager:
+
 ```bash
-sudo sysctl -w vm.max_map_count=262144
+# Check for updates and apply if available (with confirmation)
+./POK-manager.sh -upgrade
 ```
 
-To make the change permanent, add the following line to `/etc/sysctl.conf` and apply the changes:
+### To restore a previous version:
+
+If an update causes issues, you can restore the previous version:
+
 ```bash
-echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf
-sudo sysctl -p
+# Replace the current script with the backup
+cp ./config/POK-manager/pok-manager.backup ./POK-manager.sh
+chmod +x ./POK-manager.sh
 ```
-## Hypervisors
-Proxmox VM
-
-The default CPU type (kvm64) in proxmox for linux VMs does not seem to implement all features needed to run the server. When running the docker contain
-In that case just change your CPU type to host in the hardware settings of your VM. After a restart of the VM the container should work without any issues.
-
-## Links
-
-- [Docker Installation](https://docs.docker.com/engine/install/)
-- [Docker Compose Installation](https://docs.docker.com/compose/install/)
-- [Git Downloads](https://git-scm.com/downloads)
-- [Ark Survival Ascended Server Docker Image](https://hub.docker.com/r/acekorneya/asa_server)
-- [Server Configuration](https://ark.wiki.gg/wiki/Server_configuration)
-- [POK-manager.sh GitHub Repository](https://github.com/Acekorneya/Ark-Survival-Ascended-Server)
-
-## Support
-
-If you need assistance or have any questions, please join our Discord server: [KNY SERVERS](https://discord.gg/9GJKWjQuXy)
-
-## Conclusion
-
-POK-manager.sh is a comprehensive and user-friendly solution for managing Ark Survival Ascended Server instances using Docker. With its wide range of commands and ease of use, it simplifies the process of setting up, configuring, and maintaining server instances. Whether you're a beginner or an experienced user, POK-manager.sh provides a streamlined approach to server management, allowing you to focus on enjoying the game with your community. If you encounter any issues or have questions, don't hesitate to reach out for support on our Discord server.
-
-We Also have Ark Servers for people who dont have the requirements to host a full cluster of all the Ark Maps when they release.
-
-🎮 Join Our Community Cluster Server:
-
-- Server Name: POK-Community-CrossARK. 
-
-- Running Both Map in Cluster and More to Come as they release and added to the cluster. 
-- PVE: A peaceful environment for your adventures.
-- Flyer Carry Enabled: Explore the skies with your tamed creatures.
-- Official Server Rates: Balanced gameplay for an enjoyable experience.
-- Always Updated and Events run on time of released
-- Active Mods: We're here to assist you whenever you need it.
-- Discord Community: Connect with our community and stay updated.
-- NO CRYPOD RESTRICTION USE THEM ANYWHERE!..
-
-Make sure to select "SHOW PLAYER SERVER" To be able to find it in unofficials Servers 
-
-## Support the Project
-
-If you find POK-manager.sh useful and would like to support its development, you can buy me a coffee! Your support is greatly appreciated and helps me continue maintaining and improving the project.
-
-[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/acekorneyab)
-
-Your contributions will go towards:
-- Implementing new features and enhancements
-Thank you for your support!
-
----
-
-
-## Star History
-
-<a href="https://star-history.com/#Acekorneya/Ark-Survival-Ascended-Server&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Acekorneya/Ark-Survival-Ascended-Server&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Acekorneya/Ark-Survival-Ascended-Server&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Acekorneya/Ark-Survival-Ascended-Server&type=Date" />
-  </picture>
-</a>

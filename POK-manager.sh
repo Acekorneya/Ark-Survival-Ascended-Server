@@ -4,9 +4,16 @@ MAIN_DIR="$BASE_DIR"
 SERVER_FILES_DIR="./ServerFiles/arkserver"
 CLUSTER_DIR="./Cluster"
 instance_dir="./Instance_${instance_name}"
+
+# Version information
+POK_MANAGER_VERSION="2.1.0"
+POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
+
 # Set PUID and PGID to match the container's expected values
-PUID=1000
-PGID=1000
+# Legacy default was 1000:1000, new default is 7777:7777
+PUID=${CONTAINER_PUID:-7777}
+PGID=${CONTAINER_PGID:-7777}
+
 # Define the order in which the settings should be displayed
 declare -a config_order=(
     "Memory Limit" 
@@ -460,6 +467,8 @@ check_vm_max_map_count() {
 check_puid_pgid_user() {
   local puid="$1"
   local pgid="$2"
+  local legacy_puid=1000
+  local legacy_pgid=1000
 
   # Check if the script is run with sudo (EUID is 0)
   if is_sudo; then
@@ -471,11 +480,37 @@ check_puid_pgid_user() {
   local current_gid=$(id -g)
   local current_user=$(id -un)
 
+  # Check for existing directories that might be owned by legacy PUID:PGID
+  if [ -d "${BASE_DIR}/ServerFiles/arkserver" ] && [ "$(stat -c '%u:%g' ${BASE_DIR}/ServerFiles/arkserver)" = "${legacy_puid}:${legacy_pgid}" ]; then
+    echo "⚠️ DETECTED LEGACY CONFIGURATION: Your server files are owned by the old default UID:GID (1000:1000)"
+    echo "The default container user has changed to ${PUID}:${PGID} for better compatibility with Linux distributions."
+    echo "You have two options:"
+    echo ""
+    echo "1. Continue using 1000:1000 (backward compatibility mode):"
+    echo "   Run your commands with environment variables: CONTAINER_PUID=1000 CONTAINER_PGID=1000 ./POK-manager.sh ..."
+    echo ""
+    echo "2. Migrate to the new ${PUID}:${PGID} user (recommended for new setups):"
+    echo "   Run this command to change ownership of your files:"
+    echo "   sudo chown -R ${PUID}:${PGID} ${BASE_DIR}/ServerFiles ${BASE_DIR}/Instance_* ${BASE_DIR}/Cluster"
+    echo ""
+    
+    # Set PUID/PGID to legacy values for this execution if existing directories use legacy values
+    if [ "${puid}" != "${legacy_puid}" ] || [ "${pgid}" != "${legacy_pgid}" ]; then
+      echo "For this execution, we'll use legacy values (1000:1000) to match your existing files."
+      PUID=${legacy_puid}
+      PGID=${legacy_pgid}
+      return
+    fi
+  fi
+
   if [ "${current_uid}" -ne "${puid}" ] || [ "${current_gid}" -ne "${pgid}" ]; then
     echo "You are not running the script as the user with the correct PUID (${puid}) and PGID (${pgid})."
     echo "Your current user '${current_user}' has UID ${current_uid} and GID ${current_gid}."
     echo "Please switch to the correct user or update your current user's UID and GID to match the required values."
     echo "Alternatively, you can run the script with sudo to bypass this check: sudo ./POK-manager.sh <commands>"
+    echo ""
+    echo "Or specify different container user values with environment variables:"
+    echo "CONTAINER_PUID=<your_uid> CONTAINER_PGID=<your_gid> ./POK-manager.sh <commands>"
     exit 1
   fi
 }
@@ -583,7 +618,8 @@ root_tasks() {
 }
 
 pull_docker_image() {
-  local image_name="acekorneya/asa_server:2_0_latest"
+  local image_tag=$(get_docker_image_tag)
+  local image_name="acekorneya/asa_server:${image_tag}"
   echo "Pulling Docker image: $image_name"
   sudo docker pull "$image_name"
 }
@@ -656,6 +692,7 @@ write_docker_compose_file() {
   local base_dir=$(dirname "$(realpath "$0")")
   local instance_dir="${base_dir}/Instance_${instance_name}"
   local docker_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
+  local image_tag=$(get_docker_image_tag)
 
   # Ensure the instance directory exists
   mkdir -p "${instance_dir}"
@@ -667,12 +704,15 @@ version: '2.4'
 services:
   asaserver:
     build: .
-    image: acekorneya/asa_server:2_0_latest
+    image: acekorneya/asa_server:${image_tag}
     container_name: asa_${instance_name} 
     restart: unless-stopped
     environment:
       - INSTANCE_NAME=${instance_name}
       - TZ=$TZ
+      # User/Group settings - Default is 7777:7777, uncomment to override
+      - PUID=${PUID}                          # User ID for container processes and file ownership
+      - PGID=${PGID}                          # Group ID for container processes and file ownership
 EOF
 
   # Iterate over the config_order to maintain the order in Docker Compose
@@ -996,11 +1036,13 @@ find_editor() {
 start_instance() {
   local instance_name=$1
   local docker_compose_file="./Instance_${instance_name}/docker-compose-${instance_name}.yaml"
-  echo "-----Starting ${instance_name} Server-----"
+  local image_tag=$(get_docker_image_tag)
+  
+  echo "-----Starting ${instance_name} Server with image tag ${image_tag}-----"
   if [ -f "$docker_compose_file" ]; then
     get_docker_compose_cmd
     echo "Using $DOCKER_COMPOSE_CMD for ${instance_name}..."
-    docker pull acekorneya/asa_server:2_0_latest
+    docker pull acekorneya/asa_server:${image_tag}
     $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d
     local use_sudo
     local config_file=$(get_config_file_path)
@@ -1012,22 +1054,22 @@ start_instance() {
     
     if [ "$use_sudo" = "true" ]; then
       echo "Using 'sudo' for Docker commands..."
-      sudo docker pull acekorneya/asa_server:2_0_latest
+      sudo docker pull acekorneya/asa_server:${image_tag}
       check_vm_max_map_count
       sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d
     else
-      docker pull acekorneya/asa_server:2_0_latest || {
+      docker pull acekorneya/asa_server:${image_tag} || {
         local pull_exit_code=$?
-        if [ $pull_exit_code -eq 1 ] && [[ $(docker pull acekorneya/asa_server:2_0_latest 2>&1) =~ "permission denied" ]]; then
+        if [ $pull_exit_code -eq 1 ] && [[ $(docker pull acekorneya/asa_server:${image_tag} 2>&1) =~ "permission denied" ]]; then
           echo "Permission denied error occurred while pulling the Docker image."
           echo "It seems the user is not set up correctly to run Docker commands without 'sudo'."
           echo "Falling back to using 'sudo' for Docker commands."
-          sudo docker pull acekorneya/asa_server:2_0_latest
+          sudo docker pull acekorneya/asa_server:${image_tag}
           check_vm_max_map_count
           sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d
         else
           echo "An error occurred while pulling the Docker image:"
-          echo "$(docker pull acekorneya/asa_server:2_0_latest 2>&1)"
+          echo "$(docker pull acekorneya/asa_server:${image_tag} 2>&1)"
           exit 1
         fi
       }
@@ -1401,9 +1443,30 @@ get_build_id_from_acf() {
   fi
 }
 check_for_POK_updates() {
-  echo "Checking for updates to POK-manager.sh..."
-  local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/master/POK-manager.sh"
+  # Skip update checks when running in non-interactive mode (e.g., cron jobs)
+  if [ -t 0 ]; then
+    echo "Checking for updates to POK-manager.sh..."
+  else
+    # When running non-interactively, only check for updates if explicitly requested
+    if [ "$1" != "force" ]; then
+      return
+    fi
+  fi
+  
+  # Determine which branch to use for updates
+  local branch_name="master"
+  if [ "$POK_MANAGER_BRANCH" = "beta" ]; then
+    branch_name="beta"
+    if [ -t 0 ]; then # Only show this message in interactive mode
+      echo "Using beta branch for updates"
+    fi
+  fi
+  
+  local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/${branch_name}/POK-manager.sh"
   local temp_file="/tmp/POK-manager.sh"
+  local update_info_file="${BASE_DIR}/config/POK-manager/update_available"
+  
+  mkdir -p "${BASE_DIR}/config/POK-manager"
 
   if command -v wget &>/dev/null; then
     wget -q -O "$temp_file" "$script_url"
@@ -1417,22 +1480,76 @@ check_for_POK_updates() {
   if [ -f "$temp_file" ]; then
     # Check if the downloaded file is at least 1KB in size
     if [ -s "$temp_file" ] && [ $(stat -c%s "$temp_file") -ge 1024 ]; then
-      # Compare the current file with the downloaded one using cmp
-      if ! cmp -s "$0" "$temp_file"; then
-        mv "$temp_file" "$0"
-        chmod +x "$0"
-        chown 1000:1000 "$0"
-        echo "----- POK-manager.sh has been updated to the latest version -----"
+      # Extract version information from the downloaded file
+      local new_version=$(grep -m 1 "POK_MANAGER_VERSION=" "$temp_file" | cut -d'"' -f2)
+      
+      if [ -n "$new_version" ]; then
+        # Compare versions using sort for proper semantic versioning comparison
+        local current_version="$POK_MANAGER_VERSION"
+        local sorted_versions=$(printf "%s\n%s\n" "$current_version" "$new_version" | sort -V)
+        local latest_version=$(echo "$sorted_versions" | tail -n1)
+        
+        # Only notify if the new version is actually newer
+        if [ "$latest_version" = "$new_version" ] && [ "$new_version" != "$current_version" ]; then
+          echo "************************************************************"
+          echo "* A newer version of POK-manager.sh is available: $new_version *"
+          echo "* Current version: $current_version                           *"
+          echo "* Run './POK-manager.sh -upgrade' to perform the update     *"
+          echo "************************************************************"
+          
+          # Store the update information for later use
+          echo "$new_version" > "$update_info_file"
+          # Copy the downloaded script to a temporary location for later use
+          cp "$temp_file" "${BASE_DIR}/config/POK-manager/new_version"
+          chmod +x "${BASE_DIR}/config/POK-manager/new_version"
+          
+          # Clean up
+          rm "$temp_file"
+        else
+          if [ -t 0 ]; then # Only show this in interactive mode
+            echo "----- POK-manager.sh is already up to date (version $current_version) -----"
+          fi
+          rm "$temp_file"
+          # Remove the update info file if it exists but no update is available
+          rm -f "$update_info_file"
+          rm -f "${BASE_DIR}/config/POK-manager/new_version"
+        fi
       else
-        echo "----- POK-manager.sh is already up to date -----"
-        rm "$temp_file"
+        # If we can't extract a version but files differ, just notify about the difference
+        if ! cmp -s "$0" "$temp_file"; then
+          echo "************************************************************"
+          echo "* An update to POK-manager.sh is available                 *"
+          echo "* Run './POK-manager.sh -upgrade' to perform the update    *"
+          echo "************************************************************"
+          
+          # Store the update information for later use
+          echo "unknown" > "$update_info_file"
+          # Copy the downloaded script to a temporary location for later use
+          cp "$temp_file" "${BASE_DIR}/config/POK-manager/new_version"
+          chmod +x "${BASE_DIR}/config/POK-manager/new_version"
+          
+          # Clean up
+          rm "$temp_file"
+        else
+          if [ -t 0 ]; then # Only show this in interactive mode
+            echo "----- POK-manager.sh is already up to date -----"
+          fi
+          rm "$temp_file"
+          # Remove the update info file if it exists but no update is available
+          rm -f "$update_info_file"
+          rm -f "${BASE_DIR}/config/POK-manager/new_version"
+        fi
       fi
     else
-      echo "Downloaded file is either empty or too small. Skipping update."
+      if [ -t 0 ]; then # Only show this in interactive mode
+        echo "Downloaded file is either empty or too small. Skipping update check."
+      fi
       rm "$temp_file"
     fi
   else
-    echo "Failed to download the update. Skipping update."
+    if [ -t 0 ]; then # Only show this in interactive mode
+      echo "Failed to download the update. Skipping update check."
+    fi
   fi
 }
 
@@ -1520,121 +1637,7 @@ ensure_steamcmd_executable() {
     exit 1
   fi
 }
-# Function to update an instance
-update_manager_and_instances() {
-  echo "----- Checking for updates to POK-manager.sh -----"
-  local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/master/POK-manager.sh"
-  local temp_file="/tmp/POK-manager.sh"
 
-  if command -v wget &>/dev/null; then
-    wget -q -O "$temp_file" "$script_url"
-  elif command -v curl &>/dev/null; then
-    curl -s -o "$temp_file" "$script_url"
-  else
-    echo "Neither wget nor curl is available. Unable to check for updates to POK-manager.sh."
-    return
-  fi
-
-  if [ -f "$temp_file" ]; then
-    # Check if the downloaded file is at least 1KB in size
-    if [ -s "$temp_file" ] && [ $(stat -c%s "$temp_file") -ge 1024 ]; then
-      # Compare the current file with the downloaded one using cmp
-      if ! cmp -s "$0" "$temp_file"; then
-        mv "$temp_file" "$0"
-        chmod +x "$0"
-        chown 1000:1000 "$0"
-        echo "POK-manager.sh has been updated. Please run the script again to use the updated version."
-      else
-        echo "POK-manager.sh is already up to date."
-        rm "$temp_file"
-      fi
-    else
-      echo "Downloaded file is either empty or too small. Skipping update."
-      rm "$temp_file"
-    fi
-  else
-    echo "Failed to download the update. Skipping update."
-  fi
-
-  echo "----- Checking for updates to Docker image and server files -----"
-
-  # Pull the latest image
-  pull_docker_image
-
-  # Check if SteamCMD is installed, and install it if necessary
-  install_steamcmd
-
-  # Check if the server files are installed
-  if [ ! -f "${BASE_DIR%/}/ServerFiles/arkserver/appmanifest_2430930.acf" ]; then
-    echo "---- ARK server files not found. Installing server files using SteamCMD -----"
-    ensure_steamcmd_executable # Make sure SteamCMD is executable
-    if "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +login anonymous +app_update 2430930 +quit; then
-      echo "----- ARK server files installed successfully build: ${latest_build_id} -----"
-      # Move the appmanifest_2430930.acf file to the correct location
-      if [ -f "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" ]; then
-        cp "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" "${BASE_DIR%/}/ServerFiles/arkserver/"
-        echo "Copied appmanifest_2430930.acf to the correct location."
-      else
-        echo "appmanifest_2430930.acf not found in steamapps directory. Skipping move."
-      fi
-    else
-      echo "Failed to install ARK server files using SteamCMD. Please check the logs for more information."
-      exit 1
-    fi
-  else
-    # Check for updates to the ARK server files
-    local current_build_id=$(get_build_id_from_acf)
-    local latest_build_id=$(get_current_build_id)
-
-    if [ "$current_build_id" != "$latest_build_id" ]; then
-      echo "---- New server build available: $latest_build_id Updating ARK server files -----"
-
-      # Check if any running instance has the update_server.sh script
-      local update_script_found=false
-      for instance in $(list_running_instances); do
-        if docker exec "asa_${instance}" test -f /home/pok/scripts/update_server.sh; then
-          update_script_found=true
-          echo "Running update_server.sh script in the container for instance: $instance"
-          docker exec -it "asa_${instance}" /bin/bash -c "/home/pok/scripts/update_server.sh" | while read -r line; do
-            echo "[$instance] $line"
-          done
-          break
-        fi
-      done
-
-      if [ "$update_script_found" = false ]; then
-        echo "No running instance found with the update_server.sh script. Updating server files using SteamCMD..."
-        ensure_steamcmd_executable # Make sure SteamCMD is executable
-        if "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +login anonymous +app_update 2430930 +quit; then
-          echo "SteamCMD update completed successfully."
-          # Move the appmanifest_2430930.acf file to the correct location
-          if [ -f "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" ]; then
-            cp "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" "${BASE_DIR%/}/ServerFiles/arkserver/"
-            echo "Copied appmanifest_2430930.acf arkserver directory."
-          else
-            echo "appmanifest_2430930.acf not found in steamapps directory. Skipping move."
-          fi
-        else
-          echo "SteamCMD update failed. Please check the logs for more information."
-          exit 1
-        fi
-      fi
-
-      # Check if the server files were updated successfully
-      local updated_build_id=$(get_build_id_from_acf)
-      if [ "$updated_build_id" == "$latest_build_id" ]; then
-        echo "----- ARK server files updated successfully to build id: $latest_build_id -----"
-      else
-        echo "----- Failed to update ARK server files to the latest build. Current build id: $updated_build_id -----"
-        exit 1
-      fi
-    else
-      echo "----- ARK server files are already up to date with build id: $current_build_id -----"
-    fi
-  fi
-
-  echo "----- Update process completed -----"
-}
 manage_backup_rotation() {
   local instance_name="$1"
   local max_backups="$2"
@@ -1956,7 +1959,7 @@ manage_service() {
     stop_instance "$instance_name"
     ;;
   -update)
-    update_manager_and_instances
+    update_server_files_and_docker
     exit 0
     ;;
   -restart | -shutdown)
@@ -2011,7 +2014,7 @@ manage_service() {
     ;;
   esac
 }
-valid_actions=("-list" "-edit" "-setup" "-create" "-start" "-stop" "-shutdown" "-update" "-status" "-restart" "-saveworld" "-chat" "-custom" "-backup" "-restore" "-logs")
+valid_actions=("-list" "-edit" "-setup" "-create" "-start" "-stop" "-shutdown" "-update" "-status" "-restart" "-saveworld" "-chat" "-custom" "-backup" "-restore" "-logs" "-beta" "-stable" "-version" "-upgrade")
 
 display_usage() {
   echo "Usage: $0 {action} [instance_name|-all] [additional_args...]"
@@ -2024,7 +2027,8 @@ display_usage() {
   echo "  -start <instance_name|-all>               Start an instance or all instances"
   echo "  -stop <instance_name|-all>                Stop an instance or all instances"
   echo "  -shutdown [minutes] <instance_name|-all>  Shutdown an instance or all instances with an optional countdown"
-  echo "  -update                                   Update POK-manager.sh and all instances"
+  echo "  -update                                   Check for server files & Docker image updates (doesn't modify the script itself)"
+  echo "  -upgrade                                  Upgrade POK-manager.sh script to the latest version (requires confirmation)"
   echo "  -status <instance_name|-all>              Show the status of an instance or all instances"
   echo "  -restart [minutes] <instance_name|-all>   Restart an instance or all instances"
   echo "  -saveworld <instance_name|-all>           Save the world of an instance or all instances"
@@ -2033,11 +2037,24 @@ display_usage() {
   echo "  -backup [instance_name|-all]              Backup an instance or all instances (defaults to all if not specified)"
   echo "  -restore [instance_name]                  Restore an instance from a backup"
   echo "  -logs [-live] <instance_name>             Display logs for an instance (optionally live)"
+  echo "  -beta                                     Switch to beta mode to use beta version Docker images"
+  echo "  -stable                                   Switch to stable mode to use stable version Docker images"
+  echo "  -version                                  Display the current version of POK-manager"
+}
+
+# Display version information
+display_version() {
+  echo "POK-manager.sh version ${POK_MANAGER_VERSION} (${POK_MANAGER_BRANCH})"
+  echo "Default PUID: ${PUID}, PGID: ${PGID}"
+  echo "Docker image: acekorneya/asa_server:$(get_docker_image_tag)"
 }
 main() {
   # Check for required user and group at the start
   check_puid_pgid_user "$PUID" "$PGID"
   check_for_POK_updates
+  # Check if we're in beta mode
+  check_beta_mode
+  
   if [ "$#" -lt 1 ]; then
     display_usage
     exit 1
@@ -2053,6 +2070,25 @@ main() {
     echo "Invalid action '${action}'."
     display_usage
     exit 1
+  fi
+
+  # Special cases for beta/stable/version/upgrade commands
+  if [[ "$action" == "-beta" ]]; then
+    set_beta_mode "beta"
+    echo "POK-manager is now in beta mode. Docker images with tag '2_0_beta' will be used."
+    echo "Please restart any running containers to apply the changes."
+    exit 0
+  elif [[ "$action" == "-stable" ]]; then
+    set_beta_mode "stable"
+    echo "POK-manager is now in stable mode. Docker images with tag '2_0_latest' will be used."
+    echo "Please restart any running containers to apply the changes."
+    exit 0
+  elif [[ "$action" == "-version" ]]; then
+    display_version
+    exit 0
+  elif [[ "$action" == "-upgrade" ]]; then
+    upgrade_pok_manager
+    exit 0
   fi
 
   # Check if instance_name or -all is provided for actions that require it
@@ -2108,3 +2144,207 @@ main() {
 
 # Invoke the main function with all passed arguments
 main "$@"
+
+# Function to determine Docker image tag based on branch
+get_docker_image_tag() {
+  # If a beta flag file exists and POK_MANAGER_BRANCH is beta, use beta version
+  if [ -f "${BASE_DIR}/config/POK-manager/beta_mode" ] && [ "$POK_MANAGER_BRANCH" = "beta" ]; then
+    echo "2_0_beta"
+  else
+    echo "2_0_latest"
+  fi
+}
+
+# Function to set beta/stable mode
+set_beta_mode() {
+  local mode="$1" # "beta" or "stable"
+  local config_dir="${BASE_DIR}/config/POK-manager"
+  
+  mkdir -p "$config_dir"
+  
+  if [ "$mode" = "beta" ]; then
+    echo "Setting POK-manager to beta mode"
+    echo "beta" > "${config_dir}/beta_mode"
+    POK_MANAGER_BRANCH="beta"
+  else
+    echo "Setting POK-manager to stable mode"
+    rm -f "${config_dir}/beta_mode"
+    POK_MANAGER_BRANCH="stable"
+  fi
+}
+
+# Function to check for beta mode
+check_beta_mode() {
+  local config_dir="${BASE_DIR}/config/POK-manager"
+  
+  if [ -f "${config_dir}/beta_mode" ]; then
+    POK_MANAGER_BRANCH="beta"
+  else
+    POK_MANAGER_BRANCH="stable"
+  fi
+}
+
+# Add the upgrade function
+upgrade_pok_manager() {
+  local update_info_file="${BASE_DIR}/config/POK-manager/update_available"
+  local new_version_file="${BASE_DIR}/config/POK-manager/new_version"
+  
+  # Check if there's an update available
+  if [ ! -f "$update_info_file" ]; then
+    echo "No updates available. Checking for updates now..."
+    check_for_POK_updates "force"
+    
+    # Check again if update is available after forced check
+    if [ ! -f "$update_info_file" ]; then
+      echo "You are already running the latest version of POK-manager.sh."
+      return 0
+    fi
+  fi
+  
+  # Get the new version
+  local new_version=$(cat "$update_info_file")
+  if [ "$new_version" != "unknown" ]; then
+    echo "Upgrading POK-manager.sh from version $POK_MANAGER_VERSION to version $new_version"
+  else
+    echo "Upgrading POK-manager.sh to the latest version"
+  fi
+  
+  # Confirm the update
+  read -p "Do you want to proceed with the update? (y/N): " confirm
+  if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+    echo "Update cancelled."
+    return 1
+  fi
+
+  # Perform the update
+  if [ -f "$new_version_file" ]; then
+    # Create a backup of the current script
+    echo "Creating backup of current script..."
+    cp "$0" "${BASE_DIR}/config/POK-manager/pok-manager.backup"
+    
+    # Copy the new version over the current script
+    echo "Installing update..."
+    cp "$new_version_file" "$0"
+    chmod +x "$0"
+    
+    # Clean up
+    rm -f "$update_info_file"
+    rm -f "$new_version_file"
+    
+    echo "Update completed successfully!"
+    echo "Please run the script again to use the new version."
+    exit 0
+  else
+    echo "Error: Update file not found. Please run the script again to check for updates."
+    rm -f "$update_info_file"
+    return 1
+  fi
+}
+
+# Function to update server files and Docker images (but not the script itself)
+# This is called by the -update command
+update_server_files_and_docker() {
+  echo "===== CHECKING FOR UPDATES ====="
+  echo "----- Checking for POK-manager.sh script updates -----"
+  local update_info_file="${BASE_DIR}/config/POK-manager/update_available"
+  
+  # Check for POK-manager.sh updates without automatic installation
+  check_for_POK_updates "force"
+  
+  # If updates are available, notify the user
+  if [ -f "$update_info_file" ]; then
+    local new_version=$(cat "$update_info_file")
+    echo "********************************************************************"
+    if [ "$new_version" != "unknown" ]; then
+      echo "* A newer version of POK-manager.sh is available: $new_version (current: $POK_MANAGER_VERSION)"
+    else
+      echo "* An update to POK-manager.sh is available"
+    fi
+    echo "* Run './POK-manager.sh -upgrade' to upgrade the script (this won't happen automatically)"
+    echo "********************************************************************"
+  else
+    echo "POK-manager.sh script is up to date"
+  fi
+
+  echo "----- Checking for ARK server files & Docker image updates -----"
+  echo "Note: This WILL update server files and Docker images, but NOT the script itself"
+
+  # Pull the latest image
+  local image_tag=$(get_docker_image_tag)
+  echo "Using Docker image tag: ${image_tag}"
+  pull_docker_image
+
+  # Check if SteamCMD is installed, and install it if necessary
+  install_steamcmd
+
+  # Check if the server files are installed
+  if [ ! -f "${BASE_DIR%/}/ServerFiles/arkserver/appmanifest_2430930.acf" ]; then
+    echo "---- ARK server files not found. Installing server files using SteamCMD -----"
+    ensure_steamcmd_executable # Make sure SteamCMD is executable
+    if "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +login anonymous +app_update 2430930 +quit; then
+      echo "----- ARK server files installed successfully -----"
+      # Move the appmanifest_2430930.acf file to the correct location
+      if [ -f "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" ]; then
+        cp "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" "${BASE_DIR%/}/ServerFiles/arkserver/"
+        echo "Copied appmanifest_2430930.acf to the correct location."
+      else
+        echo "appmanifest_2430930.acf not found in steamapps directory. Skipping move."
+      fi
+    else
+      echo "Failed to install ARK server files using SteamCMD. Please check the logs for more information."
+      exit 1
+    fi
+  else
+    # Check for updates to the ARK server files
+    local current_build_id=$(get_build_id_from_acf)
+    local latest_build_id=$(get_current_build_id)
+
+    if [ "$current_build_id" != "$latest_build_id" ]; then
+      echo "---- New server build available: $latest_build_id Updating ARK server files -----"
+
+      # Check if any running instance has the update_server.sh script
+      local update_script_found=false
+      for instance in $(list_running_instances); do
+        if docker exec "asa_${instance}" test -f /home/pok/scripts/update_server.sh; then
+          update_script_found=true
+          echo "Running update_server.sh script in the container for instance: $instance"
+          docker exec -it "asa_${instance}" /bin/bash -c "/home/pok/scripts/update_server.sh" | while read -r line; do
+            echo "[$instance] $line"
+          done
+          break
+        fi
+      done
+
+      if [ "$update_script_found" = false ]; then
+        echo "No running instance found with the update_server.sh script. Updating server files using SteamCMD..."
+        ensure_steamcmd_executable # Make sure SteamCMD is executable
+        if "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +login anonymous +app_update 2430930 +quit; then
+          echo "SteamCMD update completed successfully."
+          # Move the appmanifest_2430930.acf file to the correct location
+          if [ -f "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" ]; then
+            cp "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" "${BASE_DIR%/}/ServerFiles/arkserver/"
+            echo "Copied appmanifest_2430930.acf to the correct location."
+          else
+            echo "appmanifest_2430930.acf not found in steamapps directory. Skipping move."
+          fi
+        else
+          echo "SteamCMD update failed. Please check the logs for more information."
+          exit 1
+        fi
+      fi
+
+      # Check if the server files were updated successfully
+      local updated_build_id=$(get_build_id_from_acf)
+      if [ "$updated_build_id" == "$latest_build_id" ]; then
+        echo "----- ARK server files updated successfully to build id: $latest_build_id -----"
+      else
+        echo "----- Failed to update ARK server files to the latest build. Current build id: $updated_build_id -----"
+        exit 1
+      fi
+    else
+      echo "----- ARK server files are already up to date with build id: $current_build_id -----"
+    fi
+  fi
+
+  echo "----- Update process completed -----"
+}

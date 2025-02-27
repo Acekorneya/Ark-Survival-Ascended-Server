@@ -1,8 +1,8 @@
 FROM ubuntu:20.04
 
 # Accept PUID and PGID environment variables to allow runtime specification
-ARG PUID=1000
-ARG PGID=1000
+ARG PUID=7777
+ARG PGID=7777
 
 # Set a default timezone, can be overridden at runtime
 ENV TZ=UTC
