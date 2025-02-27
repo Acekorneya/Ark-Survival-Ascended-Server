@@ -418,3 +418,97 @@ If an update causes issues, you can restore the previous version:
 cp ./config/POK-manager/pok-manager.backup ./POK-manager.sh
 chmod +x ./POK-manager.sh
 ```
+
+## Ports
+
+The following ports are used by the Ark Survival Ascended Server:
+
+- `7777:7777/tcp`: Game port
+- `7777:7777/udp`: Game port
+
+the following ports are used by RCON
+
+- `27020:27020/tcp`: RCON port
+
+Note: The query port is not needed for Ark Ascended.
+
+## Troubleshooting
+
+If you encounter the following error in your logs:
+```
+asa_pve_Server | [2023.11.06-03.55.48:449][  1]Allocator Stats for binned2 are not in this build set BINNED2_ALLOCATOR_STATS 1 in MallocBinned2.cpp
+```
+
+Run the following command to temporarily fix the issue:
+```bash
+sudo sysctl -w vm.max_map_count=262144
+```
+
+To make the change permanent, add the following line to `/etc/sysctl.conf` and apply the changes:
+```bash
+echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p
+```
+
+## Hypervisors
+Proxmox VM
+
+The default CPU type (kvm64) in proxmox for linux VMs does not seem to implement all features needed to run the server. When running the docker contain
+In that case just change your CPU type to host in the hardware settings of your VM. After a restart of the VM the container should work without any issues.
+
+## Links
+
+- [Docker Installation](https://docs.docker.com/engine/install/)
+- [Docker Compose Installation](https://docs.docker.com/compose/install/)
+- [Git Downloads](https://git-scm.com/downloads)
+- [Ark Survival Ascended Server Docker Image](https://hub.docker.com/r/acekorneya/asa_server)
+- [Server Configuration](https://ark.wiki.gg/wiki/Server_configuration)
+- [POK-manager.sh GitHub Repository](https://github.com/Acekorneya/Ark-Survival-Ascended-Server)
+
+## Support
+
+If you need assistance or have any questions, please join our Discord server: [KNY SERVERS](https://discord.gg/9GJKWjQuXy)
+
+## Conclusion
+
+POK-manager.sh is a comprehensive and user-friendly solution for managing Ark Survival Ascended Server instances using Docker. With its wide range of commands and ease of use, it simplifies the process of setting up, configuring, and maintaining server instances. Whether you're a beginner or an experienced user, POK-manager.sh provides a streamlined approach to server management, allowing you to focus on enjoying the game with your community. If you encounter any issues or have questions, don't hesitate to reach out for support on our Discord server.
+
+We Also have Ark Servers for people who dont have the requirements to host a full cluster of all the Ark Maps when they release.
+
+🎮 Join Our Community Cluster Server:
+
+- Server Name: POK-Community-CrossARK. 
+
+- Running Both Map in Cluster and More to Come as they release and added to the cluster. 
+- PVE: A peaceful environment for your adventures.
+- Flyer Carry Enabled: Explore the skies with your tamed creatures.
+- Official Server Rates: Balanced gameplay for an enjoyable experience.
+- Always Updated and Events run on time of released
+- Active Mods: We're here to assist you whenever you need it.
+- Discord Community: Connect with our community and stay updated.
+- NO CRYPOD RESTRICTION USE THEM ANYWHERE!..
+
+Make sure to select "SHOW PLAYER SERVER" To be able to find it in unofficials Servers 
+
+## Support the Project
+
+If you find POK-manager.sh useful and would like to support its development, you can buy me a coffee! Your support is greatly appreciated and helps me continue maintaining and improving the project.
+
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/acekorneyab)
+
+Your contributions will go towards:
+- Implementing new features and enhancements
+Thank you for your support!
+
+---
+
+
+## Star History
+
+<a href="https://star-history.com/#Acekorneya/Ark-Survival-Ascended-Server&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Acekorneya/Ark-Survival-Ascended-Server&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Acekorneya/Ark-Survival-Ascended-Server&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Acekorneya/Ark-Survival-Ascended-Server&type=Date" />
+  </picture>
+</a>
