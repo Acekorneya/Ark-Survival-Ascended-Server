@@ -2186,60 +2186,41 @@ check_beta_mode() {
 
 # Add the upgrade function
 upgrade_pok_manager() {
-  local update_info_file="${BASE_DIR}/config/POK-manager/update_available"
-  local new_version_file="${BASE_DIR}/config/POK-manager/new_version"
+  echo "Checking for updates to POK-manager.sh..."
   
-  # Check if there's an update available
-  if [ ! -f "$update_info_file" ]; then
-    echo "No updates available. Checking for updates now..."
-    check_for_POK_updates "force"
-    
-    # Check again if update is available after forced check
-    if [ ! -f "$update_info_file" ]; then
-      echo "You are already running the latest version of POK-manager.sh."
-      return 0
-    fi
+  # Create the config directory if it doesn't exist
+  mkdir -p "${BASE_DIR%/}/config/POK-manager"
+  
+  # Backup the current script
+  cp "$0" "${BASE_DIR%/}/config/POK-manager/pok-manager.backup"
+  echo "Backed up current script to ${BASE_DIR%/}/config/POK-manager/pok-manager.backup"
+  
+  # Check if we're in beta mode
+  local branch="master"
+  if check_beta_mode; then
+    branch="beta"
+    echo "Beta mode is enabled. Downloading from the beta branch."
   fi
   
-  # Get the new version
-  local new_version=$(cat "$update_info_file")
-  if [ "$new_version" != "unknown" ]; then
-    echo "Upgrading POK-manager.sh from version $POK_MANAGER_VERSION to version $new_version"
-  else
-    echo "Upgrading POK-manager.sh to the latest version"
-  fi
-  
-  # Confirm the update
-  read -p "Do you want to proceed with the update? (y/N): " confirm
-  if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-    echo "Update cancelled."
-    return 1
-  fi
-
-  # Perform the update
-  if [ -f "$new_version_file" ]; then
-    # Create a backup of the current script
-    echo "Creating backup of current script..."
-    cp "$0" "${BASE_DIR}/config/POK-manager/pok-manager.backup"
+  # Download the latest version
+  echo "Downloading the latest version from the $branch branch..."
+  if curl -s -o "${BASE_DIR%/}/POK-manager.sh.new" "https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/$branch/POK-manager.sh"; then
+    # Make the new script executable
+    chmod +x "${BASE_DIR%/}/POK-manager.sh.new"
     
-    # Copy the new version over the current script
-    echo "Installing update..."
-    cp "$new_version_file" "$0"
-    chmod +x "$0"
+    # Replace the current script with the new one
+    mv "${BASE_DIR%/}/POK-manager.sh.new" "$0"
     
-    # Clean up
-    rm -f "$update_info_file"
-    rm -f "$new_version_file"
-    
-    echo "Update completed successfully!"
-    echo "Please run the script again to use the new version."
+    echo "POK-manager.sh has been updated successfully."
+    echo "Please restart the script to use the new version."
     exit 0
   else
-    echo "Error: Update file not found. Please run the script again to check for updates."
-    rm -f "$update_info_file"
-    return 1
+    echo "Failed to download the latest version. Please try again later."
+    exit 1
   fi
 }
+
+echo "----- Update process completed -----"
 
 # Function to update server files and Docker images (but not the script itself)
 # This is called by the -update command
@@ -2347,4 +2328,26 @@ update_server_files_and_docker() {
   fi
 
   echo "----- Update process completed -----"
+}
+
+# Function to check if beta mode is enabled
+check_beta_mode() {
+  if [ -f "${BASE_DIR%/}/config/POK-manager/beta_mode" ]; then
+    return 0  # Beta mode is enabled
+  else
+    return 1  # Beta mode is not enabled
+  fi
+}
+
+# Function to set beta mode (enable or disable)
+set_beta_mode() {
+  local mode=$1
+  if [ "$mode" = "beta" ]; then
+    echo "beta" > "${BASE_DIR%/}/config/POK-manager/beta_mode"
+    echo "POK-manager is now in beta mode. Docker images with tag '2_0_beta' will be used."
+  else
+    rm -f "${BASE_DIR%/}/config/POK-manager/beta_mode"
+    echo "POK-manager is now in stable mode. Docker images with tag '2_0_latest' will be used."
+  fi
+  echo "Please restart any running containers to apply the changes."
 }
