@@ -760,9 +760,28 @@ cat >> "$docker_compose_file" <<-EOF
     volumes:
       - "${base_dir}/ServerFiles/arkserver:/home/pok/arkserver"
       - "${instance_dir}/Saved:/home/pok/arkserver/ShooterGame/Saved"
-$(if [ -n "${config_values[Cluster ID]}" ]; then echo "      - \"${base_dir}/Cluster:/home/pok/arkserver/ShooterGame/Saved/clusters\"" ; fi)
+      - "${base_dir}/Cluster:/home/pok/arkserver/ShooterGame/Saved/clusters"
     mem_limit: ${config_values[Memory Limit]}
 EOF
+
+  # If running with sudo, set the file ownership to the correct user
+  if is_sudo; then
+    # Get the ownership of the parent directory
+    local dir_owner=$(stat -c '%u' "$instance_dir")
+    local dir_group=$(stat -c '%g' "$instance_dir")
+    
+    # If the directory has non-root ownership, use that; otherwise default to PUID:PGID
+    if [ "$dir_owner" -ne 0 ] && [ "$dir_group" -ne 0 ]; then
+      chown "${dir_owner}:${dir_group}" "$docker_compose_file"
+      echo "Set docker-compose file ownership to match parent directory: ${dir_owner}:${dir_group}"
+    else
+      # If the directory is owned by root, use PUID:PGID from the script
+      chown "${PUID}:${PGID}" "$docker_compose_file"
+      echo "Set docker-compose file ownership to PUID:PGID: ${PUID}:${PGID}"
+    fi
+  fi
+
+  echo "Created Docker Compose file: $docker_compose_file"
 }
 
 # Function to check and optionally adjust Docker command permissions
@@ -2116,8 +2135,52 @@ set_beta_mode() {
       # Create a temporary file
       local tmp_file="${compose_file}.tmp"
       
+      # Store the original file ownership to restore it later
+      local file_owner=""
+      local file_group=""
+      if [ -f "$compose_file" ]; then
+        file_owner=$(stat -c '%u' "$compose_file")
+        file_group=$(stat -c '%g' "$compose_file")
+      fi
+      
+      # Check if PUID/PGID lines are completely missing from the file
+      local has_puid=false
+      local has_pgid=false
+      
+      if grep -q "PUID=" "$compose_file"; then
+        has_puid=true
+      fi
+      
+      if grep -q "PGID=" "$compose_file"; then
+        has_pgid=true
+      fi
+      
       # Read the file and update both the image tag and ensure PUID/PGID values are correct
+      local in_environment_section=false
+      local added_missing_puid_pgid=false
+      
       while IFS= read -r line; do
+        # Track if we're in the environment section
+        if [[ "$line" =~ ^[[:space:]]*environment:[[:space:]]*$ ]]; then
+          in_environment_section=true
+        elif [[ "$line" =~ ^[[:space:]]*[a-zA-Z][a-zA-Z0-9_]*:[[:space:]]*$ ]]; then
+          # We've reached a new section
+          
+          # If we're leaving the environment section and haven't seen PUID/PGID, add them commented out
+          if [ "$in_environment_section" = true ] && [ "$added_missing_puid_pgid" = false ] && ([ "$has_puid" = false ] || [ "$has_pgid" = false ]); then
+            echo "      # User/Group settings - Default is now 7777:7777, use 1000:1000 for legacy compatibility" >> "$tmp_file"
+            if [ "$has_puid" = false ]; then
+              echo "      # - PUID=7777                          # User ID for container processes and file ownership" >> "$tmp_file"
+            fi
+            if [ "$has_pgid" = false ]; then
+              echo "      # - PGID=7777                          # Group ID for container processes and file ownership" >> "$tmp_file"
+            fi
+            added_missing_puid_pgid=true
+          fi
+          
+          in_environment_section=false
+        fi
+        
         # Update the image tag
         if [[ "$line" =~ image:[[:space:]]*acekorneya/asa_server:2_0_ ]]; then
           echo "    image: acekorneya/asa_server:${new_tag}" >> "$tmp_file"
@@ -2145,6 +2208,12 @@ set_beta_mode() {
       
       # Replace the original file with the updated one
       mv "$tmp_file" "$compose_file"
+      
+      # Restore the original file ownership if we're running as sudo
+      if is_sudo && [ -n "$file_owner" ] && [ -n "$file_group" ]; then
+        chown "${file_owner}:${file_group}" "$compose_file"
+        echo "Restored file ownership to ${file_owner}:${file_group}"
+      fi
       
       # Verify the change was made for the image tag
       if grep -q "image:.*${new_tag}" "$compose_file"; then
