@@ -2048,112 +2048,6 @@ display_version() {
   echo "Default PUID: ${PUID}, PGID: ${PGID}"
   echo "Docker image: acekorneya/asa_server:$(get_docker_image_tag)"
 }
-main() {
-  # Check for required user and group at the start
-  check_puid_pgid_user "$PUID" "$PGID"
-  check_for_POK_updates
-  # Check if we're in beta mode
-  check_beta_mode
-  
-  if [ "$#" -lt 1 ]; then
-    display_usage
-    exit 1
-  fi
-
-  local action="$1"
-  shift # Remove the action from the argument list
-  local instance_name="${1:-}" # Default to empty if not provided
-  local additional_args="${@:2}" # Capture any additional arguments
-
-  # Check if the provided action is valid
-  if [[ ! " ${valid_actions[*]} " =~ " ${action} " ]]; then
-    echo "Invalid action '${action}'."
-    display_usage
-    exit 1
-  fi
-
-  # Special cases for beta/stable/version/upgrade commands
-  if [[ "$action" == "-beta" ]]; then
-    set_beta_mode "beta"
-    echo "POK-manager is now in beta mode. Docker images with tag '2_0_beta' will be used."
-    echo "Please restart any running containers to apply the changes."
-    exit 0
-  elif [[ "$action" == "-stable" ]]; then
-    set_beta_mode "stable"
-    echo "POK-manager is now in stable mode. Docker images with tag '2_0_latest' will be used."
-    echo "Please restart any running containers to apply the changes."
-    exit 0
-  elif [[ "$action" == "-version" ]]; then
-    display_version
-    exit 0
-  elif [[ "$action" == "-upgrade" ]]; then
-    upgrade_pok_manager
-    exit 0
-  fi
-
-  # Check if instance_name or -all is provided for actions that require it
-  if [[ "$action" =~ ^(-start|-stop|-saveworld|-status)$ ]] && [[ -z "$instance_name" ]]; then
-    echo "Error: $action requires an instance name or -all."
-    echo "Usage: $0 $action <instance_name|-all>"
-    exit 1
-  elif [[ "$action" =~ ^(-shutdown|-restart)$ ]]; then
-    if [[ -z "$instance_name" ]]; then
-      echo "Error: $action requires a timer (in minutes) and an instance name or -all."
-      echo "Usage: $0 $action <minutes> <instance_name|-all>"
-      exit 1
-    elif [[ "$instance_name" =~ ^[0-9]+$ ]]; then
-      if [[ -z "$additional_args" ]]; then
-        echo "Error: $action requires an instance name or -all after the timer."
-        echo "Usage: $0 $action <minutes> <instance_name|-all>"
-        exit 1
-      else
-        # Store the timer value separately
-        local timer="$instance_name"
-        instance_name="$additional_args"
-        additional_args=("$timer")
-      fi
-    fi
-  fi
-
-  # Special check for -chat action
-  if [[ "$action" == "-chat" ]]; then
-    if [[ "$#" -lt 2 ]]; then
-      echo "Error: -chat requires a quoted message and an instance name or -all"
-      echo "Usage: $0 -chat \"<message>\" <instance_name|-all>"
-      exit 1
-    fi
-    if [[ -z "$instance_name" ]]; then
-      echo "Error: -chat requires an instance name or -all."
-      echo "Usage: $0 -chat \"<message>\" <instance_name|-all>"
-      exit 1
-    fi
-  fi
-
-  # Special check for -custom action
-  if [[ "$action" == "-custom" ]]; then
-    if [[ -z "$instance_name" && "$instance_name" != "-all" ]]; then
-      echo "Error: -custom requires an instance name or -all."
-      echo "Usage: $0 -custom <additional_args> <instance_name|-all>"
-      exit 1
-    fi
-  fi
-
-  # Pass to the manage_service function
-  manage_service "$action" "$instance_name" "$additional_args"
-}
-
-# Invoke the main function with all passed arguments
-main "$@"
-
-# Function to determine Docker image tag based on branch
-get_docker_image_tag() {
-  # If a beta flag file exists and POK_MANAGER_BRANCH is beta, use beta version
-  if [ -f "${BASE_DIR}/config/POK-manager/beta_mode" ] && [ "$POK_MANAGER_BRANCH" = "beta" ]; then
-    echo "2_0_beta"
-  else
-    echo "2_0_latest"
-  fi
-}
 
 # Function to set beta/stable mode
 set_beta_mode() {
@@ -2179,8 +2073,10 @@ check_beta_mode() {
   
   if [ -f "${config_dir}/beta_mode" ]; then
     POK_MANAGER_BRANCH="beta"
+    return 0  # Beta mode is enabled
   else
     POK_MANAGER_BRANCH="stable"
+    return 1  # Beta mode is not enabled
   fi
 }
 
@@ -2199,28 +2095,40 @@ upgrade_pok_manager() {
   local branch="master"
   if check_beta_mode; then
     branch="beta"
-    echo "Beta mode is enabled. Downloading from the beta branch."
   fi
   
-  # Download the latest version
-  echo "Downloading the latest version from the $branch branch..."
-  if curl -s -o "${BASE_DIR%/}/POK-manager.sh.new" "https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/$branch/POK-manager.sh"; then
-    # Make the new script executable
+  # Download the latest version from GitHub
+  echo "Downloading the latest version from GitHub ($branch branch)..."
+  if curl -s -o "${BASE_DIR%/}/POK-manager.sh.new" "https://raw.githubusercontent.com/Pok-Official/Ark-Survival-Ascended-Server/$branch/POK-manager.sh"; then
+    # Make the new file executable
     chmod +x "${BASE_DIR%/}/POK-manager.sh.new"
     
-    # Replace the current script with the new one
+    # Replace the old file with the new one
     mv "${BASE_DIR%/}/POK-manager.sh.new" "$0"
-    
-    echo "POK-manager.sh has been updated successfully."
-    echo "Please restart the script to use the new version."
-    exit 0
+    echo "Update successful. POK-manager.sh has been updated to the latest version."
   else
-    echo "Failed to download the latest version. Please try again later."
-    exit 1
+    echo "Failed to download the update. Please try again later or check your internet connection."
+    # Restore from backup if download failed
+    cp "${BASE_DIR%/}/config/POK-manager/pok-manager.backup" "$0"
+    echo "Restored from backup."
   fi
 }
 
-echo "----- Update process completed -----"
+# Define valid actions
+declare -A valid_actions
+for action in "-create" "-start" "-stop" "-saveworld" "-shutdown" "-restart" "-status" "-update" "-install" "-list" "-beta" "-stable" "-version" "-upgrade" "-console" "-logs" "-backup" "-restore" "-showconfig"; do
+  valid_actions["$action"]=1
+done
+
+# Function to get the active container tag (latest or beta)
+get_container_tag() {
+  # If a beta flag file exists and POK_MANAGER_BRANCH is beta, use beta version
+  if [ -f "${BASE_DIR}/config/POK-manager/beta_mode" ] && [ "$POK_MANAGER_BRANCH" = "beta" ]; then
+    echo "2_0_beta"
+  else
+    echo "2_0_latest"
+  fi
+}
 
 # Function to update server files and Docker images (but not the script itself)
 # This is called by the -update command
@@ -2330,24 +2238,109 @@ update_server_files_and_docker() {
   echo "----- Update process completed -----"
 }
 
-# Function to check if beta mode is enabled
-check_beta_mode() {
-  if [ -f "${BASE_DIR%/}/config/POK-manager/beta_mode" ]; then
-    return 0  # Beta mode is enabled
+main() {
+  # Check for required user and group at the start
+  check_puid_pgid_user "$PUID" "$PGID"
+  check_for_POK_updates
+  # Check if we're in beta mode
+  check_beta_mode
+  
+  if [ "$#" -lt 1 ]; then
+    display_usage
+    exit 1
+  fi
+
+  local action="$1"
+  shift # Remove the action from the argument list
+  local instance_name="${1:-}" # Default to empty if not provided
+  local additional_args="${@:2}" # Capture any additional arguments
+
+  # Check if the provided action is valid
+  if [[ ! " ${valid_actions[*]} " =~ " ${action} " ]]; then
+    echo "Invalid action '${action}'."
+    display_usage
+    exit 1
+  fi
+
+  # Special cases for beta/stable/version/upgrade commands
+  if [[ "$action" == "-beta" ]]; then
+    set_beta_mode "beta"
+    echo "POK-manager is now in beta mode. Docker images with tag '2_0_beta' will be used."
+    echo "Please restart any running containers to apply the changes."
+    exit 0
+  elif [[ "$action" == "-stable" ]]; then
+    set_beta_mode "stable"
+    echo "POK-manager is now in stable mode. Docker images with tag '2_0_latest' will be used."
+    echo "Please restart any running containers to apply the changes."
+    exit 0
+  elif [[ "$action" == "-version" ]]; then
+    display_version
+    exit 0
+  elif [[ "$action" == "-upgrade" ]]; then
+    upgrade_pok_manager
+    exit 0
+  fi
+
+  # Check if instance_name or -all is provided for actions that require it
+  if [[ "$action" =~ ^(-start|-stop|-saveworld|-status)$ ]] && [[ -z "$instance_name" ]]; then
+    echo "Error: $action requires an instance name or -all."
+    echo "Usage: $0 $action <instance_name|-all>"
+    exit 1
+  elif [[ "$action" =~ ^(-shutdown|-restart)$ ]]; then
+    if [[ -z "$instance_name" ]]; then
+      echo "Error: $action requires a timer (in minutes) and an instance name or -all."
+      echo "Usage: $0 $action <minutes> <instance_name|-all>"
+      exit 1
+    elif [[ "$instance_name" =~ ^[0-9]+$ ]]; then
+      if [[ -z "$additional_args" ]]; then
+        echo "Error: $action requires an instance name or -all after the timer."
+        echo "Usage: $0 $action <minutes> <instance_name|-all>"
+        exit 1
+      else
+        # Store the timer value separately
+        local timer="$instance_name"
+        instance_name="$additional_args"
+        additional_args=("$timer")
+      fi
+    fi
+  fi
+
+  # Special check for -chat action
+  if [[ "$action" == "-chat" ]]; then
+    if [[ "$#" -lt 2 ]]; then
+      echo "Error: -chat requires a quoted message and an instance name or -all"
+      echo "Usage: $0 -chat \"<message>\" <instance_name|-all>"
+      exit 1
+    fi
+    if [[ -z "$instance_name" ]]; then
+      echo "Error: -chat requires an instance name or -all."
+      echo "Usage: $0 -chat \"<message>\" <instance_name|-all>"
+      exit 1
+    fi
+  fi
+
+  # Special check for -custom action
+  if [[ "$action" == "-custom" ]]; then
+    if [[ -z "$instance_name" && "$instance_name" != "-all" ]]; then
+      echo "Error: -custom requires an instance name or -all."
+      echo "Usage: $0 -custom <additional_args> <instance_name|-all>"
+      exit 1
+    fi
+  fi
+
+  # Pass to the manage_service function
+  manage_service "$action" "$instance_name" "$additional_args"
+}
+
+# Function to determine Docker image tag based on branch
+get_docker_image_tag() {
+  # If a beta flag file exists and POK_MANAGER_BRANCH is beta, use beta version
+  if [ -f "${BASE_DIR}/config/POK-manager/beta_mode" ] && [ "$POK_MANAGER_BRANCH" = "beta" ]; then
+    echo "2_0_beta"
   else
-    return 1  # Beta mode is not enabled
+    echo "2_0_latest"
   fi
 }
 
-# Function to set beta mode (enable or disable)
-set_beta_mode() {
-  local mode=$1
-  if [ "$mode" = "beta" ]; then
-    echo "beta" > "${BASE_DIR%/}/config/POK-manager/beta_mode"
-    echo "POK-manager is now in beta mode. Docker images with tag '2_0_beta' will be used."
-  else
-    rm -f "${BASE_DIR%/}/config/POK-manager/beta_mode"
-    echo "POK-manager is now in stable mode. Docker images with tag '2_0_latest' will be used."
-  fi
-  echo "Please restart any running containers to apply the changes."
-}
+# Invoke the main function with all passed arguments
+main "$@"
