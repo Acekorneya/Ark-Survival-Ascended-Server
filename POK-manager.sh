@@ -2053,6 +2053,7 @@ display_version() {
 set_beta_mode() {
   local mode="$1" # "beta" or "stable"
   local config_dir="${BASE_DIR}/config/POK-manager"
+  local new_tag=""
   
   mkdir -p "$config_dir"
   
@@ -2060,11 +2061,40 @@ set_beta_mode() {
     echo "Setting POK-manager to beta mode"
     echo "beta" > "${config_dir}/beta_mode"
     POK_MANAGER_BRANCH="beta"
+    new_tag="2_0_beta"
   else
     echo "Setting POK-manager to stable mode"
     rm -f "${config_dir}/beta_mode"
     POK_MANAGER_BRANCH="stable"
+    new_tag="2_0_latest"
   fi
+  
+  # Update all docker-compose.yaml files to use the new image tag
+  echo "Updating docker-compose files for all instances to use ${new_tag} tag..."
+  
+  # Find all docker-compose.yaml files in instance directories
+  for instance_dir in "${BASE_DIR}"/Instance_*/; do
+    if [ -d "$instance_dir" ]; then
+      local instance_name=$(basename "$instance_dir" | sed 's/Instance_//')
+      local compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
+      
+      # Check if docker-compose file exists
+      if [ -f "$compose_file" ]; then
+        echo "Updating docker-compose file for instance: ${instance_name}"
+        
+        # Use sed to replace the image tag in the docker-compose file
+        # This handles both 2_0_latest and 2_0_beta tags
+        if sed -i "s/image: acekorneya\/asa_server:2_0_[a-z]*/image: acekorneya\/asa_server:${new_tag}/g" "$compose_file"; then
+          echo "Successfully updated ${compose_file}"
+        else
+          echo "Failed to update ${compose_file}"
+        fi
+      fi
+    fi
+  done
+  
+  echo "POK-manager is now in ${mode} mode. Docker images with tag '${new_tag}' will be used."
+  echo "Please restart any running containers to apply the changes."
 }
 
 # Function to check for beta mode
@@ -2334,12 +2364,8 @@ main() {
 
 # Function to determine Docker image tag based on branch
 get_docker_image_tag() {
-  # If a beta flag file exists and POK_MANAGER_BRANCH is beta, use beta version
-  if [ -f "${BASE_DIR}/config/POK-manager/beta_mode" ] && [ "$POK_MANAGER_BRANCH" = "beta" ]; then
-    echo "2_0_beta"
-  else
-    echo "2_0_latest"
-  fi
+  # Use the get_container_tag function for consistency
+  get_container_tag
 }
 
 # Invoke the main function with all passed arguments
