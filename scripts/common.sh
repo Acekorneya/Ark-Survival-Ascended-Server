@@ -13,6 +13,7 @@ PID_FILE="/home/pok/${INSTANCE_NAME}_ark_server.pid"
 RCON_HOST="localhost"
 RCON_PORT=${RCON_PORT} # Default RCON port if not set in docker-compose
 RCON_PASSWORD=${SERVER_ADMIN_PASSWORD} # Server admin password used as RCON password
+RCON_PATH="/usr/local/bin/rcon-cli" # Path to the RCON executable (installed in Dockerfile)
 export STEAM_COMPAT_DATA_PATH=${STEAM_COMPAT_DATA_PATH}
 export STEAM_COMPAT_CLIENT_INSTALL_PATH=${STEAM_COMPAT_CLIENT_INSTALL_PATH}
 
