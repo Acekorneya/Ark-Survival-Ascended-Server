@@ -467,6 +467,7 @@ check_vm_max_map_count() {
 check_puid_pgid_user() {
   local puid="$1"
   local pgid="$2"
+  local original_command="$3"  # This contains the original command (e.g., "-stop -all")
   local legacy_puid=1000
   local legacy_pgid=1000
 
@@ -503,16 +504,16 @@ check_puid_pgid_user() {
         local possible_users=$(getent passwd "$dir_uid" | cut -d: -f1)
         if [ -n "$possible_users" ]; then
           echo "   Switch to user '$possible_users' with: su - $possible_users"
-          echo "   Then run: ./POK-manager.sh $*"
+          echo "   Then run: ./POK-manager.sh $original_command"
         else
           echo "   (No user with UID $dir_uid was found on this system)"
         fi
         echo ""
         echo "2. Continue using 1000:1000 (backward compatibility mode):"
-        echo "   Run your commands with environment variables: CONTAINER_PUID=1000 CONTAINER_PGID=1000 ./POK-manager.sh $*"
+        echo "   Run your commands with environment variables: CONTAINER_PUID=1000 CONTAINER_PGID=1000 ./POK-manager.sh $original_command"
         echo ""
         echo "3. Run with sudo to bypass permission checks (not recommended for regular use):"
-        echo "   sudo ./POK-manager.sh $*"
+        echo "   sudo ./POK-manager.sh $original_command"
         echo ""
         echo "4. Migrate to the new ${PUID}:${PGID} user (recommended for new setups):"
         echo "   Run this command to change ownership of your files:"
@@ -531,16 +532,16 @@ check_puid_pgid_user() {
       local possible_users=$(getent passwd "$dir_uid" | cut -d: -f1)
       if [ -n "$possible_users" ]; then
         echo "   Switch to user '$possible_users' with: su - $possible_users"
-        echo "   Then run: ./POK-manager.sh $*"
+        echo "   Then run: ./POK-manager.sh $original_command"
       else
         echo "   (No user with UID $dir_uid was found on this system)"
       fi
       echo ""
       echo "2. Use specific PUID/PGID to match your file ownership:"
-      echo "   CONTAINER_PUID=${dir_uid} CONTAINER_PGID=${dir_gid} ./POK-manager.sh $*"
+      echo "   CONTAINER_PUID=${dir_uid} CONTAINER_PGID=${dir_gid} ./POK-manager.sh $original_command"
       echo ""
       echo "3. Run with sudo to bypass permission checks (not recommended for regular use):"
-      echo "   sudo ./POK-manager.sh $*"
+      echo "   sudo ./POK-manager.sh $original_command"
       echo ""
       echo "4. Change file ownership to match your current user:"
       echo "   sudo chown -R ${current_uid}:${current_gid} ${BASE_DIR}/ServerFiles ${BASE_DIR}/Instance_* ${BASE_DIR}/Cluster"
@@ -564,16 +565,16 @@ check_puid_pgid_user() {
     echo "You have these options:"
     echo ""
     echo "1. Specify container user values to match your current user:"
-    echo "   CONTAINER_PUID=${current_uid} CONTAINER_PGID=${current_gid} ./POK-manager.sh $*"
+    echo "   CONTAINER_PUID=${current_uid} CONTAINER_PGID=${current_gid} ./POK-manager.sh $original_command"
     echo ""
     echo "2. Run with sudo to bypass permission checks (not recommended for regular use):"
-    echo "   sudo ./POK-manager.sh $*"
+    echo "   sudo ./POK-manager.sh $original_command"
     echo ""
     echo "3. Create a user with the correct UID/GID:"
     echo "   sudo groupadd -g ${puid} pokuser"
     echo "   sudo useradd -u ${puid} -g ${pgid} -m -s /bin/bash pokuser"
     echo "   sudo su - pokuser"
-    echo "   cd $(pwd) && ./POK-manager.sh $*"
+    echo "   cd $(pwd) && ./POK-manager.sh $original_command"
     echo ""
     exit 1
   fi
@@ -2584,11 +2585,19 @@ update_server_files_and_docker() {
 }
 
 main() {
-  # Save original arguments for passing to permission check
-  local original_args="$*"
+  # Extract the command portion without PUID/PGID
+  local command_args=""
+  
+  # Skip the script name in $0
+  for arg in "$@"; do
+    command_args="${command_args} ${arg}"
+  done
+  
+  # Remove leading space
+  command_args="${command_args# }"
   
   # Check for required user and group at the start
-  check_puid_pgid_user "$PUID" "$PGID" "$original_args"
+  check_puid_pgid_user "$PUID" "$PGID" "$command_args"
   check_for_POK_updates
   # Check if we're in beta mode
   check_beta_mode
