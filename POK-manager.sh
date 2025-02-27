@@ -481,36 +481,100 @@ check_puid_pgid_user() {
   local current_user=$(id -un)
 
   # Check for existing directories that might be owned by legacy PUID:PGID
-  if [ -d "${BASE_DIR}/ServerFiles/arkserver" ] && [ "$(stat -c '%u:%g' ${BASE_DIR}/ServerFiles/arkserver)" = "${legacy_puid}:${legacy_pgid}" ]; then
-    echo "⚠️ DETECTED LEGACY CONFIGURATION: Your server files are owned by the old default UID:GID (1000:1000)"
-    echo "The default container user has changed to ${PUID}:${PGID} for better compatibility with Linux distributions."
-    echo "You have two options:"
-    echo ""
-    echo "1. Continue using 1000:1000 (backward compatibility mode):"
-    echo "   Run your commands with environment variables: CONTAINER_PUID=1000 CONTAINER_PGID=1000 ./POK-manager.sh ..."
-    echo ""
-    echo "2. Migrate to the new ${PUID}:${PGID} user (recommended for new setups):"
-    echo "   Run this command to change ownership of your files:"
-    echo "   sudo chown -R ${PUID}:${PGID} ${BASE_DIR}/ServerFiles ${BASE_DIR}/Instance_* ${BASE_DIR}/Cluster"
-    echo ""
+  if [ -d "${BASE_DIR}/ServerFiles/arkserver" ]; then
+    # Get the actual ownership of the directory
+    local dir_ownership="$(stat -c '%u:%g' ${BASE_DIR}/ServerFiles/arkserver)"
+    local dir_uid=$(echo "$dir_ownership" | cut -d: -f1)
+    local dir_gid=$(echo "$dir_ownership" | cut -d: -f2)
     
-    # Set PUID/PGID to legacy values for this execution if existing directories use legacy values
-    if [ "${puid}" != "${legacy_puid}" ] || [ "${pgid}" != "${legacy_pgid}" ]; then
-      echo "For this execution, we'll use legacy values (1000:1000) to match your existing files."
-      PUID=${legacy_puid}
-      PGID=${legacy_pgid}
+    # Inform about detected file ownership
+    if [ "$dir_ownership" = "${legacy_puid}:${legacy_pgid}" ]; then
+      echo "⚠️ DETECTED LEGACY CONFIGURATION: Your server files are owned by the old default UID:GID (1000:1000)"
+      echo "The default container user has changed to ${PUID}:${PGID} for better compatibility with Linux distributions."
+      
+      # Check if current UID/GID matches neither current nor legacy settings
+      if [ "${current_uid}" -ne "${puid}" ] && [ "${current_uid}" -ne "${legacy_puid}" ]; then
+        echo "⚠️ PERMISSION MISMATCH: Your files are owned by ${dir_uid}:${dir_gid} but you're running as ${current_uid}:${current_gid}"
+        echo "This will likely cause permission errors when accessing server files."
+        echo ""
+        echo "You have these options:"
+        echo ""
+        echo "1. Run the script with the correct user:"
+        local possible_users=$(getent passwd "$dir_uid" | cut -d: -f1)
+        if [ -n "$possible_users" ]; then
+          echo "   Switch to user '$possible_users' with: su - $possible_users"
+          echo "   Then run: ./POK-manager.sh $*"
+        else
+          echo "   (No user with UID $dir_uid was found on this system)"
+        fi
+        echo ""
+        echo "2. Continue using 1000:1000 (backward compatibility mode):"
+        echo "   Run your commands with environment variables: CONTAINER_PUID=1000 CONTAINER_PGID=1000 ./POK-manager.sh $*"
+        echo ""
+        echo "3. Run with sudo to bypass permission checks (not recommended for regular use):"
+        echo "   sudo ./POK-manager.sh $*"
+        echo ""
+        echo "4. Migrate to the new ${PUID}:${PGID} user (recommended for new setups):"
+        echo "   Run this command to change ownership of your files:"
+        echo "   sudo chown -R ${PUID}:${PGID} ${BASE_DIR}/ServerFiles ${BASE_DIR}/Instance_* ${BASE_DIR}/Cluster"
+        echo ""
+        exit 1
+      fi
+    elif [ "${current_uid}" -ne "${puid}" ] && [ "${current_uid}" -ne "${dir_uid}" ]; then
+      # File ownership doesn't match legacy, but also doesn't match current user
+      echo "⚠️ PERMISSION MISMATCH: Your files are owned by ${dir_uid}:${dir_gid} but you're running as ${current_uid}:${current_gid}"
+      echo "This will likely cause permission errors when accessing server files."
+      echo ""
+      echo "You have these options:"
+      echo ""
+      echo "1. Run the script with the correct user:"
+      local possible_users=$(getent passwd "$dir_uid" | cut -d: -f1)
+      if [ -n "$possible_users" ]; then
+        echo "   Switch to user '$possible_users' with: su - $possible_users"
+        echo "   Then run: ./POK-manager.sh $*"
+      else
+        echo "   (No user with UID $dir_uid was found on this system)"
+      fi
+      echo ""
+      echo "2. Use specific PUID/PGID to match your file ownership:"
+      echo "   CONTAINER_PUID=${dir_uid} CONTAINER_PGID=${dir_gid} ./POK-manager.sh $*"
+      echo ""
+      echo "3. Run with sudo to bypass permission checks (not recommended for regular use):"
+      echo "   sudo ./POK-manager.sh $*"
+      echo ""
+      echo "4. Change file ownership to match your current user:"
+      echo "   sudo chown -R ${current_uid}:${current_gid} ${BASE_DIR}/ServerFiles ${BASE_DIR}/Instance_* ${BASE_DIR}/Cluster"
+      echo ""
+      exit 1
+    fi
+    
+    # Set PUID/PGID to match existing directories for this execution
+    if [ "${puid}" != "${dir_uid}" ] || [ "${pgid}" != "${dir_gid}" ]; then
+      echo "For this execution, we'll use values (${dir_uid}:${dir_gid}) to match your existing files."
+      PUID=${dir_uid}
+      PGID=${dir_gid}
       return
     fi
   fi
 
   if [ "${current_uid}" -ne "${puid}" ] || [ "${current_gid}" -ne "${pgid}" ]; then
-    echo "You are not running the script as the user with the correct PUID (${puid}) and PGID (${pgid})."
+    echo "⚠️ PERMISSION MISMATCH: You are not running the script as the user with the correct PUID (${puid}) and PGID (${pgid})."
     echo "Your current user '${current_user}' has UID ${current_uid} and GID ${current_gid}."
-    echo "Please switch to the correct user or update your current user's UID and GID to match the required values."
-    echo "Alternatively, you can run the script with sudo to bypass this check: sudo ./POK-manager.sh <commands>"
     echo ""
-    echo "Or specify different container user values with environment variables:"
-    echo "CONTAINER_PUID=<your_uid> CONTAINER_PGID=<your_gid> ./POK-manager.sh <commands>"
+    echo "You have these options:"
+    echo ""
+    echo "1. Specify container user values to match your current user:"
+    echo "   CONTAINER_PUID=${current_uid} CONTAINER_PGID=${current_gid} ./POK-manager.sh $*"
+    echo ""
+    echo "2. Run with sudo to bypass permission checks (not recommended for regular use):"
+    echo "   sudo ./POK-manager.sh $*"
+    echo ""
+    echo "3. Create a user with the correct UID/GID:"
+    echo "   sudo groupadd -g ${puid} pokuser"
+    echo "   sudo useradd -u ${puid} -g ${pgid} -m -s /bin/bash pokuser"
+    echo "   sudo su - pokuser"
+    echo "   cd $(pwd) && ./POK-manager.sh $*"
+    echo ""
     exit 1
   fi
 }
@@ -1058,11 +1122,81 @@ start_instance() {
   local image_tag=$(get_docker_image_tag)
   
   echo "-----Starting ${instance_name} Server with image tag ${image_tag}-----"
+  
+  # First check if the docker-compose file exists
+  if [ ! -f "$docker_compose_file" ]; then
+    echo "❌ ERROR: Docker Compose file not found at $docker_compose_file"
+    echo "Make sure the instance ${instance_name} exists and is properly configured."
+    exit 1
+  fi
+  
+  # Check permission issues with the compose file
+  if [ ! -r "$docker_compose_file" ]; then
+    echo "❌ ERROR: Cannot read the Docker Compose file due to permission issues."
+    echo "Current user: $(id -un) (UID:$(id -u), GID:$(id -g))"
+    echo "File owner: $(stat -c '%U:%G' "$docker_compose_file")"
+    echo ""
+    echo "You can fix this by:"
+    echo "1. Running with the correct user who owns the files:"
+    local file_owner=$(stat -c '%u' "$docker_compose_file")
+    local possible_users=$(getent passwd "$file_owner" | cut -d: -f1)
+    if [ -n "$possible_users" ]; then
+      echo "   - Switch to user '$possible_users' with: su - $possible_users"
+      echo "   - Then run: ./POK-manager.sh -start $instance_name"
+    fi
+    echo ""
+    echo "2. Running with sudo:"
+    echo "   sudo ./POK-manager.sh -start $instance_name"
+    echo ""
+    echo "3. Changing file ownership to match your current user:"
+    echo "   sudo chown -R $(id -u):$(id -g) ./Instance_${instance_name}"
+    exit 1
+  fi
+  
+  # Check for PUID/PGID settings in the compose file
+  local compose_puid=$(grep -o "PUID=[0-9]*" "$docker_compose_file" | head -1 | awk -F= '{print $2}')
+  local compose_pgid=$(grep -o "PGID=[0-9]*" "$docker_compose_file" | head -1 | awk -F= '{print $2}')
+  
+  # Check if the PUID/PGID in the compose file are commented out
+  if grep -q "^[[:space:]]*#[[:space:]]*-[[:space:]]*PUID=" "$docker_compose_file" || grep -q "^[[:space:]]*#[[:space:]]*-[[:space:]]*PGID=" "$docker_compose_file"; then
+    echo "⚠️ WARNING: PUID/PGID settings are commented out in your Docker Compose file."
+    echo "This may cause permission issues. Consider uncommenting them."
+    echo ""
+  fi
+  
+  # If not running as sudo, check for permission mismatches
+  if ! is_sudo; then
+    # Get the server files directory for this instance
+    local instance_dir="./Instance_${instance_name}"
+    
+    if [ -d "$instance_dir" ]; then
+      local dir_ownership="$(stat -c '%u:%g' "$instance_dir")"
+      local dir_uid=$(echo "$dir_ownership" | cut -d: -f1)
+      local dir_gid=$(echo "$dir_ownership" | cut -d: -f2)
+      local current_uid=$(id -u)
+      local current_gid=$(id -g)
+      
+      # Check if the current user's UID/GID don't match the directory ownership
+      if [ "$current_uid" -ne "$dir_uid" ] || [ "$current_gid" -ne "$dir_gid" ]; then
+        echo "⚠️ WARNING: Your current user (UID:$current_uid, GID:$current_gid) doesn't match the instance directory ownership (UID:$dir_uid, GID:$dir_gid)."
+        echo "This may cause permission issues when starting or accessing the server."
+        echo ""
+      fi
+      
+      # Check if compose PUID/PGID don't match the directory ownership
+      if [ -n "$compose_puid" ] && [ -n "$compose_pgid" ] && ([ "$compose_puid" -ne "$dir_uid" ] || [ "$compose_pgid" -ne "$dir_gid" ]); then
+        echo "⚠️ WARNING: The PUID/PGID in your Docker Compose file ($compose_puid:$compose_pgid) don't match the instance directory ownership ($dir_uid:$dir_gid)."
+        echo "This may cause permission issues with server files."
+        echo ""
+      fi
+    fi
+  fi
+  
+  get_docker_compose_cmd
+  echo "Using $DOCKER_COMPOSE_CMD for ${instance_name}..."
+  
+  # Rest of the existing function
   if [ -f "$docker_compose_file" ]; then
-    get_docker_compose_cmd
-    echo "Using $DOCKER_COMPOSE_CMD for ${instance_name}..."
-    docker pull acekorneya/asa_server:${image_tag}
-    $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d
     local use_sudo
     local config_file=$(get_config_file_path)
     if [ -f "$config_file" ]; then
@@ -1073,9 +1207,17 @@ start_instance() {
     
     if [ "$use_sudo" = "true" ]; then
       echo "Using 'sudo' for Docker commands..."
-      sudo docker pull acekorneya/asa_server:${image_tag}
+      sudo docker pull acekorneya/asa_server:${image_tag} || {
+        echo "❌ ERROR: Failed to pull the Docker image. Check your internet connection and Docker configuration."
+        exit 1
+      }
       check_vm_max_map_count
-      sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d
+      sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d || {
+        echo "❌ ERROR: Failed to start the server container."
+        echo "Check the Docker Compose file and ensure Docker is correctly configured."
+        echo "You can view more detailed logs with: sudo $DOCKER_COMPOSE_CMD -f \"$docker_compose_file\" logs"
+        exit 1
+      }
     else
       docker pull acekorneya/asa_server:${image_tag} || {
         local pull_exit_code=$?
@@ -1083,25 +1225,46 @@ start_instance() {
           echo "Permission denied error occurred while pulling the Docker image."
           echo "It seems the user is not set up correctly to run Docker commands without 'sudo'."
           echo "Falling back to using 'sudo' for Docker commands."
-          sudo docker pull acekorneya/asa_server:${image_tag}
+          echo "To grant your user permission to run Docker commands, run:"
+          echo "   sudo usermod -aG docker $(id -un)"
+          echo "Then log out and back in for changes to take effect."
+          sudo docker pull acekorneya/asa_server:${image_tag} || {
+            echo "❌ ERROR: Failed to pull the Docker image even with sudo. Check your internet connection and Docker configuration."
+            exit 1
+          }
           check_vm_max_map_count
-          sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d
+          sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d || {
+            echo "❌ ERROR: Failed to start the server container."
+            exit 1
+          }
         else
-          echo "An error occurred while pulling the Docker image:"
-          echo "$(docker pull acekorneya/asa_server:${image_tag} 2>&1)"
+          echo "Failed to pull the Docker image. Please check your Docker configuration."
+          exit 1
+        fi
+      }
+      
+      check_vm_max_map_count
+      $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d || {
+        local compose_exit_code=$?
+        if [ $compose_exit_code -eq 1 ] && [[ $($DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d 2>&1) =~ "permission denied" ]]; then
+          echo "Permission denied error occurred while starting the container."
+          echo "Falling back to using 'sudo'."
+          sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d || {
+            echo "❌ ERROR: Failed to start the server container even with sudo."
+            exit 1
+          }
+        else
+          echo "❌ ERROR: Failed to start the server container."
+          echo "Check the Docker Compose file and ensure Docker is correctly configured."
           exit 1
         fi
       }
     fi
     
-    echo "-----Server Started for ${instance_name} -----"
-    echo "You can check the status of your server by running -status -all or -status ${instance_name}."
-    if [ $? -ne 0 ]; then
-      echo "Failed to start ${instance_name} using Docker Compose."
-      exit 1
-    fi
+    echo "✅ Server ${instance_name} started successfully with image tag ${image_tag}."
+    echo "You can view logs with: ./POK-manager.sh -logs ${instance_name}"
   else
-    echo "Docker compose file for ${instance_name} does not exist. Please create it first."
+    echo "❌ ERROR: Docker Compose file not found for instance ${instance_name}."
     exit 1
   fi
 }
@@ -2421,8 +2584,11 @@ update_server_files_and_docker() {
 }
 
 main() {
+  # Save original arguments for passing to permission check
+  local original_args="$*"
+  
   # Check for required user and group at the start
-  check_puid_pgid_user "$PUID" "$PGID"
+  check_puid_pgid_user "$PUID" "$PGID" "$original_args"
   check_for_POK_updates
   # Check if we're in beta mode
   check_beta_mode
