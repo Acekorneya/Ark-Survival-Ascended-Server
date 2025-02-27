@@ -710,9 +710,9 @@ services:
     environment:
       - INSTANCE_NAME=${instance_name}
       - TZ=$TZ
-      # User/Group settings - Default is 7777:7777, uncomment to override
-      - PUID=${PUID}                          # User ID for container processes and file ownership
-      - PGID=${PGID}                          # Group ID for container processes and file ownership
+      # User/Group settings - Default is now 7777:7777, use 1000:1000 for legacy compatibility
+      # - PUID=7777                          # User ID for container processes and file ownership
+      # - PGID=7777                          # Group ID for container processes and file ownership
 EOF
 
   # Iterate over the config_order to maintain the order in Docker Compose
@@ -2121,16 +2121,22 @@ set_beta_mode() {
         # Update the image tag
         if [[ "$line" =~ image:[[:space:]]*acekorneya/asa_server:2_0_ ]]; then
           echo "    image: acekorneya/asa_server:${new_tag}" >> "$tmp_file"
-        # Update or add PUID/PGID if commented out
+        # For PUID and PGID handling:
+        # 1. If they're already defined and not commented, keep the existing values for backward compatibility
+        # 2. If they're commented out, leave them commented out for backward compatibility
+        # 3. This ensures we don't modify any existing PUID/PGID settings
         elif [[ "$line" =~ ^[[:space:]]*#[[:space:]]*-[[:space:]]*PUID= ]]; then
-          echo "      - PUID=${PUID}                          # User ID for container processes and file ownership" >> "$tmp_file"
+          # Keep commented PUID lines as they are
+          echo "$line" >> "$tmp_file"
         elif [[ "$line" =~ ^[[:space:]]*#[[:space:]]*-[[:space:]]*PGID= ]]; then
-          echo "      - PGID=${PGID}                          # Group ID for container processes and file ownership" >> "$tmp_file"
-        # Keep any existing PUID/PGID lines if not commented
+          # Keep commented PGID lines as they are
+          echo "$line" >> "$tmp_file"
         elif [[ "$line" =~ ^[[:space:]]*-[[:space:]]*PUID= ]]; then
-          echo "      - PUID=${PUID}                          # User ID for container processes and file ownership" >> "$tmp_file"
+          # Keep existing uncommented PUID lines as they are
+          echo "$line" >> "$tmp_file"
         elif [[ "$line" =~ ^[[:space:]]*-[[:space:]]*PGID= ]]; then
-          echo "      - PGID=${PGID}                          # Group ID for container processes and file ownership" >> "$tmp_file"
+          # Keep existing uncommented PGID lines as they are
+          echo "$line" >> "$tmp_file"
         else
           # Keep other lines unchanged
           echo "$line" >> "$tmp_file"
@@ -2158,16 +2164,25 @@ set_beta_mode() {
         fi
       fi
       
-      # Verify the PUID/PGID settings
-      if grep -q "PUID=${PUID}" "$compose_file" && grep -q "PGID=${PGID}" "$compose_file"; then
-        echo "Verified: PUID/PGID values updated in ${compose_file}"
-      else
-        echo "Warning: Could not verify PUID/PGID values in ${compose_file}"
-      fi
+      # Don't verify PUID/PGID as we're preserving the existing values
     done
   fi
   
   echo "POK-manager is now in ${mode} mode. Docker images with tag '${new_tag}' will be used."
+  
+  # Provide information about PUID/PGID settings
+  local legacy_puid=1000
+  local legacy_pgid=1000
+  
+  if [ "${PUID}" = "${legacy_puid}" ] && [ "${PGID}" = "${legacy_pgid}" ]; then
+    echo "Running in legacy compatibility mode with PUID:PGID=${PUID}:${PGID}"
+    echo "Docker Compose files will maintain existing PUID/PGID settings."
+  else
+    echo "Using PUID:PGID=${PUID}:${PGID}"
+    echo "Docker Compose files will maintain their existing PUID/PGID settings for backward compatibility."
+    echo "New instances will use the commented out PUID/PGID values by default."
+  fi
+  
   echo "Please restart any running containers to apply the changes."
 }
 
