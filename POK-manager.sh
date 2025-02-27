@@ -434,14 +434,14 @@ adjust_ownership_and_permissions() {
   if [ ! -d "$dir" ]; then
     echo "Creating directory: $dir"
     mkdir -p "$dir"
-    chown 1000:1000 "$dir"
+    chown $PUID:$PGID "$dir"
     chmod 755 "$dir"
   fi
 
   echo "Checking and adjusting ownership and permissions for $dir..."
-  find "$dir" -type d -exec chown 1000:1000 {} \;
+  find "$dir" -type d -exec chown $PUID:$PGID {} \;
   find "$dir" -type d -exec chmod 755 {} \;
-  find "$dir" -type f -exec chown 1000:1000 {} \;
+  find "$dir" -type f -exec chown $PUID:$PGID {} \;
   find "$dir" -type f -exec chmod 644 {} \;
 
   # Set executable bit for POK-manager.sh
@@ -509,15 +509,11 @@ check_puid_pgid_user() {
           echo "   (No user with UID $dir_uid was found on this system)"
         fi
         echo ""
-        echo "2. Continue using 1000:1000 (backward compatibility mode):"
-        echo "   Run your commands with environment variables: CONTAINER_PUID=1000 CONTAINER_PGID=1000 ./POK-manager.sh $original_command"
-        echo ""
-        echo "3. Run with sudo to bypass permission checks (not recommended for regular use):"
+        echo "2. Run with sudo to bypass permission checks:"
         echo "   sudo ./POK-manager.sh $original_command"
         echo ""
-        echo "4. Migrate to the new ${PUID}:${PGID} user (recommended for new setups):"
-        echo "   Run this command to change ownership of your files:"
-        echo "   sudo chown -R ${PUID}:${PGID} ${BASE_DIR}/ServerFiles ${BASE_DIR}/Instance_* ${BASE_DIR}/Cluster"
+        echo "3. Change file ownership to match your current user:"
+        echo "   sudo chown -R ${current_uid}:${current_gid} ${BASE_DIR}/ServerFiles ${BASE_DIR}/Instance_* ${BASE_DIR}/Cluster"
         echo ""
         exit 1
       fi
@@ -537,13 +533,10 @@ check_puid_pgid_user() {
         echo "   (No user with UID $dir_uid was found on this system)"
       fi
       echo ""
-      echo "2. Use specific PUID/PGID to match your file ownership:"
-      echo "   CONTAINER_PUID=${dir_uid} CONTAINER_PGID=${dir_gid} ./POK-manager.sh $original_command"
-      echo ""
-      echo "3. Run with sudo to bypass permission checks (not recommended for regular use):"
+      echo "2. Run with sudo to bypass permission checks:"
       echo "   sudo ./POK-manager.sh $original_command"
       echo ""
-      echo "4. Change file ownership to match your current user:"
+      echo "3. Change file ownership to match your current user:"
       echo "   sudo chown -R ${current_uid}:${current_gid} ${BASE_DIR}/ServerFiles ${BASE_DIR}/Instance_* ${BASE_DIR}/Cluster"
       echo ""
       exit 1
@@ -564,17 +557,24 @@ check_puid_pgid_user() {
     echo ""
     echo "You have these options:"
     echo ""
-    echo "1. Specify container user values to match your current user:"
-    echo "   CONTAINER_PUID=${current_uid} CONTAINER_PGID=${current_gid} ./POK-manager.sh $original_command"
-    echo ""
-    echo "2. Run with sudo to bypass permission checks (not recommended for regular use):"
+    echo "1. Run with sudo to bypass permission checks:"
     echo "   sudo ./POK-manager.sh $original_command"
     echo ""
-    echo "3. Create a user with the correct UID/GID:"
-    echo "   sudo groupadd -g ${puid} pokuser"
-    echo "   sudo useradd -u ${puid} -g ${pgid} -m -s /bin/bash pokuser"
-    echo "   sudo su - pokuser"
-    echo "   cd $(pwd) && ./POK-manager.sh $original_command"
+    echo "2. Change file ownership to match your current user:"
+    echo "   sudo chown -R ${current_uid}:${current_gid} ${BASE_DIR}/ServerFiles ${BASE_DIR}/Instance_* ${BASE_DIR}/Cluster"
+    echo ""
+    echo "3. Switch to a user with the correct UID/GID:"
+    local possible_users=$(getent passwd "$puid" | cut -d: -f1)
+    if [ -n "$possible_users" ]; then
+      echo "   Switch to user '$possible_users' with: su - $possible_users"
+      echo "   Then run: ./POK-manager.sh $original_command"
+    else
+      echo "   Or create a user with the correct UID/GID:"
+      echo "   sudo groupadd -g ${puid} pokuser"
+      echo "   sudo useradd -u ${puid} -g ${pgid} -m -s /bin/bash pokuser"
+      echo "   sudo su - pokuser"
+      echo "   cd $(pwd) && ./POK-manager.sh $original_command"
+    fi
     echo ""
     exit 1
   fi
@@ -593,14 +593,14 @@ copy_default_configs() {
   if [ ! -f "${config_dir}/GameUserSettings.ini" ]; then
     echo "Copying default GameUserSettings.ini"
     cp ./defaults/GameUserSettings.ini "$config_dir"
-    chown 1000:1000 "${config_dir}/GameUserSettings.ini"
+    chown $PUID:$PGID "${config_dir}/GameUserSettings.ini"
   fi
 
   # Copy Game.ini if it does not exist
   if [ ! -f "${config_dir}/Game.ini" ]; then
     echo "Copying default Game.ini"
     cp ./defaults/Game.ini "$config_dir"
-    chown 1000:1000 "${config_dir}/Game.ini"
+    chown $PUID:$PGID "${config_dir}/Game.ini"
   fi
 }
 
