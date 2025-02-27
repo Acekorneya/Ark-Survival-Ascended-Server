@@ -2014,7 +2014,9 @@ manage_service() {
     ;;
   esac
 }
-valid_actions=("-list" "-edit" "-setup" "-create" "-start" "-stop" "-shutdown" "-update" "-status" "-restart" "-saveworld" "-chat" "-custom" "-backup" "-restore" "-logs" "-beta" "-stable" "-version" "-upgrade")
+# Define valid actions
+declare -a valid_actions
+valid_actions=("-create" "-start" "-stop" "-saveworld" "-shutdown" "-restart" "-status" "-update" "-install" "-list" "-beta" "-stable" "-version" "-upgrade" "-console" "-logs" "-backup" "-restore" "-showconfig")
 
 display_usage() {
   echo "Usage: $0 {action} [instance_name|-all] [additional_args...]"
@@ -2143,12 +2145,6 @@ upgrade_pok_manager() {
     echo "Restored from backup."
   fi
 }
-
-# Define valid actions
-declare -A valid_actions
-for action in "-create" "-start" "-stop" "-saveworld" "-shutdown" "-restart" "-status" "-update" "-install" "-list" "-beta" "-stable" "-version" "-upgrade" "-console" "-logs" "-backup" "-restore" "-showconfig"; do
-  valid_actions["$action"]=1
-done
 
 # Function to get the active container tag (latest or beta)
 get_container_tag() {
@@ -2286,7 +2282,15 @@ main() {
   local additional_args="${@:2}" # Capture any additional arguments
 
   # Check if the provided action is valid
-  if [[ ! " ${valid_actions[*]} " =~ " ${action} " ]]; then
+  local is_valid=false
+  for valid_action in "${valid_actions[@]}"; do
+    if [[ "$action" == "$valid_action" ]]; then
+      is_valid=true
+      break
+    fi
+  done
+  
+  if [[ "$is_valid" == "false" ]]; then
     echo "Invalid action '${action}'."
     display_usage
     exit 1
@@ -2295,13 +2299,9 @@ main() {
   # Special cases for beta/stable/version/upgrade commands
   if [[ "$action" == "-beta" ]]; then
     set_beta_mode "beta"
-    echo "POK-manager is now in beta mode. Docker images with tag '2_0_beta' will be used."
-    echo "Please restart any running containers to apply the changes."
     exit 0
   elif [[ "$action" == "-stable" ]]; then
     set_beta_mode "stable"
-    echo "POK-manager is now in stable mode. Docker images with tag '2_0_latest' will be used."
-    echo "Please restart any running containers to apply the changes."
     exit 0
   elif [[ "$action" == "-version" ]]; then
     display_version
