@@ -151,11 +151,6 @@ To schedule automatic restarts using cron, add an entry to your crontab file. He
 #### Custom RCON Commands
 You can execute custom RCON commands using the `-custom` flag followed by the command and the instance name or `-all` for all instances. Here are a few examples:
 
-- Broadcast a message to all players on a specific instance:
-  ```bash
-  ./POK-manager.sh -custom "broadcast Hello, players!" my_instance
-  ```
-
 - List all players on all instances:
   ```bash
   ./POK-manager.sh -custom "listplayers" -all
@@ -165,6 +160,13 @@ You can execute custom RCON commands using the `-custom` flag followed by the co
   ```bash
   ./POK-manager.sh -custom "giveitem \"Blueprint'/Game/Mods/ArkModularWeapon/Weapons/IronSword/PrimalItem_IronSword.PrimalItem_IronSword'\" 1 0 0" my_instance
   ```
+
+- Send a message to all players on a specific instance (using chat):
+  ```bash
+  ./POK-manager.sh -chat "Hello, players!" my_instance
+  ```
+
+> **Note:** Ark Survival Ascended (ASA) RCON commands are different from Ark Survival Evolved (ASE). Many commands from ASE are not supported in ASA or have different syntax. For example, the `broadcast` command doesn't work in ASA; instead, use `-chat` which implements the `ServerChat` command. The available commands in ASA are limited and finding working commands often requires trial and error. When using `-custom`, be prepared to experiment with different command formats.
 
 #### Scheduling Automatic Tasks with Cron
 
@@ -396,7 +398,7 @@ We Also have Ark Servers for people who dont have the requirements to host a ful
 - Flyer Carry Enabled: Explore the skies with your tamed creatures.
 - Official Server Rates: Balanced gameplay for an enjoyable experience.
 - Always Updated and Events run on time of released
-- Active Mods: We’re here to assist you whenever you need it.
+- Active Mods: We're here to assist you whenever you need it.
 - Discord Community: Connect with our community and stay updated.
 - NO CRYPOD RESTRICTION USE THEM ANYWHERE!..
 
