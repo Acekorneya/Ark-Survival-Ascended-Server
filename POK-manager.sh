@@ -481,6 +481,12 @@ check_puid_pgid_user() {
   local current_gid=$(id -g)
   local current_user=$(id -un)
 
+  # Display important information about container permissions
+  echo "ℹ️ INFORMATION: The default container user changed from 1000:1000 to 7777:7777 in version 2.1+"
+  echo "This change improves compatibility with most Linux distributions that use 1000:1000 for the first user."
+  echo "For best results, server files should be owned by user with UID:GID matching the container settings."
+  echo ""
+  
   # Check for existing directories that might be owned by legacy PUID:PGID
   if [ -d "${BASE_DIR}/ServerFiles/arkserver" ]; then
     # Get the actual ownership of the directory
@@ -491,12 +497,11 @@ check_puid_pgid_user() {
     # Inform about detected file ownership
     if [ "$dir_ownership" = "${legacy_puid}:${legacy_pgid}" ]; then
       echo "⚠️ DETECTED LEGACY CONFIGURATION: Your server files are owned by the old default UID:GID (1000:1000)"
-      echo "The default container user has changed to ${PUID}:${PGID} for better compatibility with Linux distributions."
       
       # Check if current UID/GID matches neither current nor legacy settings
       if [ "${current_uid}" -ne "${puid}" ] && [ "${current_uid}" -ne "${legacy_puid}" ]; then
         echo "⚠️ PERMISSION MISMATCH: Your files are owned by ${dir_uid}:${dir_gid} but you're running as ${current_uid}:${current_gid}"
-        echo "This will likely cause permission errors when accessing server files."
+        echo "This will likely cause permission issues between the host and container for save data and server files."
         echo ""
         echo "You have these options:"
         echo ""
@@ -511,16 +516,22 @@ check_puid_pgid_user() {
         echo ""
         echo "2. Run with sudo to bypass permission checks:"
         echo "   sudo ./POK-manager.sh $original_command"
+        echo "   (This works but isn't ideal for regular use)"
         echo ""
-        echo "3. Change file ownership to match your current user:"
+        echo "3. Update file ownership to the new default (7777:7777):"
+        echo "   sudo chown -R 7777:7777 ${BASE_DIR}/ServerFiles ${BASE_DIR}/Instance_* ${BASE_DIR}/Cluster"
+        echo "   (Recommended for new setups to match container defaults)"
+        echo ""
+        echo "4. Change file ownership to match your current user:"
         echo "   sudo chown -R ${current_uid}:${current_gid} ${BASE_DIR}/ServerFiles ${BASE_DIR}/Instance_* ${BASE_DIR}/Cluster"
+        echo "   (Then update docker-compose files to use your UID:GID)"
         echo ""
         exit 1
       fi
     elif [ "${current_uid}" -ne "${puid}" ] && [ "${current_uid}" -ne "${dir_uid}" ]; then
       # File ownership doesn't match legacy, but also doesn't match current user
       echo "⚠️ PERMISSION MISMATCH: Your files are owned by ${dir_uid}:${dir_gid} but you're running as ${current_uid}:${current_gid}"
-      echo "This will likely cause permission errors when accessing server files."
+      echo "This will likely cause permission issues between the host and container for save data and server files."
       echo ""
       echo "You have these options:"
       echo ""
@@ -535,9 +546,15 @@ check_puid_pgid_user() {
       echo ""
       echo "2. Run with sudo to bypass permission checks:"
       echo "   sudo ./POK-manager.sh $original_command"
+      echo "   (This works but isn't ideal for regular use)"
       echo ""
-      echo "3. Change file ownership to match your current user:"
+      echo "3. Update file ownership to the new default (7777:7777):"
+      echo "   sudo chown -R 7777:7777 ${BASE_DIR}/ServerFiles ${BASE_DIR}/Instance_* ${BASE_DIR}/Cluster"
+      echo "   (Recommended for new setups to match container defaults)"
+      echo ""
+      echo "4. Change file ownership to match your current user:"
       echo "   sudo chown -R ${current_uid}:${current_gid} ${BASE_DIR}/ServerFiles ${BASE_DIR}/Instance_* ${BASE_DIR}/Cluster"
+      echo "   (Then update docker-compose files to use your UID:GID)"
       echo ""
       exit 1
     fi
@@ -554,16 +571,23 @@ check_puid_pgid_user() {
   if [ "${current_uid}" -ne "${puid}" ] || [ "${current_gid}" -ne "${pgid}" ]; then
     echo "⚠️ PERMISSION MISMATCH: You are not running the script as the user with the correct PUID (${puid}) and PGID (${pgid})."
     echo "Your current user '${current_user}' has UID ${current_uid} and GID ${current_gid}."
+    echo "This can cause permission issues between the host and container for save data and server files."
     echo ""
     echo "You have these options:"
     echo ""
     echo "1. Run with sudo to bypass permission checks:"
     echo "   sudo ./POK-manager.sh $original_command"
+    echo "   (This works but isn't ideal for regular use)"
     echo ""
-    echo "2. Change file ownership to match your current user:"
+    echo "2. Update file ownership to the new default (7777:7777):"
+    echo "   sudo chown -R 7777:7777 ${BASE_DIR}/ServerFiles ${BASE_DIR}/Instance_* ${BASE_DIR}/Cluster"
+    echo "   (Recommended for new setups to match container defaults)"
+    echo ""
+    echo "3. Change file ownership to match your current user:"
     echo "   sudo chown -R ${current_uid}:${current_gid} ${BASE_DIR}/ServerFiles ${BASE_DIR}/Instance_* ${BASE_DIR}/Cluster"
+    echo "   (Then update docker-compose files to use your UID:GID)"
     echo ""
-    echo "3. Switch to a user with the correct UID/GID:"
+    echo "4. Switch to a user with the correct UID/GID:"
     local possible_users=$(getent passwd "$puid" | cut -d: -f1)
     if [ -n "$possible_users" ]; then
       echo "   Switch to user '$possible_users' with: su - $possible_users"
