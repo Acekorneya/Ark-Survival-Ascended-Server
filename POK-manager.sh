@@ -2074,26 +2074,98 @@ set_beta_mode() {
   # Update all docker-compose.yaml files to use the new image tag
   echo "Updating docker-compose files for all instances to use ${new_tag} tag..."
   
-  # Find all docker-compose.yaml files in instance directories
+  # Find docker-compose files - check multiple locations
+  
+  # First, look in the Instance_* directories
+  local instance_compose_files=()
   for instance_dir in "${BASE_DIR}"/Instance_*/; do
     if [ -d "$instance_dir" ]; then
       local instance_name=$(basename "$instance_dir" | sed 's/Instance_//')
-      local compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
       
-      # Check if docker-compose file exists
-      if [ -f "$compose_file" ]; then
-        echo "Updating docker-compose file for instance: ${instance_name}"
-        
-        # Use sed to replace the image tag in the docker-compose file
-        # This handles both 2_0_latest and 2_0_beta tags
-        if sed -i "s/image: acekorneya\/asa_server:2_0_[a-z]*/image: acekorneya\/asa_server:${new_tag}/g" "$compose_file"; then
-          echo "Successfully updated ${compose_file}"
-        else
-          echo "Failed to update ${compose_file}"
-        fi
+      # Check both possible locations for the docker-compose file
+      local compose_file1="${instance_dir}/docker-compose-${instance_name}.yaml"
+      local compose_file2="${BASE_DIR}/docker-compose-${instance_name}.yaml"
+      
+      if [ -f "$compose_file1" ]; then
+        instance_compose_files+=("$compose_file1")
+      fi
+      
+      if [ -f "$compose_file2" ]; then
+        instance_compose_files+=("$compose_file2")
       fi
     fi
   done
+  
+  # Also check for docker-compose files directly in the base directory
+  for compose_file in "${BASE_DIR}"/docker-compose-*.yaml; do
+    if [ -f "$compose_file" ]; then
+      instance_compose_files+=("$compose_file")
+    fi
+  done
+  
+  if [ ${#instance_compose_files[@]} -eq 0 ]; then
+    echo "No docker-compose files found. No updates needed."
+  else
+    echo "Found ${#instance_compose_files[@]} docker-compose files to update."
+    
+    # Update each found docker-compose file
+    for compose_file in "${instance_compose_files[@]}"; do
+      local instance_name=$(basename "$compose_file" | sed -E 's/docker-compose-(.*)\.yaml/\1/')
+      echo "Updating docker-compose file for instance: ${instance_name}"
+      
+      # Create a temporary file
+      local tmp_file="${compose_file}.tmp"
+      
+      # Read the file and update both the image tag and ensure PUID/PGID values are correct
+      while IFS= read -r line; do
+        # Update the image tag
+        if [[ "$line" =~ image:[[:space:]]*acekorneya/asa_server:2_0_ ]]; then
+          echo "    image: acekorneya/asa_server:${new_tag}" >> "$tmp_file"
+        # Update or add PUID/PGID if commented out
+        elif [[ "$line" =~ ^[[:space:]]*#[[:space:]]*-[[:space:]]*PUID= ]]; then
+          echo "      - PUID=${PUID}                          # User ID for container processes and file ownership" >> "$tmp_file"
+        elif [[ "$line" =~ ^[[:space:]]*#[[:space:]]*-[[:space:]]*PGID= ]]; then
+          echo "      - PGID=${PGID}                          # Group ID for container processes and file ownership" >> "$tmp_file"
+        # Keep any existing PUID/PGID lines if not commented
+        elif [[ "$line" =~ ^[[:space:]]*-[[:space:]]*PUID= ]]; then
+          echo "      - PUID=${PUID}                          # User ID for container processes and file ownership" >> "$tmp_file"
+        elif [[ "$line" =~ ^[[:space:]]*-[[:space:]]*PGID= ]]; then
+          echo "      - PGID=${PGID}                          # Group ID for container processes and file ownership" >> "$tmp_file"
+        else
+          # Keep other lines unchanged
+          echo "$line" >> "$tmp_file"
+        fi
+      done < "$compose_file"
+      
+      # Replace the original file with the updated one
+      mv "$tmp_file" "$compose_file"
+      
+      # Verify the change was made for the image tag
+      if grep -q "image:.*${new_tag}" "$compose_file"; then
+        echo "Verified: Image tag updated to ${new_tag} in ${compose_file}"
+      else
+        echo "Warning: Could not verify image tag was updated in ${compose_file}"
+        # If couldn't verify with grep, we'll try with direct check
+        if [ -f "$compose_file" ]; then
+          local has_tag=$(grep -E 'image:[[:space:]]*acekorneya/asa_server:' "$compose_file")
+          if [ -n "$has_tag" ]; then
+            echo "Debug info - found image line: $has_tag"
+          else
+            echo "Debug info - no image line found in file"
+          fi
+        else
+          echo "Debug info - file doesn't exist after attempted update"
+        fi
+      fi
+      
+      # Verify the PUID/PGID settings
+      if grep -q "PUID=${PUID}" "$compose_file" && grep -q "PGID=${PGID}" "$compose_file"; then
+        echo "Verified: PUID/PGID values updated in ${compose_file}"
+      else
+        echo "Warning: Could not verify PUID/PGID values in ${compose_file}"
+      fi
+    done
+  fi
   
   echo "POK-manager is now in ${mode} mode. Docker images with tag '${new_tag}' will be used."
   echo "Please restart any running containers to apply the changes."
