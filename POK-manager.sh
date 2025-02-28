@@ -551,7 +551,9 @@ check_puid_pgid_user() {
         echo ""
         echo "4. Change file ownership to legacy configuration (1000:1000):"
         echo "   sudo chown -R 1000:1000 ${BASE_DIR}"
-        echo "   (Use only if you've configured container to use PUID=1000, PGID=1000)"
+        echo "   (Only for POK-manager 2.0 users. If using 2.0, you can either:"
+        echo "    - Continue using 2.0 with 1000:1000 permissions, or"
+        echo "    - Upgrade to 2.1 by running: ./POK-manager.sh -migrate)"
         echo ""
         exit 1
       fi
@@ -582,7 +584,9 @@ check_puid_pgid_user() {
       echo ""
       echo "4. Change file ownership to legacy configuration (1000:1000):"
       echo "   sudo chown -R 1000:1000 ${BASE_DIR}"
-      echo "   (Use only if you've configured container to use PUID=1000, PGID=1000)"
+      echo "   (Only for POK-manager 2.0 users. If using 2.0, you can either:"
+      echo "    - Continue using 2.0 with 1000:1000 permissions, or"
+      echo "    - Upgrade to 2.1 by running: ./POK-manager.sh -migrate)"
       echo ""
       exit 1
     fi
@@ -614,7 +618,9 @@ check_puid_pgid_user() {
     echo ""
     echo "3. Change file ownership to legacy configuration (1000:1000):"
     echo "   sudo chown -R 1000:1000 ${BASE_DIR}"
-    echo "   (Use only if you've configured container to use PUID=1000, PGID=1000)"
+    echo "   (Only for POK-manager 2.0 users. If using 2.0, you can either:"
+    echo "    - Continue using 2.0 with 1000:1000 permissions, or"
+    echo "    - Upgrade to 2.1 by running: ./POK-manager.sh -migrate)"
     echo ""
     echo "4. Switch to a user with the correct UID/GID:"
     local possible_users=$(getent passwd "$puid" | cut -d: -f1)
