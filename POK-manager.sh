@@ -2574,7 +2574,7 @@ upgrade_pok_manager() {
     chmod +x "${BASE_DIR%/}/POK-manager.sh.new"
     
     # Replace the old file with the new one
-    mv "${BASE_DIR%/}/POK-manager.sh.new" "$0"
+    mv -f "${BASE_DIR%/}/POK-manager.sh.new" "$0"
     echo "Update successful. POK-manager.sh has been updated to the latest version."
     
     # Create a flag file to indicate that we've just upgraded
