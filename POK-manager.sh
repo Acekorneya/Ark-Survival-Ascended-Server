@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.16"
+POK_MANAGER_VERSION="2.1.17"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -2481,7 +2481,6 @@ set_beta_mode() {
     fi
   fi
   echo "Docker Compose files will maintain their existing PUID/PGID settings for backward compatibility."
-  echo "New instances will use the commented out PUID/PGID values by default."
   
   echo "Please restart any running containers to apply the changes."
 }
