@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.1"
+POK_MANAGER_VERSION="2.1.0"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -1703,7 +1703,9 @@ check_for_POK_updates() {
     fi
   fi
   
-  local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/${branch_name}/POK-manager.sh"
+  # Add timestamp as cache-busting parameter
+  local timestamp=$(date +%s)
+  local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/${branch_name}/POK-manager.sh?t=${timestamp}"
   local temp_file="/tmp/POK-manager.sh"
   local update_info_file="${BASE_DIR}/config/POK-manager/update_available"
   
@@ -1734,6 +1736,9 @@ check_for_POK_updates() {
       # Extract version information from the downloaded file
       local new_version=$(grep -m 1 "POK_MANAGER_VERSION=" "$temp_file" | cut -d'"' -f2)
       
+      echo "DEBUG: GitHub version: $new_version, Local version: $POK_MANAGER_VERSION" >&2
+      echo "DEBUG: GitHub URL: $script_url" >&2
+      
       if [ -n "$new_version" ]; then
         # Compare versions using sort for proper semantic versioning comparison
         local current_version="$POK_MANAGER_VERSION"
@@ -1756,6 +1761,8 @@ check_for_POK_updates() {
         
         local current_num=$(version_to_number "$current_version")
         local new_num=$(version_to_number "$new_version")
+        
+        echo "DEBUG: Numeric comparison - Local: $current_num, GitHub: $new_num" >&2
         
         # Only notify if the new version is actually newer
         if [ $new_num -gt $current_num ]; then
@@ -1789,6 +1796,8 @@ check_for_POK_updates() {
           # excluding comments, whitespace, and empty lines
           local file1_checksum=$(grep -v "^#" "$0" | grep -v "^$" | tr -d '[:space:]' | md5sum | cut -d' ' -f1)
           local file2_checksum=$(grep -v "^#" "$temp_file" | grep -v "^$" | tr -d '[:space:]' | md5sum | cut -d' ' -f1)
+          
+          echo "DEBUG: File checksums - Local: $file1_checksum, GitHub: $file2_checksum" >&2
           
           if [ "$file1_checksum" != "$file2_checksum" ]; then
             echo "************************************************************"
@@ -2459,8 +2468,9 @@ upgrade_pok_manager() {
   # Download the latest version from GitHub
   echo "Downloading the latest version from GitHub ($branch branch)..."
   
-  # URL to download from
-  local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/$branch/POK-manager.sh"
+  # URL to download from with cache-busting parameter
+  local timestamp=$(date +%s)
+  local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/$branch/POK-manager.sh?t=${timestamp}"
   local download_output
   
   # Execute curl and capture both output and HTTP status code
