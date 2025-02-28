@@ -2501,6 +2501,10 @@ upgrade_pok_manager() {
     # Replace the old file with the new one
     mv "${BASE_DIR%/}/POK-manager.sh.new" "$0"
     echo "Update successful. POK-manager.sh has been updated to the latest version."
+    
+    # Re-execute the script with the same arguments to load the new version
+    echo "Restarting script to load updated version..."
+    exec "$0" "$@"
   elif [ "$http_code" = "404" ]; then
     echo "Error: File not found on GitHub (404). Please check that the repository and branch exist:"
     echo "Repository: https://github.com/Acekorneya/Ark-Survival-Ascended-Server"
