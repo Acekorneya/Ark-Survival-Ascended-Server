@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.18"
+POK_MANAGER_VERSION="2.1.19"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -548,9 +548,9 @@ check_puid_pgid_user() {
         echo "   sudo chown -R 7777:7777 ${BASE_DIR}"
         echo "   (Recommended for new setups to match container defaults)"
         echo ""
-        echo "4. Change file ownership to match your current user:"
-        echo "   sudo chown -R ${current_uid}:${current_gid} ${BASE_DIR}"
-        echo "   (Then update docker-compose files to use your UID:GID)"
+        echo "4. Change file ownership to legacy configuration (1000:1000):"
+        echo "   sudo chown -R 1000:1000 ${BASE_DIR}"
+        echo "   (Use only if you've configured container to use PUID=1000, PGID=1000)"
         echo ""
         exit 1
       fi
@@ -578,9 +578,9 @@ check_puid_pgid_user() {
       echo "   sudo chown -R 7777:7777 ${BASE_DIR}"
       echo "   (Recommended for new setups to match container defaults)"
       echo ""
-      echo "4. Change file ownership to match your current user:"
-      echo "   sudo chown -R ${current_uid}:${current_gid} ${BASE_DIR}"
-      echo "   (Then update docker-compose files to use your UID:GID)"
+      echo "4. Change file ownership to legacy configuration (1000:1000):"
+      echo "   sudo chown -R 1000:1000 ${BASE_DIR}"
+      echo "   (Use only if you've configured container to use PUID=1000, PGID=1000)"
       echo ""
       exit 1
     fi
@@ -609,9 +609,9 @@ check_puid_pgid_user() {
     echo "   sudo chown -R 7777:7777 ${BASE_DIR}"
     echo "   (Recommended for new setups to match container defaults)"
     echo ""
-    echo "3. Change file ownership to match your current user:"
-    echo "   sudo chown -R ${current_uid}:${current_gid} ${BASE_DIR}"
-    echo "   (Then update docker-compose files to use your UID:GID)"
+    echo "3. Change file ownership to legacy configuration (1000:1000):"
+    echo "   sudo chown -R 1000:1000 ${BASE_DIR}"
+    echo "   (Use only if you've configured container to use PUID=1000, PGID=1000)"
     echo ""
     echo "4. Switch to a user with the correct UID/GID:"
     local possible_users=$(getent passwd "$puid" | cut -d: -f1)
