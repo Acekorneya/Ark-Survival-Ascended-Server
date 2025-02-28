@@ -12,8 +12,8 @@ services:
       # NOTE: The container uses fixed user IDs that cannot be changed at runtime. 
       # - For 2_0_latest images: Files must be owned by UID:GID 1000:1000 on the host
       # - For 2_1_latest images: Files must be owned by UID:GID 7777:7777 on the host
-      # Use 'sudo chown -R 1000:1000 ./ServerFiles ./Instance_* ./Cluster' or
-      # Use 'sudo chown -R 7777:7777 ./ServerFiles ./Instance_* ./Cluster' to set permissions
+      # Use 'sudo chown -R 1000:1000 /path/to/your/POK-manager/directory' or
+      # Use 'sudo chown -R 7777:7777 /path/to/your/POK-manager/directory' to set permissions
       - BATTLEEYE=FALSE                      # Set to TRUE to use BattleEye, FALSE to not use BattleEye
       - RCON_ENABLED=TRUE                    # Needed for Graceful Shutdown / Updates / Server Notifications
       - DISPLAY_POK_MONITOR_MESSAGE=FALSE    # Or TRUE to Show the Server Monitor Messages / Update Monitor 

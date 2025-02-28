@@ -75,7 +75,7 @@ Before using POK-manager.sh, ensure that you have the following prerequisites in
 
 3. (Optional) Adjust folder permissions if not using a separate user:
    ```bash
-   sudo chown -R 7777:7777 /path/to/your/instance/folder
+   sudo chown -R 7777:7777 /path/to/your/POK-manager/directory
    ```
 
 4. Download and set up POK-manager.sh:
@@ -265,10 +265,10 @@ To prevent permission issues, your server files **must** have the correct owners
 
 ```bash
 # For 2_0_latest images (legacy compatibility)
-sudo chown -R 1000:1000 ./ServerFiles ./Instance_* ./Cluster
+sudo chown -R 1000:1000 /path/to/your/POK-manager/directory
 
 # For 2_1_latest images (recommended)
-sudo chown -R 7777:7777 ./ServerFiles ./Instance_* ./Cluster
+sudo chown -R 7777:7777 /path/to/your/POK-manager/directory
 ```
 
 ### Migration Options
@@ -282,7 +282,7 @@ If you're upgrading from an earlier version, you have these options:
 2. **Option 1: Continue using 1000:1000 (backward compatibility):**
    ```bash
    # Ensure your files are owned by 1000:1000
-   sudo chown -R 1000:1000 ./ServerFiles ./Instance_* ./Cluster
+   sudo chown -R 1000:1000 /path/to/your/POK-manager/directory
    ```
 
 3. **Option 2: Migrate to the new 7777:7777 user (recommended):**
@@ -291,7 +291,7 @@ If you're upgrading from an earlier version, you have these options:
    sudo ./POK-manager.sh -migrate
    
    # Or manually change ownership of your existing files
-   sudo chown -R 7777:7777 ./ServerFiles ./Instance_* ./Cluster
+   sudo chown -R 7777:7777 /path/to/your/POK-manager/directory
    ```
 
 ### For New Users
