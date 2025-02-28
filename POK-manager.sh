@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.20"
+POK_MANAGER_VERSION="2.1.21"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -538,6 +538,19 @@ check_puid_pgid_user() {
           echo "   Then run: ./POK-manager.sh $original_command"
         else
           echo "   (No user with UID $dir_uid was found on this system)"
+          
+          # Special case for 7777 UID after migration but no matching user
+          if [ "$dir_uid" = "7777" ]; then
+            echo ""
+            echo "   It appears you've migrated to the new 7777:7777 ownership but don't have a matching user."
+            echo "   You can create a user with this UID/GID to manage your server more easily:"
+            echo "   sudo groupadd -g 7777 pokuser"
+            echo "   sudo useradd -u 7777 -g 7777 -m -s /bin/bash pokuser"
+            echo "   sudo su - pokuser"
+            echo ""
+            echo "   You can also create this user automatically by running: sudo ./POK-manager.sh -migrate"
+            echo "   and answering 'y' when prompted to create a user."
+          fi
         fi
         echo ""
         echo "2. Run with sudo to bypass permission checks:"
@@ -571,6 +584,19 @@ check_puid_pgid_user() {
         echo "   Then run: ./POK-manager.sh $original_command"
       else
         echo "   (No user with UID $dir_uid was found on this system)"
+        
+        # Special case for 7777 UID after migration but no matching user
+        if [ "$dir_uid" = "7777" ]; then
+          echo ""
+          echo "   It appears you've migrated to the new 7777:7777 ownership but don't have a matching user."
+          echo "   You can create a user with this UID/GID to manage your server more easily:"
+          echo "   sudo groupadd -g 7777 pokuser"
+          echo "   sudo useradd -u 7777 -g 7777 -m -s /bin/bash pokuser"
+          echo "   sudo su - pokuser"
+          echo ""
+          echo "   You can also create this user automatically by running: sudo ./POK-manager.sh -migrate"
+          echo "   and answering 'y' when prompted to create a user."
+        fi
       fi
       echo ""
       echo "2. Run with sudo to bypass permission checks:"
@@ -633,6 +659,13 @@ check_puid_pgid_user() {
       echo "   sudo useradd -u ${puid} -g ${pgid} -m -s /bin/bash pokuser"
       echo "   sudo su - pokuser"
       echo "   cd $(pwd) && ./POK-manager.sh $original_command"
+      
+      # Special case for 7777 UID after migration but no matching user
+      if [ "$puid" = "7777" ]; then
+        echo ""
+        echo "   NOTE: You can also create this user automatically by running: sudo ./POK-manager.sh -migrate"
+        echo "   and answering 'y' when prompted to create a user."
+      fi
     fi
     echo ""
     exit 1
@@ -2766,6 +2799,13 @@ migrate_file_ownership() {
   if ! is_sudo; then
     echo "This operation requires sudo privileges."
     echo "Please run this command with sudo: sudo ./POK-manager.sh -migrate"
+    
+    # Add a more detailed explanation about why sudo is needed and what will happen
+    echo ""
+    echo "IMPORTANT NOTE ABOUT MIGRATION:"
+    echo "After migration, your files will be owned by UID:GID 7777:7777 to match the container."
+    echo "If you don't have a user with UID 7777 on your system, you'll be prompted to create one."
+    echo "Without a matching user, you'll need to use sudo to run the script after migration."
     return 1
   fi
   
@@ -2835,6 +2875,56 @@ migrate_file_ownership() {
   echo ""
   echo "Your files are now compatible with the 2_1_latest Docker image."
   echo "Any running servers will need to be restarted to use the new image."
+  
+  # Check if a user with UID 7777 already exists
+  local existing_user=$(getent passwd 7777 | cut -d: -f1)
+  
+  if [ -z "$existing_user" ]; then
+    echo ""
+    echo "⚠️ IMPORTANT: No user with UID 7777 was found on this system."
+    echo "This means you'll need to run this script with sudo each time, which is not ideal."
+    echo ""
+    echo "Would you like to create a dedicated user with UID/GID 7777 for managing your server?"
+    echo "This will allow you to run the script without sudo after the migration."
+    echo ""
+    read -p "Create a user with UID/GID 7777 now? (y/N): " create_user
+    
+    if [[ "$create_user" =~ ^[Yy]$ ]]; then
+      # Get username from user
+      echo ""
+      read -p "Enter username for the new user (default: pokuser): " new_username
+      new_username=${new_username:-pokuser}
+      
+      echo "Creating group with GID 7777..."
+      groupadd -g 7777 "$new_username" || { echo "Failed to create group. You may need to manually create a user with UID/GID 7777."; }
+      
+      echo "Creating user with UID 7777..."
+      useradd -u 7777 -g 7777 -m -s /bin/bash "$new_username" || { echo "Failed to create user. You may need to manually create a user with UID/GID 7777."; }
+      
+      if id "$new_username" &>/dev/null; then
+        echo ""
+        echo "✅ User '$new_username' created successfully with UID/GID 7777:7777"
+        echo "You can now switch to this user to manage your server:"
+        echo "  sudo su - $new_username"
+        echo "  cd $(realpath ${BASE_DIR}) && ./POK-manager.sh"
+      fi
+    else
+      echo ""
+      echo "⚠️ No user created. You'll need to run this script with sudo from now on,"
+      echo "or manually create a user with UID/GID 7777:7777 later."
+      echo ""
+      echo "To manually create a user with these IDs, you can run:"
+      echo "  sudo groupadd -g 7777 pokuser"
+      echo "  sudo useradd -u 7777 -g 7777 -m -s /bin/bash pokuser"
+    fi
+  else
+    echo ""
+    echo "A user with UID 7777 already exists: $existing_user"
+    echo "You can switch to this user to manage your server:"
+    echo "  sudo su - $existing_user"
+    echo "  cd $(realpath ${BASE_DIR}) && ./POK-manager.sh"
+  fi
+  
   echo ""
   echo "Note: If you want to go back to the 1000:1000 ownership, you can run:"
   echo "sudo chown -R 1000:1000 ${BASE_DIR}"
