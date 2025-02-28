@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.23"
+POK_MANAGER_VERSION="2.1.24"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -2957,17 +2957,35 @@ migrate_file_ownership() {
       new_username=${new_username:-pokuser}
       
       echo "Creating group with GID 7777..."
-      groupadd -g 7777 "$new_username" || { echo "Failed to create group. You may need to manually create a user with UID/GID 7777."; }
+      groupadd -g 7777 "$new_username" || { echo "Failed to create group. You may need to manually create a user with UID/GID 7777."; exit 1; }
       
       echo "Creating user with UID 7777..."
-      useradd -u 7777 -g 7777 -m -s /bin/bash "$new_username" || { echo "Failed to create user. You may need to manually create a user with UID/GID 7777."; }
+      useradd -u 7777 -g 7777 -m -s /bin/bash "$new_username" || { echo "Failed to create user. You may need to manually create a user with UID/GID 7777."; exit 1; }
       
       if id "$new_username" &>/dev/null; then
+        # Prompt for password
         echo ""
-        echo "✅ User '$new_username' created successfully with UID/GID 7777:7777"
-        echo "You can now switch to this user to manage your server:"
-        echo "  sudo su - $new_username"
-        echo "  cd $(realpath ${BASE_DIR}) && ./POK-manager.sh"
+        echo "Please set a password for the new user '$new_username':"
+        
+        # Use passwd to set the password interactively
+        passwd "$new_username"
+        
+        if [ $? -eq 0 ]; then
+          echo ""
+          echo "✅ User '$new_username' created successfully with UID/GID 7777:7777 and password set"
+          echo "You can now switch to this user to manage your server:"
+          echo "  su - $new_username"
+          echo "  cd $(realpath ${BASE_DIR}) && ./POK-manager.sh"
+          
+          # Also show the sudo option
+          echo "Or with sudo:"
+          echo "  sudo su - $new_username"
+          echo "  cd $(realpath ${BASE_DIR}) && ./POK-manager.sh"
+        else
+          echo ""
+          echo "⚠️ User created but password setting failed. You can set it manually with:"
+          echo "  sudo passwd $new_username"
+        fi
       fi
     else
       echo ""
