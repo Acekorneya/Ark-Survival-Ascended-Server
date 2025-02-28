@@ -2861,24 +2861,33 @@ get_docker_image_tag() {
   
   # If running in beta mode, use beta suffix, otherwise use latest
   local branch_suffix="latest"
+  local is_beta=false
+  
   if check_beta_mode; then
     branch_suffix="beta"
+    is_beta=true
   fi
   
   # Default to the new version
   local image_tag_version="2_1"
   
-  # If server files directory exists, check ownership to determine backward compatibility
-  local server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
-  if [ -d "$server_files_dir" ]; then
-    local file_ownership=$(stat -c '%u:%g' "$server_files_dir")
-    
-    # If files are owned by 1000:1000, use the 2_0 image for compatibility
-    if [ "$file_ownership" = "1000:1000" ]; then
-      image_tag_version="2_0"
-      # If running interactively, inform the user - but only to stderr so it doesn't get captured
-      if [ -t 0 ]; then
-        echo "ℹ️ Detected legacy file ownership (1000:1000). Using compatible image version." >&2
+  # If we're in beta mode, always use 2_1_beta regardless of file ownership
+  if $is_beta; then
+    image_tag_version="2_1"
+  else
+    # For stable branch, check file ownership to determine compatibility version
+    # If server files directory exists, check ownership to determine backward compatibility
+    local server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
+    if [ -d "$server_files_dir" ]; then
+      local file_ownership=$(stat -c '%u:%g' "$server_files_dir")
+      
+      # If files are owned by 1000:1000, use the 2_0 image for compatibility
+      if [ "$file_ownership" = "1000:1000" ]; then
+        image_tag_version="2_0"
+        # If running interactively, inform the user - but only to stderr so it doesn't get captured
+        if [ -t 0 ]; then
+          echo "ℹ️ Detected legacy file ownership (1000:1000). Using compatible image version." >&2
+        fi
       fi
     fi
   fi
