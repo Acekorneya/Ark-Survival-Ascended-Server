@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.11"
+POK_MANAGER_VERSION="2.1.12"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -1736,8 +1736,8 @@ check_for_POK_updates() {
       # Extract version information from the downloaded file
       local new_version=$(grep -m 1 "POK_MANAGER_VERSION=" "$temp_file" | cut -d'"' -f2)
       
-      echo "DEBUG: GitHub version: $new_version, Local version: $POK_MANAGER_VERSION" >&2
-      echo "DEBUG: GitHub URL: $script_url" >&2
+      echo " GitHub version: $new_version, Local version: $POK_MANAGER_VERSION" >&2
+      #echo "DEBUG: GitHub URL: $script_url" >&2
       
       if [ -n "$new_version" ]; then
         # Compare versions using sort for proper semantic versioning comparison
@@ -1756,7 +1756,7 @@ check_for_POK_updates() {
           patch=${patch:-0}
           
           # Debug output
-          echo "DEBUG: Parsing version $ver into: major=$major, minor=$minor, patch=$patch" >&2
+          #echo "DEBUG: Parsing version $ver into: major=$major, minor=$minor, patch=$patch" >&2
           
           # Convert to a single number for comparison
           echo $((major * 1000000 + minor * 1000 + patch))
@@ -1765,7 +1765,7 @@ check_for_POK_updates() {
         local current_num=$(version_to_number "$current_version")
         local new_num=$(version_to_number "$new_version")
         
-        echo "DEBUG: Numeric comparison - Local: $current_num, GitHub: $new_num" >&2
+        #echo "DEBUG: Numeric comparison - Local: $current_num, GitHub: $new_num" >&2
         
         # Only notify if the new version is actually newer
         if [ $new_num -gt $current_num ]; then
@@ -1814,7 +1814,7 @@ check_for_POK_updates() {
           local file1_checksum=$(grep -v "^#" "$0" | grep -v "^$" | tr -d '[:space:]' | md5sum | cut -d' ' -f1)
           local file2_checksum=$(grep -v "^#" "$temp_file" | grep -v "^$" | tr -d '[:space:]' | md5sum | cut -d' ' -f1)
           
-          echo "DEBUG: File checksums - Local: $file1_checksum, GitHub: $file2_checksum" >&2
+          #echo "DEBUG: File checksums - Local: $file1_checksum, GitHub: $file2_checksum" >&2
           
           if [ "$file1_checksum" != "$file2_checksum" ]; then
             echo "************************************************************"
