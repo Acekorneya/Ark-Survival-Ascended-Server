@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.22"
+POK_MANAGER_VERSION="2.1.23"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -1231,6 +1231,67 @@ start_instance() {
     echo "❌ ERROR: Docker Compose file not found at $docker_compose_file"
     echo "Make sure the instance ${instance_name} exists and is properly configured."
     exit 1
+  fi
+  
+  # Check for permission mismatches between files and container before starting
+  local server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
+  if [ -d "$server_files_dir" ]; then
+    local file_ownership=$(stat -c '%u:%g' "$server_files_dir")
+    local file_uid=$(echo "$file_ownership" | cut -d: -f1)
+    local file_gid=$(echo "$file_ownership" | cut -d: -f2)
+    
+    # Check if image_tag is for beta (which uses 7777:7777)
+    if [[ "$image_tag" == *"_beta" || "$image_tag" == "2_1_latest" ]]; then
+      local container_uid=7777
+      local container_gid=7777
+      
+      # If files are owned by 1000:1000 but container uses 7777:7777
+      if [ "$file_uid" = "1000" ] && [ "$file_gid" = "1000" ]; then
+        echo "❌ ERROR: PERMISSION MISMATCH DETECTED!"
+        echo "Your server files are owned by UID:GID ${file_uid}:${file_gid} (1000:1000)"
+        echo "But your container image '$image_tag' expects UID:GID ${container_uid}:${container_gid} (7777:7777)"
+        echo ""
+        echo "This will cause permission issues between the host and container."
+        echo "The server will NOT be started to prevent potential data corruption or access problems."
+        echo ""
+        echo "To fix this, you have two options:"
+        echo "1. Change file ownership to match the container:"
+        echo "   sudo chown -R 7777:7777 ${BASE_DIR}"
+        echo "   (Recommended for beta branch and 2_1_latest images)"
+        echo ""
+        echo "2. Change to the stable branch with 1000:1000 permissions:"
+        echo "   ./POK-manager.sh -stable"
+        echo "   (This will revert to using the 2_0_latest image that matches your current file ownership)"
+        echo ""
+        echo "You can also run: ./POK-manager.sh -migrate"
+        echo "This will help you migrate your server files to the new 7777:7777 ownership structure."
+        exit 1
+      fi
+    # Check if image_tag is for stable 2_0 (which uses 1000:1000)
+    elif [[ "$image_tag" == "2_0_latest" ]]; then
+      local container_uid=1000
+      local container_gid=1000
+      
+      # If files are owned by 7777:7777 but container uses 1000:1000
+      if [ "$file_uid" = "7777" ] && [ "$file_gid" = "7777" ]; then
+        echo "❌ ERROR: PERMISSION MISMATCH DETECTED!"
+        echo "Your server files are owned by UID:GID ${file_uid}:${file_gid} (7777:7777)"
+        echo "But your container image '$image_tag' expects UID:GID ${container_uid}:${container_gid} (1000:1000)"
+        echo ""
+        echo "This will cause permission issues between the host and container."
+        echo "The server will NOT be started to prevent potential data corruption or access problems."
+        echo ""
+        echo "To fix this, you have two options:"
+        echo "1. Change file ownership to match the container:"
+        echo "   sudo chown -R 1000:1000 ${BASE_DIR}"
+        echo "   (Only use this if you specifically need the 2_0_latest image with 1000:1000 permissions)"
+        echo ""
+        echo "2. Change to the beta branch or use 2_1_latest to match your file ownership:"
+        echo "   ./POK-manager.sh -beta"
+        echo "   (This will use the newer image that matches your current file ownership)"
+        exit 1
+      fi
+    fi
   fi
   
   # Update the docker-compose.yaml file to use the correct image tag
