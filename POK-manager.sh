@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.19"
+POK_MANAGER_VERSION="2.1.18"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -1615,3 +1615,1373 @@ inject_shutdown_flag_and_shutdown() {
 
     # Send the shutdown command to rcon_interface
     run_in_container "$instance" "-shutdown" "$message" >/dev/null 2>&1
+
+    # Wait for shutdown completion
+    wait_for_shutdown "$instance" "$wait_time"
+
+    # Shutdown the container using docker-compose
+    $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down
+    echo "----- Shutdown Complete for instance: $instance-----"
+  else
+    echo "Instance ${instance} is not running or does not exist."
+  fi
+}
+
+# Adjust `run_in_container` to correctly construct and execute the Docker command
+run_in_container() {
+  local instance="$1"
+  local cmd="$2"
+  local args="${@:3}" # Capture all remaining arguments as the command args
+
+  local container_name="asa_${instance}" # Construct the container name
+  local command="/home/pok/scripts/rcon_interface.sh ${cmd}"
+
+  # Append args to command if provided
+  if [ -n "$args" ]; then
+    command+=" '${args}'" # Add quotes to encapsulate the arguments as a single string
+  fi
+
+  # Verify the container exists and is running, then execute the command and capture the output
+  if docker ps -q -f name=^/${container_name}$ > /dev/null; then
+    if [[ "$cmd" == "-shutdown" || "$cmd" == "-restart" ]]; then
+      # Redirect all output to a variable for -shutdown and -restart commands
+      output=$(docker exec "$container_name" /bin/bash -c "$command")
+    else
+      # Capture the output for all other commands
+      output=$(docker exec "$container_name" /bin/bash -c "$command")
+    fi
+    echo "$output" # Return the captured output
+  else
+    echo "Instance ${instance} is not running or does not exist."
+  fi
+}
+run_in_container_background() {
+  local instance="$1"
+  local cmd="$2"
+  local args="${@:3}" # Capture all remaining arguments as the command args
+
+  local container_name="asa_${instance}" # Construct the container name
+  local command="/home/pok/scripts/rcon_interface.sh ${cmd}"
+
+  if [ -n "$args" ]; then
+    command+=" '${args}'" # Add quotes to encapsulate the arguments as a single string
+  fi
+
+  #echo "----- Server ${instance}: Command: ${cmd#-}${args:+ $args} -----"
+
+  # Verify the container exists and is running, then execute the command
+  if docker ps -q -f name=^/${container_name}$ > /dev/null; then
+    # Execute the command in the background and discard its output
+    docker exec "$container_name" /bin/bash -c "$command" >/dev/null 2>&1
+  else
+    echo "Instance ${instance} is not running or does not exist."
+  fi
+}
+get_build_id_from_acf() {
+  local acf_file="$BASE_DIR/ServerFiles/arkserver/appmanifest_2430930.acf"
+
+  if [ -f "$acf_file" ]; then
+    local build_id=$(grep -E "^\s+\"buildid\"\s+" "$acf_file" | grep -o '[[:digit:]]*')
+    echo "$build_id"
+  else
+    echo "error: appmanifest_2430930.acf file not found"
+    return 1
+  fi
+}
+check_for_POK_updates() {
+  # Skip update checks when running in non-interactive mode (e.g., cron jobs)
+  if [ -t 0 ]; then
+    echo "Checking for updates to POK-manager.sh..."
+  else
+    # When running non-interactively, only check for updates if explicitly requested
+    if [ "$1" != "force" ]; then
+      return
+    fi
+  fi
+  
+  # Check if we've just upgraded the script
+  local just_upgraded="${BASE_DIR%/}/config/POK-manager/just_upgraded"
+  if [ -f "$just_upgraded" ]; then
+    # Remove the flag file
+    rm -f "$just_upgraded"
+    
+    # Skip update check since we just upgraded
+    echo " GitHub version: $POK_MANAGER_VERSION, Local version: $POK_MANAGER_VERSION"
+    echo "----- POK-manager.sh is already up to date (version $POK_MANAGER_VERSION) -----"
+    return
+  fi
+  
+  # Determine which branch to use for updates
+  local branch_name="master"
+  if [ "$POK_MANAGER_BRANCH" = "beta" ]; then
+    branch_name="beta"
+    if [ -t 0 ]; then # Only show this message in interactive mode
+      echo "Using beta branch for updates"
+    fi
+  fi
+  
+  # Add timestamp as cache-busting parameter
+  local timestamp=$(date +%s)
+  local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/${branch_name}/POK-manager.sh?t=${timestamp}"
+  local temp_file="/tmp/POK-manager.sh"
+  local update_info_file="${BASE_DIR}/config/POK-manager/update_available"
+  
+  mkdir -p "${BASE_DIR}/config/POK-manager"
+
+  local download_output
+  local http_code
+  
+  if command -v curl &>/dev/null; then
+    download_output=$(curl -s -w "%{http_code}" -o "$temp_file" "$script_url")
+    http_code=${download_output: -3}  # Get the last 3 characters (HTTP status code)
+  elif command -v wget &>/dev/null; then
+    wget -q -O "$temp_file" "$script_url"
+    # wget doesn't return HTTP codes the same way, so we check if the file exists and has content
+    if [ -s "$temp_file" ]; then
+      http_code="200"
+    else
+      http_code="404"  # Default error code for wget
+    fi
+  else
+    echo "Neither wget nor curl is available. Unable to check for updates."
+    return
+  fi
+
+  if [ "$http_code" = "200" ] && [ -f "$temp_file" ]; then
+    # Check if the downloaded file is at least 1KB in size
+    if [ -s "$temp_file" ] && [ $(stat -c%s "$temp_file") -ge 1024 ]; then
+      # Extract version information from the downloaded file
+      local new_version=$(grep -m 1 "POK_MANAGER_VERSION=" "$temp_file" | cut -d'"' -f2)
+      
+      echo " GitHub version: $new_version, Local version: $POK_MANAGER_VERSION" >&2
+      #echo "DEBUG: GitHub URL: $script_url" >&2
+      
+      if [ -n "$new_version" ]; then
+        # Compare versions using sort for proper semantic versioning comparison
+        local current_version="$POK_MANAGER_VERSION"
+        
+        # Function to convert version string to comparable number
+        version_to_number() {
+          local ver=$1
+          
+          # Parse the version string directly to extract major, minor, and patch
+          IFS='.' read -r major minor patch <<< "$ver"
+          
+          # Default values if any part is missing
+          major=${major:-0}
+          minor=${minor:-0}
+          patch=${patch:-0}
+          
+          # Debug output
+          #echo "DEBUG: Parsing version $ver into: major=$major, minor=$minor, patch=$patch" >&2
+          
+          # Convert to a single number for comparison
+          echo $((major * 1000000 + minor * 1000 + patch))
+        }
+        
+        local current_num=$(version_to_number "$current_version")
+        local new_num=$(version_to_number "$new_version")
+        
+        #echo "DEBUG: Numeric comparison - Local: $current_num, GitHub: $new_num" >&2
+        
+        # Only notify if the new version is actually newer
+        if [ $new_num -gt $current_num ]; then
+          echo "************************************************************"
+          echo "* A newer version of POK-manager.sh is available: $new_version *"
+          echo "* Current version: $current_version                           *"
+          
+          # Ask if the user wants to upgrade if we're in interactive mode
+          if [ -t 0 ]; then
+            echo -n "* Would you like to upgrade now? (y/n): "
+            read -r upgrade_response
+            if [[ "$upgrade_response" =~ ^[Yy]$ ]]; then
+              # Call the upgrade function
+              upgrade_pok_manager
+              return
+            else
+              echo "* Run './POK-manager.sh -upgrade' later to perform the update     *"
+            fi
+          else
+            echo "* Run './POK-manager.sh -upgrade' to perform the update     *"
+          fi
+          echo "************************************************************"
+          
+          # Store the update information for later use
+          echo "$new_version" > "$update_info_file"
+          # Copy the downloaded script to a temporary location for later use
+          cp "$temp_file" "${BASE_DIR}/config/POK-manager/new_version"
+          chmod +x "${BASE_DIR}/config/POK-manager/new_version"
+          
+          # Clean up
+          rm "$temp_file"
+        else
+          if [ -t 0 ]; then # Only show this in interactive mode
+            echo "----- POK-manager.sh is already up to date (version $current_version) -----"
+          fi
+          rm "$temp_file"
+          # Remove the update info file if it exists but no update is available
+          rm -f "$update_info_file"
+          rm -f "${BASE_DIR}/config/POK-manager/new_version"
+        fi
+      else
+        # If we can't extract a version but files differ, just notify about the difference
+        if ! cmp -s "$0" "$temp_file"; then
+          # Check if the files are functionally different by comparing checksums of content 
+          # excluding comments, whitespace, and empty lines
+          local file1_checksum=$(grep -v "^#" "$0" | grep -v "^$" | tr -d '[:space:]' | md5sum | cut -d' ' -f1)
+          local file2_checksum=$(grep -v "^#" "$temp_file" | grep -v "^$" | tr -d '[:space:]' | md5sum | cut -d' ' -f1)
+          
+          #echo "DEBUG: File checksums - Local: $file1_checksum, GitHub: $file2_checksum" >&2
+          
+          if [ "$file1_checksum" != "$file2_checksum" ]; then
+            echo "************************************************************"
+            echo "* An update to POK-manager.sh is available                 *"
+            echo "* Run './POK-manager.sh -upgrade' to perform the update    *"
+            echo "************************************************************"
+            
+            # Store the update information for later use
+            echo "unknown" > "$update_info_file"
+            # Copy the downloaded script to a temporary location for later use
+            cp "$temp_file" "${BASE_DIR}/config/POK-manager/new_version"
+            chmod +x "${BASE_DIR}/config/POK-manager/new_version"
+          else
+            if [ -t 0 ]; then # Only show this in interactive mode
+              echo "----- POK-manager.sh is already up to date -----"
+            fi
+            # Remove the update info file if it exists but no update is available
+            rm -f "$update_info_file"
+            rm -f "${BASE_DIR}/config/POK-manager/new_version"
+          fi
+          
+          # Clean up
+          rm "$temp_file"
+        else
+          if [ -t 0 ]; then # Only show this in interactive mode
+            echo "----- POK-manager.sh is already up to date -----"
+          fi
+          rm "$temp_file"
+          # Remove the update info file if it exists but no update is available
+          rm -f "$update_info_file"
+          rm -f "${BASE_DIR}/config/POK-manager/new_version"
+        fi
+      fi
+    else
+      if [ -t 0 ]; then # Only show this in interactive mode
+        echo "Downloaded file is either empty or too small. Skipping update check."
+      fi
+      rm "$temp_file"
+    fi
+  else
+    if [ -t 0 ]; then # Only show this in interactive mode
+      if [ "$http_code" = "404" ]; then
+        echo "Error: File not found on GitHub (404). This might happen if you're using a branch that doesn't exist."
+        echo "Current branch setting: $branch_name"
+      else
+        echo "Failed to download the update (HTTP code: $http_code). Skipping update check."
+      fi
+    fi
+    rm -f "$temp_file"
+  fi
+}
+
+install_steamcmd() {
+  local steamcmd_dir="$BASE_DIR/config/POK-manager/steamcmd"
+  local steamcmd_script="$steamcmd_dir/steamcmd.sh"
+  local steamcmd_binary="$steamcmd_dir/linux32/steamcmd"
+
+  if [ ! -f "$steamcmd_script" ] || [ ! -f "$steamcmd_binary" ]; then
+    echo "SteamCMD not found. Attempting to install SteamCMD..."
+
+    mkdir -p "$steamcmd_dir"
+
+    if [ -f /etc/debian_version ]; then
+      # Debian or Ubuntu
+      sudo dpkg --add-architecture i386
+      sudo apt-get update
+      sudo apt-get install -y curl lib32gcc-s1
+    elif [ -f /etc/redhat-release ]; then
+      # Red Hat, CentOS, or Fedora
+      if command -v dnf &>/dev/null; then
+        sudo dnf install -y curl glibc.i686 libstdc++.i686
+      else
+        sudo yum install -y curl glibc.i686 libstdc++.i686
+      fi
+    elif [ -f /etc/arch-release ]; then
+      # Arch Linux
+      sudo pacman -Sy --noconfirm curl lib32-gcc-libs
+    else
+      echo "Unsupported Linux distribution. Please install curl and 32-bit libraries manually and run the setup again."
+      return 1
+    fi
+
+    curl -s "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz" | tar -xz -C "$steamcmd_dir"
+
+    # Set executable permissions on steamcmd.sh and steamcmd binary
+    adjust_ownership_and_permissions "$steamcmd_dir"
+    chmod +x "$steamcmd_script"
+    chmod +x "$steamcmd_binary"
+
+    if [ -f "$steamcmd_script" ] && [ -f "$steamcmd_binary" ]; then
+      echo "SteamCMD has been successfully installed."
+    else
+      echo "Failed to install SteamCMD. Please install it manually and run the setup again."
+      return 1
+    fi
+  else
+    echo "SteamCMD is already installed."
+  fi
+}
+is_sudo() {
+  if [ "$EUID" -eq 0 ]; then
+    return 0
+  else
+    return 1
+  fi
+}
+get_current_build_id() {
+  local app_id="2430930"
+  local build_id=$(curl -sX GET "https://api.steamcmd.net/v1/info/$app_id" | jq -r ".data.\"$app_id\".depots.branches.public.buildid")
+  echo "$build_id"
+}
+ensure_steamcmd_executable() {
+  local steamcmd_dir="$BASE_DIR/config/POK-manager/steamcmd"
+  local steamcmd_script="$steamcmd_dir/steamcmd.sh"
+  local steamcmd_binary="$steamcmd_dir/linux32/steamcmd"
+
+  if [ -f "$steamcmd_script" ]; then
+    if [ ! -x "$steamcmd_script" ]; then
+      echo "Making SteamCMD script executable..."
+      chmod +x "$steamcmd_script"
+    fi
+  else
+    echo "SteamCMD script not found. Please make sure it is installed correctly."
+    exit 1
+  fi
+
+  if [ -f "$steamcmd_binary" ]; then
+    if [ ! -x "$steamcmd_binary" ]; then
+      echo "Making SteamCMD binary executable..."
+      chmod +x "$steamcmd_binary"
+    fi
+  else
+    echo "SteamCMD binary not found. Please make sure it is installed correctly."
+    exit 1
+  fi
+}
+
+manage_backup_rotation() {
+  local instance_name="$1"
+  local max_backups="$2"
+  local max_size_gb="$3"
+
+  local main_dir="${MAIN_DIR%/}"
+  local backup_dir="${main_dir}/backups/${instance_name}"
+
+  # Convert max_size_gb to bytes
+  local max_size_bytes=$((max_size_gb * 1024 * 1024 * 1024))
+
+  # Get a list of backup files sorted by modification time (oldest first)
+  local backup_files=($(ls -tr "${backup_dir}/"*.tar.gz 2>/dev/null))
+
+  # Check if the number of backups exceeds the maximum allowed
+  while [ ${#backup_files[@]} -gt $max_backups ]; do
+    # Remove the oldest backup
+    local oldest_backup="${backup_files[0]}"
+    echo "Removing old backup: $oldest_backup"
+    rm "$oldest_backup"
+    # Remove the oldest backup from the array
+    backup_files=("${backup_files[@]:1}")
+  done
+
+  # Calculate the total size of the backups
+  local total_size_bytes=0
+  for backup_file in "${backup_files[@]}"; do
+    total_size_bytes=$((total_size_bytes + $(stat -c%s "$backup_file")))
+  done
+
+  # Check if the total size exceeds the maximum allowed
+  while [ $total_size_bytes -gt $max_size_bytes ]; do
+    # Remove the oldest backup
+    local oldest_backup="${backup_files[0]}"
+    echo "Removing old backup due to size limit: $oldest_backup"
+    local backup_size_bytes=$(stat -c%s "$oldest_backup")
+    rm "$oldest_backup"
+    total_size_bytes=$((total_size_bytes - backup_size_bytes))
+    # Remove the oldest backup from the array
+    backup_files=("${backup_files[@]:1}")
+  done
+}
+read_backup_config() {
+  local instance_name="$1"
+  local config_file="${MAIN_DIR%/}/config/POK-manager/backup_${instance_name}.conf"
+
+  if [ -f "$config_file" ]; then
+    source "$config_file"
+    max_backups=${MAX_BACKUPS:-10}
+    max_size_gb=${MAX_SIZE_GB:-10}
+  else
+    max_backups=
+    max_size_gb=
+  fi
+}
+
+write_backup_config() {
+  local instance_name="$1"
+  local max_backups="$2"
+  local max_size_gb="$3"
+
+  local config_file="${MAIN_DIR%/}/config/POK-manager/backup_${instance_name}.conf"
+  local config_dir=$(dirname "$config_file")
+  
+  mkdir -p "$config_dir"
+  
+  cat > "$config_file" <<EOF
+MAX_BACKUPS=$max_backups
+MAX_SIZE_GB=$max_size_gb
+EOF
+}
+
+prompt_backup_config() {
+  local instance_name="$1"
+  read -p "Enter the maximum number of backups to keep for instance $instance_name: " max_backups
+  read -p "Enter the maximum size limit (in GB) for instance $instance_name backups: " max_size_gb
+  write_backup_config "$instance_name" "$max_backups" "$max_size_gb"
+}
+
+backup_instance() {
+  local instance_name="$1"
+
+  if [[ "$instance_name" == "-all" ]]; then
+    local instances=($(list_instances))
+    for instance in "${instances[@]}"; do
+      read_backup_config "$instance"
+      if [ -z "$max_backups" ] || [ -z "$max_size_gb" ]; then
+        echo "Backup configuration missing or incomplete for instance $instance."
+        prompt_backup_config "$instance"
+      fi
+      backup_single_instance "$instance"
+      manage_backup_rotation "$instance" "$max_backups" "$max_size_gb"
+    done
+  else
+    read_backup_config "$instance_name"
+    if [ -z "$max_backups" ] || [ -z "$max_size_gb" ]; then
+      echo "Backup configuration missing or incomplete for instance $instance_name."
+      prompt_backup_config "$instance_name"
+    fi
+    backup_single_instance "$instance_name"
+    manage_backup_rotation "$instance_name" "$max_backups" "$max_size_gb"
+  fi
+
+  # Adjust ownership and permissions for the backup directory
+  local main_dir="${MAIN_DIR%/}"
+  local backup_dir="${main_dir}/backups"
+  adjust_ownership_and_permissions "$backup_dir"
+}
+
+backup_single_instance() {
+  local instance_name="$1"
+  # Remove the trailing slash from $MAIN_DIR if it exists
+  local main_dir="${MAIN_DIR%/}"
+  local backup_dir="${main_dir}/backups/${instance_name}"
+  
+  # Get the current timezone using timedatectl
+  local timezone="${USER_TIMEZONE:-$(timedatectl show -p Timezone --value)}"
+  
+  # Get the current timestamp based on the host's timezone
+  local timestamp=$(TZ="$timezone" date +"%Y-%m-%d_%H-%M-%S")
+  
+  # Format the backup file name
+  local backup_file="${instance_name}_backup_${timestamp}.tar.gz"
+  
+  mkdir -p "$backup_dir"
+
+  local instance_dir="${main_dir}/Instance_${instance_name}"
+  local saved_arks_dir="${instance_dir}/Saved/SavedArks"
+  if [ -d "$saved_arks_dir" ]; then
+    echo "Creating backup for instance $instance_name..."
+    tar -czf "${backup_dir}/${backup_file}" -C "$instance_dir/Saved" "SavedArks"
+    echo "Backup created: ${backup_dir}/${backup_file}"
+  else
+    echo "SavedArks directory not found for instance $instance_name. Skipping backup."
+  fi
+}
+restore_instance() {
+  local instance_name="$1"
+  # Remove the trailing slash from $MAIN_DIR if it exists
+  local main_dir="${MAIN_DIR%/}"
+  local backup_dir="${main_dir}/backups"
+
+  if [ -z "$instance_name" ]; then
+    echo "No instance name specified. Please select an instance to restore from the list below."
+    local instances=($(find "$backup_dir" -maxdepth 1 -mindepth 1 -type d -exec basename {} \;))
+    if [ ${#instances[@]} -eq 0 ]; then
+      echo "No instances found with backups."
+      return
+    fi
+      
+    for ((i=0; i<${#instances[@]}; i++)); do
+      echo "$((i+1)). ${instances[i]}"
+    done
+    echo "----- Warning: This will stop the server if it is running. -----"
+    read -p "Enter the number of the instance to restore: " choice  
+    if [[ $choice =~ ^[0-9]+$ ]] && [ $choice -ge 1 ] && [ $choice -le ${#instances[@]} ]; then
+      instance_name="${instances[$((choice-1))]}"
+    else
+      echo "Invalid choice. Exiting."
+      return
+    fi
+  fi
+
+  local instance_backup_dir="${backup_dir}/${instance_name}"
+
+  if [ -d "$instance_backup_dir" ]; then
+    local backup_files=($(ls -1 "$instance_backup_dir"/*.tar.gz 2>/dev/null))
+    if [ ${#backup_files[@]} -eq 0 ]; then
+      echo "No backups found for instance $instance_name."
+      return
+    fi
+
+    if [[ " $(list_running_instances) " =~ " $instance_name " ]]; then
+      echo "Stopping the server."
+      stop_instance "$instance_name"
+    fi
+
+    echo "Here is a list of all your backup archives:"
+    for ((i=0; i<${#backup_files[@]}; i++)); do
+      echo "$((i+1)) ------ File: $(basename "${backup_files[i]}")"
+    done
+
+    read -p "Please input the number of the archive you want to restore: " choice
+    if [[ $choice =~ ^[0-9]+$ ]] && [ $choice -ge 1 ] && [ $choice -le ${#backup_files[@]} ]; then
+      local selected_backup="${backup_files[$((choice-1))]}"
+      local instance_dir="${main_dir}/Instance_${instance_name}"
+      local saved_arks_dir="${instance_dir}/Saved/SavedArks"
+
+      echo "$(basename "$selected_backup") is getting restored ..."
+      mkdir -p "$saved_arks_dir"
+      tar -xzf "$selected_backup" -C "$instance_dir/Saved"
+      adjust_ownership_and_permissions "$saved_arks_dir"
+      echo "Backup restored successfully!"
+
+      echo "Starting server..."
+      start_instance "$instance_name"
+      echo "Server should be up in a few minutes."
+    else
+      echo "Invalid choice."
+    fi
+  else
+    echo "No backups found for instance $instance_name."
+  fi
+}
+select_instance() {
+  local instances=($(list_instances))
+  if [ ${#instances[@]} -eq 0 ]; then
+    echo "No instances found."
+    exit 1
+  fi
+  echo "Available instances:"
+  for ((i=0; i<${#instances[@]}; i++)); do
+    echo "$((i+1)). ${instances[i]}"
+  done
+  while true; do
+    read -p "Enter the number of the instance: " choice
+    if [[ $choice =~ ^[0-9]+$ ]] && [ $choice -ge 1 ] && [ $choice -le ${#instances[@]} ]; then
+      echo "${instances[$((choice-1))]}"
+      break
+    else
+      echo "Invalid choice. Please try again."
+    fi
+  done
+}
+
+validate_instance() {
+  local instance_name="$1"
+  if ! docker ps -q -f name=^/asa_${instance_name}$ > /dev/null; then
+    echo "Instance $instance_name is not running or does not exist."
+    return 1
+  fi
+}
+
+display_logs() {
+  local instance_name="$1"
+  local live="$2"
+
+  if ! validate_instance "$instance_name"; then
+    instance_name=$(select_instance)
+  fi
+
+  display_single_instance_logs "$instance_name" "$live"
+}
+
+display_single_instance_logs() {
+  local instance_name="$1"
+  local live="$2"
+  local container_name="asa_${instance_name}"
+
+  if [[ "$live" == "-live" ]]; then
+    echo "Displaying live logs for instance $instance_name. Press Ctrl+C to exit."
+    docker logs -f "$container_name"
+  else
+    echo "Displaying logs for instance $instance_name:"
+    docker logs "$container_name"
+  fi
+}
+manage_service() {
+  get_docker_compose_cmd
+  local action=$1
+  local instance_name=$2
+  local additional_args="${@:3}"
+  # Ensure root privileges for specific actions
+  if [[ "$action" == "-setup" ]]; then
+  check_puid_pgid_user "$PUID" "$PGID"
+  fi
+
+  # Adjust Docker permissions only for actions that explicitly require Docker interaction
+  case $action in
+  -start | -stop | -update | -create | -edit | -restore | -logs | -backup | -restart | -shutdown | -status | -chat | -saveworld)
+    adjust_docker_permissions
+    ;;
+  esac
+
+  # Special handling for -start all and -stop all actions
+  if [[ "$action" == "-start" || "$action" == "-stop" ]] && [[ "$instance_name" == "-all" ]]; then
+    perform_action_on_all_instances "$action"
+    return
+  fi
+
+  # Handle actions
+  case $action in
+  -list)
+    list_instances
+    ;;
+  -edit)
+    edit_instance
+    ;;
+  -setup)
+    root_tasks
+    echo "Setup completed. Please run './POK-manager.sh -create <instance_name>' to create an instance."
+    ;;
+  -create)
+    # No need for root privileges here unless specific actions require it
+    instance_name=$(prompt_for_instance_name "$instance_name")
+    check_puid_pgid_user "$PUID" "$PGID"
+    generate_docker_compose "$instance_name" 
+    adjust_ownership_and_permissions "$MAIN_DIR"
+    # Ensure POK-manager.sh is executable
+    start_instance "$instance_name"
+    ;;
+  -start)
+    start_instance "$instance_name"
+    ;;
+  -backup)
+    if [[ -z "$instance_name" ]]; then
+      echo "No instance name or '-all' flag specified. Defaulting to backing up all instances."
+      backup_instance "-all"
+    elif [[ "$instance_name" == "-all" ]]; then
+      backup_instance "-all"
+    else
+      backup_instance "$instance_name"
+    fi
+    ;;
+  -restore)
+    restore_instance "$instance_name"
+    ;;
+  -stop)
+    stop_instance "$instance_name"
+    ;;
+  -update)
+    update_server_files_and_docker
+    exit 0
+    ;;
+  -restart | -shutdown)
+    execute_rcon_command "$action" "$instance_name" "${additional_args[@]}"
+    ;;
+  -saveworld |-status)
+    execute_rcon_command "$action" "$instance_name"
+    ;;
+  -chat)
+    local message="$instance_name"
+    instance_name="$additional_args"
+    execute_rcon_command "$action" "$instance_name" "$message"
+    ;;
+  -custom)
+    local rcon_command="$instance_name"
+    instance_name="$additional_args"
+    execute_rcon_command "$action" "$instance_name" "$rcon_command"
+    ;;
+  -logs)
+    local live=""
+    if [[ "$instance_name" == "-live" ]]; then
+      live="-live"
+      instance_name="$additional_args"
+    fi
+
+    if [[ -z "$instance_name" ]]; then
+      echo "Available running instances:"
+      local instances=($(list_running_instances))
+      if [ ${#instances[@]} -eq 0 ]; then
+        echo "No running instances found."
+        exit 1
+      fi
+      for ((i=0; i<${#instances[@]}; i++)); do
+        echo "$((i+1)). ${instances[i]}"
+      done
+      while true; do
+        read -p "Enter the number of the running instance: " choice
+        if [[ $choice =~ ^[0-9]+$ ]] && [ $choice -ge 1 ] && [ $choice -le ${#instances[@]} ]; then
+          instance_name="${instances[$((choice-1))]}"
+          break
+        else
+          echo "Invalid choice. Please try again."
+        fi
+      done
+    fi
+    display_logs "$instance_name" "$live"
+    ;;
+  *)
+    echo "Invalid action. Usage: $0 {action} [additional_args...] {instance_name}"
+    echo "Actions include: -start, -stop, -update, -create, -setup, -status, -restart, -saveworld, -chat, -custom, -backup, -restore"
+    exit 1
+    ;;
+  esac
+}
+# Define valid actions
+declare -a valid_actions
+valid_actions=("-create" "-start" "-stop" "-saveworld" "-shutdown" "-restart" "-status" "-update" "-install" "-list" "-beta" "-stable" "-version" "-upgrade" "-console" "-logs" "-backup" "-restore" "-showconfig" "-migrate")
+
+display_usage() {
+  echo "Usage: $0 {action} [instance_name|-all] [additional_args...]"
+  echo
+  echo "Actions:"
+  echo "  -list                                     List all instances"
+  echo "  -edit                                     Edit an instance's configuration"
+  echo "  -setup                                    Perform initial setup tasks"
+  echo "  -create <instance_name>                   Create a new instance"
+  echo "  -start <instance_name|-all>               Start an instance or all instances"
+  echo "  -stop <instance_name|-all>                Stop an instance or all instances"
+  echo "  -shutdown [minutes] <instance_name|-all>  Shutdown an instance or all instances with an optional countdown"
+  echo "  -update                                   Check for server files & Docker image updates (doesn't modify the script itself)"
+  echo "  -upgrade                                  Upgrade POK-manager.sh script to the latest version (requires confirmation)"
+  echo "  -status <instance_name|-all>              Show the status of an instance or all instances"
+  echo "  -restart [minutes] <instance_name|-all>   Restart an instance or all instances"
+  echo "  -saveworld <instance_name|-all>           Save the world of an instance or all instances"
+  echo "  -chat \"<message>\" <instance_name|-all>    Send a chat message to an instance or all instances"
+  echo "  -custom <command> <instance_name|-all>    Execute a custom command on an instance or all instances"
+  echo "  -backup [instance_name|-all]              Backup an instance or all instances (defaults to all if not specified)"
+  echo "  -restore [instance_name]                  Restore an instance from a backup"
+  echo "  -logs [-live] <instance_name>             Display logs for an instance (optionally live)"
+  echo "  -beta                                     Switch to beta mode to use beta version Docker images"
+  echo "  -stable                                   Switch to stable mode to use stable version Docker images"
+  echo "  -migrate                                  Migrate file ownership from 1000:1000 to 7777:7777 for compatibility with 2_1 images"
+  echo "  -version                                  Display the current version of POK-manager"
+}
+
+# Display version information
+display_version() {
+  echo "POK-manager.sh version ${POK_MANAGER_VERSION} (${POK_MANAGER_BRANCH})"
+  echo "Default PUID: ${PUID}, PGID: ${PGID}"
+  local image_tag=$(get_docker_image_tag)
+  echo "Docker image: acekorneya/asa_server:${image_tag}"
+}
+
+# Function to set beta/stable mode
+set_beta_mode() {
+  local mode="$1" # "beta" or "stable"
+  local config_dir="${BASE_DIR}/config/POK-manager"
+  local new_tag=""
+  
+  mkdir -p "$config_dir"
+  
+  if [ "$mode" = "beta" ]; then
+    echo "Setting POK-manager to beta mode"
+    echo "beta" > "${config_dir}/beta_mode"
+    POK_MANAGER_BRANCH="beta"
+    new_tag="2_1_beta"
+  else
+    echo "Setting POK-manager to stable mode"
+    rm -f "${config_dir}/beta_mode"
+    POK_MANAGER_BRANCH="stable"
+    new_tag="2_0_latest"
+  fi
+  
+  # Update all docker-compose.yaml files to use the new image tag
+  echo "Updating docker-compose files for all instances to use ${new_tag} tag..."
+  
+  # Find docker-compose files - check multiple locations
+  
+  # First, look in the Instance_* directories
+  local instance_compose_files=()
+  for instance_dir in "${BASE_DIR}"/Instance_*/; do
+    if [ -d "$instance_dir" ]; then
+      local instance_name=$(basename "$instance_dir" | sed 's/Instance_//')
+      
+      # Check both possible locations for the docker-compose file
+      local compose_file1="${instance_dir}/docker-compose-${instance_name}.yaml"
+      local compose_file2="${BASE_DIR}/docker-compose-${instance_name}.yaml"
+      
+      if [ -f "$compose_file1" ]; then
+        instance_compose_files+=("$compose_file1")
+      fi
+      
+      if [ -f "$compose_file2" ]; then
+        instance_compose_files+=("$compose_file2")
+      fi
+    fi
+  done
+  
+  # Also check for docker-compose files directly in the base directory
+  for compose_file in "${BASE_DIR}"/docker-compose-*.yaml; do
+    if [ -f "$compose_file" ]; then
+      instance_compose_files+=("$compose_file")
+    fi
+  done
+  
+  if [ ${#instance_compose_files[@]} -eq 0 ]; then
+    echo "No docker-compose files found. No updates needed."
+  else
+    echo "Found ${#instance_compose_files[@]} docker-compose files to update."
+    
+    # Update each found docker-compose file
+    for compose_file in "${instance_compose_files[@]}"; do
+      local instance_name=$(basename "$compose_file" | sed -E 's/docker-compose-(.*)\.yaml/\1/')
+      echo "Updating docker-compose file for instance: ${instance_name}"
+      
+      # Use the dedicated function to update the image tag
+      update_docker_compose_image_tag "$compose_file" "$new_tag"
+    done
+  fi
+  
+  echo "POK-manager is now in ${mode} mode. Docker images with tag '${new_tag}' will be used."
+  
+  # Provide information about PUID/PGID settings
+  local legacy_puid=1000
+  local legacy_pgid=1000
+  
+  if [ "$mode" = "beta" ]; then
+    echo "Using PUID:PGID=7777:7777 for beta mode (2_1_beta image)"
+  else
+    # For stable mode, check which image tag version we're using
+    local image_version="2_0"
+    
+    # Check if server files exist and determine ownership
+    local server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
+    if [ -d "$server_files_dir" ]; then
+      local file_ownership=$(stat -c '%u:%g' "$server_files_dir")
+      
+      # If files are NOT owned by 1000:1000, we're using 2_1_latest
+      if [ "$file_ownership" != "1000:1000" ]; then
+        image_version="2_1"
+      fi
+    fi
+    
+    if [ "$image_version" = "2_1" ]; then
+      echo "Using PUID:PGID=7777:7777 for stable mode (2_1_latest image)"
+    else
+      echo "Using PUID:PGID=1000:1000 for stable mode (2_0_latest image)"
+    fi
+  fi
+  echo "Docker Compose files will maintain their existing PUID/PGID settings for backward compatibility."
+  
+  echo "Please restart any running containers to apply the changes."
+}
+
+# Function to check for beta mode
+check_beta_mode() {
+  local config_dir="${BASE_DIR}/config/POK-manager"
+  
+  if [ -f "${config_dir}/beta_mode" ]; then
+    POK_MANAGER_BRANCH="beta"
+    return 0  # Beta mode is enabled
+  else
+    POK_MANAGER_BRANCH="stable"
+    return 1  # Beta mode is not enabled
+  fi
+}
+
+# Add the upgrade function
+upgrade_pok_manager() {
+  echo "Checking for updates to POK-manager.sh..."
+  
+  # Create the config directory if it doesn't exist
+  mkdir -p "${BASE_DIR%/}/config/POK-manager"
+  
+  # Backup the current script
+  cp "$0" "${BASE_DIR%/}/config/POK-manager/pok-manager.backup"
+  echo "Backed up current script to ${BASE_DIR%/}/config/POK-manager/pok-manager.backup"
+  
+  # Check if we're in beta mode
+  local branch="master"
+  if check_beta_mode; then
+    branch="beta"
+  fi
+  
+  # Download the latest version from GitHub
+  echo "Downloading the latest version from GitHub ($branch branch)..."
+  
+  # URL to download from with cache-busting parameter
+  local timestamp=$(date +%s)
+  local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/$branch/POK-manager.sh?t=${timestamp}"
+  local download_output
+  
+  # Execute curl and capture both output and HTTP status code
+  download_output=$(curl -s -w "%{http_code}" -o "${BASE_DIR%/}/POK-manager.sh.new" "$script_url")
+  local http_code=${download_output: -3}  # Get the last 3 characters (HTTP status code)
+  
+  if [ "$http_code" = "200" ] && [ -s "${BASE_DIR%/}/POK-manager.sh.new" ]; then
+    # Make the new file executable
+    chmod +x "${BASE_DIR%/}/POK-manager.sh.new"
+    
+    # Replace the old file with the new one
+    mv "${BASE_DIR%/}/POK-manager.sh.new" "$0"
+    echo "Update successful. POK-manager.sh has been updated to the latest version."
+    
+    # Create a flag file to indicate that we've just upgraded
+    # This will be checked when the script restarts to prevent a second prompt
+    touch "${BASE_DIR%/}/config/POK-manager/just_upgraded"
+    
+    # Re-execute the script with the same arguments to load the new version
+    echo "Restarting script to load updated version..."
+    exec "$0" "$@"
+  elif [ "$http_code" = "404" ]; then
+    echo "Error: File not found on GitHub (404). Please check that the repository and branch exist:"
+    echo "Repository: https://github.com/Acekorneya/Ark-Survival-Ascended-Server"
+    echo "Branch: $branch"
+    # Clean up the incomplete download
+    rm -f "${BASE_DIR%/}/POK-manager.sh.new"
+  else
+    echo "Failed to download the update (HTTP code: $http_code). Please try again later or check your internet connection."
+    # Clean up the incomplete download
+    rm -f "${BASE_DIR%/}/POK-manager.sh.new"
+    # Restore from backup if download failed
+    cp "${BASE_DIR%/}/config/POK-manager/pok-manager.backup" "$0"
+    echo "Restored from backup."
+  fi
+}
+
+# Function to get the active container tag (latest or beta)
+get_container_tag() {
+  local instance_name="$1"
+  
+  # Determine the version based on instance name or file ownership
+  local image_tag_version="2_1"  # Default to the new version
+  
+  # Check ownership of files to determine version compatibility
+  if [ -d "${BASE_DIR}/ServerFiles/arkserver" ]; then
+    local file_ownership=$(stat -c '%u:%g' "${BASE_DIR}/ServerFiles/arkserver")
+    
+    if [ "$file_ownership" = "1000:1000" ]; then
+      image_tag_version="2_0"
+    fi
+  fi
+  
+  # If a beta flag file exists and POK_MANAGER_BRANCH is beta, use beta suffix
+  if [ -f "${BASE_DIR}/config/POK-manager/beta_mode" ] && [ "$POK_MANAGER_BRANCH" = "beta" ]; then
+    echo "${image_tag_version}_beta"
+  else
+    echo "${image_tag_version}_latest"
+  fi
+}
+
+# Function to update server files and Docker images (but not the script itself)
+# This is called by the -update command
+update_server_files_and_docker() {
+  echo "===== CHECKING FOR UPDATES ====="
+  echo "----- Checking for POK-manager.sh script updates -----"
+  local update_info_file="${BASE_DIR}/config/POK-manager/update_available"
+  
+  # Check for POK-manager.sh updates without automatic installation
+  check_for_POK_updates "force"
+  
+  # If updates are available, notify the user
+  if [ -f "$update_info_file" ]; then
+    local new_version=$(cat "$update_info_file")
+    echo "********************************************************************"
+    if [ "$new_version" != "unknown" ]; then
+      echo "* A newer version of POK-manager.sh is available: $new_version (current: $POK_MANAGER_VERSION)"
+    else
+      echo "* An update to POK-manager.sh is available"
+    fi
+    echo "* Run './POK-manager.sh -upgrade' to upgrade the script (this won't happen automatically)"
+    echo "********************************************************************"
+  else
+    echo "POK-manager.sh script is up to date"
+  fi
+
+  echo "----- Checking for ARK server files & Docker image updates -----"
+  echo "Note: This WILL update server files and Docker images, but NOT the script itself"
+
+  # Pull the latest image - detect from any running instance or from file ownership
+  # If there are running instances, use the first one's image
+  local running_instances=($(list_running_instances))
+  if [ ${#running_instances[@]} -gt 0 ]; then
+    local instance_name="${running_instances[0]}"
+    echo "Using instance '$instance_name' to determine appropriate Docker image"
+    local image_tag=$(get_docker_image_tag "$instance_name")
+    echo "Using Docker image tag: ${image_tag}"
+    pull_docker_image "$instance_name"
+  else 
+    # No running instances, determine from file ownership
+    echo "Determining Docker image based on file ownership"
+    local image_tag=$(get_docker_image_tag "")
+    echo "Using Docker image tag: ${image_tag}"
+    pull_docker_image ""
+  fi
+
+  # Check if SteamCMD is installed, and install it if necessary
+  install_steamcmd
+
+  # Check if the server files are installed
+  if [ ! -f "${BASE_DIR%/}/ServerFiles/arkserver/appmanifest_2430930.acf" ]; then
+    echo "---- ARK server files not found. Installing server files using SteamCMD -----"
+    ensure_steamcmd_executable # Make sure SteamCMD is executable
+    if "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +login anonymous +app_update 2430930 +quit; then
+      echo "----- ARK server files installed successfully -----"
+      # Move the appmanifest_2430930.acf file to the correct location
+      if [ -f "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" ]; then
+        cp "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" "${BASE_DIR%/}/ServerFiles/arkserver/"
+        echo "Copied appmanifest_2430930.acf to the correct location."
+      else
+        echo "appmanifest_2430930.acf not found in steamapps directory. Skipping move."
+      fi
+    else
+      echo "Failed to install ARK server files using SteamCMD. Please check the logs for more information."
+      exit 1
+    fi
+  else
+    # Check for updates to the ARK server files
+    local current_build_id=$(get_build_id_from_acf)
+    local latest_build_id=$(get_current_build_id)
+
+    if [ "$current_build_id" != "$latest_build_id" ]; then
+      echo "---- New server build available: $latest_build_id Updating ARK server files -----"
+
+      # Check if any running instance has the update_server.sh script
+      local update_script_found=false
+      for instance in $(list_running_instances); do
+        if docker exec "asa_${instance}" test -f /home/pok/scripts/update_server.sh; then
+          update_script_found=true
+          echo "Running update_server.sh script in the container for instance: $instance"
+          docker exec -it "asa_${instance}" /bin/bash -c "/home/pok/scripts/update_server.sh" | while read -r line; do
+            echo "[$instance] $line"
+          done
+          break
+        fi
+      done
+
+      if [ "$update_script_found" = false ]; then
+        echo "No running instance found with the update_server.sh script. Updating server files using SteamCMD..."
+        ensure_steamcmd_executable # Make sure SteamCMD is executable
+        if "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +login anonymous +app_update 2430930 +quit; then
+          echo "SteamCMD update completed successfully."
+          # Move the appmanifest_2430930.acf file to the correct location
+          if [ -f "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" ]; then
+            cp "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" "${BASE_DIR%/}/ServerFiles/arkserver/"
+            echo "Copied appmanifest_2430930.acf to the correct location."
+          else
+            echo "appmanifest_2430930.acf not found in steamapps directory. Skipping move."
+          fi
+        else
+          echo "SteamCMD update failed. Please check the logs for more information."
+          exit 1
+        fi
+      fi
+
+      # Check if the server files were updated successfully
+      local updated_build_id=$(get_build_id_from_acf)
+      if [ "$updated_build_id" == "$latest_build_id" ]; then
+        echo "----- ARK server files updated successfully to build id: $latest_build_id -----"
+      else
+        echo "----- Failed to update ARK server files to the latest build. Current build id: $updated_build_id -----"
+        exit 1
+      fi
+    else
+      echo "----- ARK server files are already up to date with build id: $current_build_id -----"
+    fi
+  fi
+
+  echo "----- Update process completed -----"
+}
+
+# Function to update the Docker image tag in a docker-compose.yaml file
+update_docker_compose_image_tag() {
+  local compose_file="$1"
+  local new_image_tag="$2"
+  
+  # Check if the file exists
+  if [ ! -f "$compose_file" ]; then
+    echo "Error: Docker compose file not found at $compose_file"
+    return 1
+  fi
+  
+  # Create a temporary file
+  local tmp_file="${compose_file}.tmp"
+  
+  # Record the original ownership
+  local file_owner=$(stat -c '%u' "$compose_file")
+  local file_group=$(stat -c '%g' "$compose_file")
+  
+  # Read the file line by line and update the image tag
+  while IFS= read -r line; do
+    if [[ "$line" =~ image:[[:space:]]*acekorneya/asa_server:[0-9]+_[0-9]+_(latest|beta) ]] || 
+       [[ "$line" =~ image:[[:space:]]*acekorneya/asa_server:.*$ ]]; then
+      # Replace the image tag with the new one, ensuring we only output the exact tag string
+      echo "    image: acekorneya/asa_server:${new_image_tag}" >> "$tmp_file"
+    else
+      # Keep the line as is
+      echo "$line" >> "$tmp_file"
+    fi
+  done < "$compose_file"
+  
+  # Replace the original file with the updated one
+  mv "$tmp_file" "$compose_file"
+  
+  # Restore the original ownership if running as sudo
+  if is_sudo && [ -n "$file_owner" ] && [ -n "$file_group" ]; then
+    chown "${file_owner}:${file_group}" "$compose_file"
+  fi
+  
+  echo "Updated Docker Compose file to use image tag: ${new_image_tag}"
+}
+
+# Function to help users migrate file ownership
+migrate_file_ownership() {
+  echo "===== File Ownership Migration Tool ====="
+  echo "This tool will help you migrate your file ownership from 1000:1000 to 7777:7777"
+  echo "for compatibility with the new default Docker image."
+  echo ""
+  echo "⚠️ WARNING: This will change ownership of all your server files and may require elevated privileges."
+  echo "Make sure all your server instances are stopped before proceeding."
+  echo ""
+  
+  # Check if we have sudo access
+  if ! is_sudo; then
+    echo "This operation requires sudo privileges."
+    echo "Please run this command with sudo: sudo ./POK-manager.sh -migrate"
+    return 1
+  fi
+  
+  # First list the specific directories that we know need to be changed
+  # (for better user information and backwards compatibility)
+  local dirs_to_change=()
+  
+  # Check if ServerFiles exists
+  if [ -d "${BASE_DIR}/ServerFiles" ]; then
+    dirs_to_change+=("${BASE_DIR}/ServerFiles")
+  fi
+  
+  # Check for instance directories
+  for instance_dir in "${BASE_DIR}"/Instance_*/; do
+    if [ -d "$instance_dir" ]; then
+      dirs_to_change+=("$instance_dir")
+    fi
+  done
+  
+  # Check for Cluster directory
+  if [ -d "${BASE_DIR}/Cluster" ]; then
+    dirs_to_change+=("${BASE_DIR}/Cluster")
+  fi
+  
+  # Show the user which directories will be changed
+  echo "The following directories will have their ownership changed to 7777:7777:"
+  for dir in "${dirs_to_change[@]}"; do
+    echo "  - $dir"
+  done
+  
+  # Additional directories that will be changed
+  echo -e "\nAdditionally, all other files and folders in the base directory will have their ownership changed."
+  
+  # Ask for confirmation
+  read -p "Are you sure you want to proceed? (y/N): " confirm
+  if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+    echo "Migration cancelled."
+    return 1
+  fi
+  
+  # Change ownership of each directory
+  echo "Changing file ownership to 7777:7777..."
+  
+  # First process the specific directories we listed
+  for dir in "${dirs_to_change[@]}"; do
+    echo "Processing: $dir"
+    chown -R 7777:7777 "$dir"
+  done
+  
+  # Now process all other files and directories in the base directory
+  echo "Processing remaining files and directories in ${BASE_DIR}"
+  
+  # Find and change ownership of all other files/directories in BASE_DIR except POK-manager.sh
+  find "${BASE_DIR}" -maxdepth 1 -not -name "POK-manager.sh" -not -path "${BASE_DIR}" | while read item; do
+    if [[ ! " ${dirs_to_change[@]} " =~ " ${item} " ]]; then
+      echo "Processing: $item"
+      chown -R 7777:7777 "$item"
+    fi
+  done
+  
+  # Ensure POK-manager.sh has correct ownership and permissions
+  echo "Setting correct permissions for POK-manager.sh"
+  chown 7777:7777 "${BASE_DIR}/POK-manager.sh"
+  chmod 755 "${BASE_DIR}/POK-manager.sh"
+  
+  echo "✅ File ownership migration complete."
+  echo ""
+  echo "Your files are now compatible with the 2_1_latest Docker image."
+  echo "Any running servers will need to be restarted to use the new image."
+  echo ""
+  echo "Note: If you want to go back to the 1000:1000 ownership, you can run:"
+  echo "sudo chown -R 1000:1000 ${BASE_DIR}"
+}
+
+main() {
+  # Extract the command portion without PUID/PGID
+  local command_args=""
+  
+  # Skip the script name in $0
+  for arg in "$@"; do
+    command_args="${command_args} ${arg}"
+  done
+  
+  # Remove leading space
+  command_args="${command_args# }"
+  
+  # Check for required user and group at the start
+  check_puid_pgid_user "$PUID" "$PGID" "$command_args"
+  check_for_POK_updates
+  # Check if we're in beta mode
+  check_beta_mode
+  
+  if [ "$#" -lt 1 ]; then
+    display_usage
+    exit 1
+  fi
+
+  local action="$1"
+  shift # Remove the action from the argument list
+  local instance_name="${1:-}" # Default to empty if not provided
+  local additional_args="${@:2}" # Capture any additional arguments
+
+  # Check if the provided action is valid
+  local is_valid=false
+  for valid_action in "${valid_actions[@]}"; do
+    if [[ "$action" == "$valid_action" ]]; then
+      is_valid=true
+      break
+    fi
+  done
+  
+  if [[ "$is_valid" == "false" ]]; then
+    echo "Invalid action '${action}'."
+    display_usage
+    exit 1
+  fi
+
+  # Special cases for beta/stable/version/upgrade commands
+  if [[ "$action" == "-beta" ]]; then
+    set_beta_mode "beta"
+    exit 0
+  elif [[ "$action" == "-stable" ]]; then
+    set_beta_mode "stable"
+    exit 0
+  elif [[ "$action" == "-version" ]]; then
+    display_version
+    exit 0
+  elif [[ "$action" == "-upgrade" ]]; then
+    upgrade_pok_manager
+    exit 0
+  elif [[ "$action" == "-migrate" ]]; then
+    migrate_file_ownership
+    exit 0
+  fi
+
+  # Check if instance_name or -all is provided for actions that require it
+  if [[ "$action" =~ ^(-start|-stop|-saveworld|-status)$ ]] && [[ -z "$instance_name" ]]; then
+    echo "Error: $action requires an instance name or -all."
+    echo "Usage: $0 $action <instance_name|-all>"
+    exit 1
+  elif [[ "$action" =~ ^(-shutdown|-restart)$ ]]; then
+    if [[ -z "$instance_name" ]]; then
+      echo "Error: $action requires a timer (in minutes) and an instance name or -all."
+      echo "Usage: $0 $action <minutes> <instance_name|-all>"
+      exit 1
+    elif [[ "$instance_name" =~ ^[0-9]+$ ]]; then
+      if [[ -z "$additional_args" ]]; then
+        echo "Error: $action requires an instance name or -all after the timer."
+        echo "Usage: $0 $action <minutes> <instance_name|-all>"
+        exit 1
+      else
+        # Store the timer value separately
+        local timer="$instance_name"
+        instance_name="$additional_args"
+        additional_args=("$timer")
+      fi
+    fi
+  fi
+
+  # Special check for -chat action
+  if [[ "$action" == "-chat" ]]; then
+    if [[ "$#" -lt 2 ]]; then
+      echo "Error: -chat requires a quoted message and an instance name or -all"
+      echo "Usage: $0 -chat \"<message>\" <instance_name|-all>"
+      exit 1
+    fi
+    if [[ -z "$instance_name" ]]; then
+      echo "Error: -chat requires an instance name or -all."
+      echo "Usage: $0 -chat \"<message>\" <instance_name|-all>"
+      exit 1
+    fi
+  fi
+
+  # Special check for -custom action
+  if [[ "$action" == "-custom" ]]; then
+    if [[ -z "$instance_name" && "$instance_name" != "-all" ]]; then
+      echo "Error: -custom requires an instance name or -all."
+      echo "Usage: $0 -custom <additional_args> <instance_name|-all>"
+      exit 1
+    fi
+  fi
+
+  # Pass to the manage_service function
+  manage_service "$action" "$instance_name" "$additional_args"
+}
+
+# Function to determine Docker image tag based on branch
+get_docker_image_tag() {
+  local instance_name="$1"
+  
+  # If running in beta mode, use beta suffix, otherwise use latest
+  local branch_suffix="latest"
+  local is_beta=false
+  
+  if check_beta_mode; then
+    branch_suffix="beta"
+    is_beta=true
+  fi
+  
+  # Default to the new version
+  local image_tag_version="2_1"
+  
+  # If we're in beta mode, always use 2_1_beta regardless of file ownership
+  if $is_beta; then
+    image_tag_version="2_1"
+  else
+    # For stable branch, check file ownership to determine compatibility version
+    # If server files directory exists, check ownership to determine backward compatibility
+    local server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
+    if [ -d "$server_files_dir" ]; then
+      local file_ownership=$(stat -c '%u:%g' "$server_files_dir")
+      
+      # If files are owned by 1000:1000, use the 2_0 image for compatibility
+      if [ "$file_ownership" = "1000:1000" ]; then
+        image_tag_version="2_0"
+        # If running interactively, inform the user - but only to stderr so it doesn't get captured
+        if [ -t 0 ]; then
+          echo "ℹ️ Detected legacy file ownership (1000:1000). Using compatible image version." >&2
+        fi
+      fi
+    fi
+  fi
+  
+  echo "${image_tag_version}_${branch_suffix}"
+}
+
+# Invoke the main function with all passed arguments
+main "$@"
