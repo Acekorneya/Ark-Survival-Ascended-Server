@@ -1,6 +1,10 @@
 FROM ubuntu:20.04
 
-# Accept PUID and PGID environment variables to allow runtime specification
+# IMPORTANT: These values are set at build time and CANNOT be changed at runtime
+# The container has fixed user IDs:
+# - 2_0_latest image: PUID=1000, PGID=1000
+# - 2_1_latest image: PUID=7777, PGID=7777
+# Host file ownership MUST match these values to avoid permission issues
 ARG PUID=7777
 ARG PGID=7777
 

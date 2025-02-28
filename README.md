@@ -250,9 +250,28 @@ Note: Restoring a backup will overwrite the current saved game data for the spec
 
 ## User Permissions
 
-**Important Change:** Starting with version 2.1, the default container user has changed from 1000:1000 to 7777:7777 to avoid conflicts with the default user ID on many Linux distributions.
+**Important Information About Container Permissions:**
 
-### For Existing Users (Running Prior Versions)
+The container runs with a fixed user ID (UID) and group ID (GID) that is set when the Docker image is built:
+
+- 2_0_latest images use UID:GID 1000:1000
+- 2_1_latest images use UID:GID 7777:7777 (default since version 2.1)
+
+**These values cannot be changed at runtime.** For proper file access, the files on your host system must be owned by a user with a matching UID:GID.
+
+### File Ownership Requirements
+
+To prevent permission issues, your server files **must** have the correct ownership on the host machine:
+
+```bash
+# For 2_0_latest images (legacy compatibility)
+sudo chown -R 1000:1000 ./ServerFiles ./Instance_* ./Cluster
+
+# For 2_1_latest images (recommended)
+sudo chown -R 7777:7777 ./ServerFiles ./Instance_* ./Cluster
+```
+
+### Migration Options
 
 If you're upgrading from an earlier version, you have these options:
 
@@ -262,8 +281,8 @@ If you're upgrading from an earlier version, you have these options:
 
 2. **Option 1: Continue using 1000:1000 (backward compatibility):**
    ```bash
-   # Your files stay owned by 1000:1000
-   # The script will automatically use the 2_0_latest image
+   # Ensure your files are owned by 1000:1000
+   sudo chown -R 1000:1000 ./ServerFiles ./Instance_* ./Cluster
    ```
 
 3. **Option 2: Migrate to the new 7777:7777 user (recommended):**
@@ -279,6 +298,8 @@ If you're upgrading from an earlier version, you have these options:
 
 New installations will default to the 7777:7777 user ID and group ID. This prevents running as root and enhances security while avoiding conflicts with the common default user ID (1000) on many Linux distributions.
 
+When you create new instances, the script will automatically detect the appropriate image to use based on your file ownership and will provide guidance on setting the correct permissions.
+
 ## Docker Compose Configuration
 
 When creating a new server instance using POK-manager.sh, a Docker Compose configuration file (`docker-compose-<instance_name>.yaml`) is generated. Here's an example of the generated file:
@@ -288,10 +309,8 @@ When creating a new server instance using POK-manager.sh, a Docker Compose confi
 | Variable                      | Default           | Description                                                                               |
 | ------------------------------| ------------------| ------------------------------------------------------------------------------------------|
 | `INSTANCE_NAME`               | `Instance_name`   | The name of the instance                                                                  |
-| `PUID`                        | `7777`            | User ID for container processes and file ownership (was 1000 in versions before 2.1)      |
-| `PGID`                        | `7777`            | Group ID for container processes and file ownership (was 1000 in versions before 2.1)     |
-| `BATTLEEYE`                   | `TRUE`            | Set to TRUE to use BattleEye, FALSE to not use BattleEye                                  |
 | `TZ`                          | `America/Los_Angeles`| Timezone setting: Change this to your local timezone.                                  |
+| `BATTLEEYE`                   | `TRUE`            | Set to TRUE to use BattleEye, FALSE to not use BattleEye                                  |
 | `RCON_ENABLED`                | `TRUE`            | Needed for Graceful Shutdown                                                              |
 | `DISPLAY_POK_MONITOR_MESSAGE` | `FALSE`           | TRUE to Show the Server Monitor Messages / Update Monitor Shutdown                        |
 | `UPDATE_SERVER`               | `TRUE`            | Enable or disable update checks                                                           |
@@ -314,6 +333,12 @@ When creating a new server instance using POK-manager.sh, a Docker Compose confi
 | `PASSIVE_MODS`                | `123456`          | Replace with your passive mods IDs                                                        |
 | `MOD_IDS`                     | `123456`          | Add your mod IDs here, separated by commas, e.g., 123456789,987654321                     |
 | `CUSTOM_SERVER_ARGS`          |                   | If You need to add more Custom Args -ForceRespawnDinos -ForceAllowCaveFlyers              |
+
+**Note:** User IDs (PUID) and Group IDs (PGID) are fixed at build time and cannot be changed at runtime:
+- 2_0_latest images use PUID:GID 1000:1000
+- 2_1_latest images use PUID:GID 7777:7777
+
+Host file ownership must match these values to prevent permission issues.
 
 ---
 
@@ -462,6 +487,21 @@ sudo ./POK-manager.sh -migrate
 
 This will update the ownership of all your server files to 7777:7777 for compatibility with the new images.
 
+## Build-time vs Runtime Configuration
+
+It's important to understand the difference between build-time arguments and runtime environment variables:
+
+### Build-time Arguments (Cannot be changed at runtime)
+These values are set when the Docker image is built and cannot be modified when starting a container:
+- `PUID`: The user ID inside the container (fixed at 1000 for 2_0 images, 7777 for 2_1 images)
+- `PGID`: The group ID inside the container (fixed at 1000 for 2_0 images, 7777 for 2_1 images)
+
+### Runtime Environment Variables
+These values can be changed in your docker-compose.yaml file and take effect when the container starts:
+- All the other environment variables listed in the Environment Variables table above
+
+To ensure proper file access between the host and container, the ownership of your files on the host 
+must match the PUID:PGID values of the Docker image you're using.
 
 ## Links
 

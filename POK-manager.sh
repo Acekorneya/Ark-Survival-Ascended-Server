@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.14"
+POK_MANAGER_VERSION="2.1.15"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -828,22 +828,14 @@ services:
       - TZ=$TZ
 EOF
 
-  # Add the PUID/PGID comments or values based on the determined image tag
-  if [[ "$image_tag" == 2_0* ]]; then
-    # For 2_0 images, the default is 1000:1000
-    cat >> "$docker_compose_file" <<-EOF
-      # User/Group settings for legacy compatibility with 2_0 images (1000:1000)
-      - PUID=1000                          # User ID for container processes and file ownership
-      - PGID=1000                          # Group ID for container processes and file ownership
+  # Add clear comments about file ownership requirements
+  cat >> "$docker_compose_file" <<-EOF
+      # NOTE: The container uses fixed user IDs that cannot be changed at runtime.
+      # - For 2_0_latest images: Files must be owned by UID:GID 1000:1000 on the host
+      # - For 2_1_latest images: Files must be owned by UID:GID 7777:7777 on the host
+      # Use 'sudo chown -R 1000:1000 ./ServerFiles ./Instance_* ./Cluster' or 
+      # Use 'sudo chown -R 7777:7777 ./ServerFiles ./Instance_* ./Cluster' to set permissions
 EOF
-  else
-    # For 2_1 images, the default is 7777:7777
-    cat >> "$docker_compose_file" <<-EOF
-      # User/Group settings - Default is now 7777:7777, uncomment and set to 1000:1000 for legacy compatibility if needed
-      # - PUID=7777                          # User ID for container processes and file ownership
-      # - PGID=7777                          # Group ID for container processes and file ownership
-EOF
-  fi
 
   # Iterate over the config_order to maintain the order in Docker Compose
   for key in "${config_order[@]}"; do
@@ -916,11 +908,13 @@ EOF
   
   # Display information about file ownership and container permissions
   if [[ "$image_tag" == 2_0* ]]; then
-    echo -e "\n⚠️ IMPORTANT: This instance will use the 2_0 image with PUID:PGID 1000:1000."
-    echo "Make sure your files are owned by a user with UID:GID 1000:1000 or modify the PUID/PGID settings in the compose file."
+    echo -e "\n⚠️ IMPORTANT: This instance will use the 2_0 image with fixed UID:GID 1000:1000."
+    echo "Make sure your files are owned by a user with UID:GID 1000:1000 on the host system."
+    echo "To set file ownership: sudo chown -R 1000:1000 ./ServerFiles ./Instance_${instance_name} ./Cluster"
   else
-    echo -e "\n⚠️ IMPORTANT: This instance will use the 2_1 image with PUID:PGID 7777:7777."
-    echo "Make sure your files are owned by a user with UID:GID 7777:7777 or uncomment and modify the PUID/PGID settings in the compose file."
+    echo -e "\n⚠️ IMPORTANT: This instance will use the 2_1 image with fixed UID:GID 7777:7777."
+    echo "Make sure your files are owned by a user with UID:GID 7777:7777 on the host system."
+    echo "To set file ownership: sudo chown -R 7777:7777 ./ServerFiles ./Instance_${instance_name} ./Cluster"
   fi
 }
 
