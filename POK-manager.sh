@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.19"
+POK_MANAGER_VERSION="2.1.20"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -542,7 +542,8 @@ check_puid_pgid_user() {
         echo ""
         echo "2. Run with sudo to bypass permission checks:"
         echo "   sudo ./POK-manager.sh $original_command"
-        echo "   (This works but isn't ideal for regular use)"
+        echo "   (This lets you run the script with any user, but note that server files"
+        echo "    still need to be owned by either 1000:1000 or 7777:7777 for the container to work properly)"
         echo ""
         echo "3. Update file ownership to the new default (7777:7777):"
         echo "   sudo chown -R 7777:7777 ${BASE_DIR}"
@@ -572,7 +573,8 @@ check_puid_pgid_user() {
       echo ""
       echo "2. Run with sudo to bypass permission checks:"
       echo "   sudo ./POK-manager.sh $original_command"
-      echo "   (This works but isn't ideal for regular use)"
+      echo "   (This lets you run the script with any user, but note that server files"
+      echo "    still need to be owned by either 1000:1000 or 7777:7777 for the container to work properly)"
       echo ""
       echo "3. Update file ownership to the new default (7777:7777):"
       echo "   sudo chown -R 7777:7777 ${BASE_DIR}"
@@ -603,7 +605,8 @@ check_puid_pgid_user() {
     echo ""
     echo "1. Run with sudo to bypass permission checks:"
     echo "   sudo ./POK-manager.sh $original_command"
-    echo "   (This works but isn't ideal for regular use)"
+    echo "   (This lets you run the script with any user, but note that server files"
+    echo "    still need to be owned by either 1000:1000 or 7777:7777 for the container to work properly)"
     echo ""
     echo "2. Update file ownership to the new default (7777:7777):"
     echo "   sudo chown -R 7777:7777 ${BASE_DIR}"
