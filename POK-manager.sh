@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.15"
+POK_MANAGER_VERSION="2.1.16"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -826,15 +826,6 @@ services:
     environment:
       - INSTANCE_NAME=${instance_name}
       - TZ=$TZ
-EOF
-
-  # Add clear comments about file ownership requirements
-  cat >> "$docker_compose_file" <<-EOF
-      # NOTE: The container uses fixed user IDs that cannot be changed at runtime.
-      # - For 2_0_latest images: Files must be owned by UID:GID 1000:1000 on the host
-      # - For 2_1_latest images: Files must be owned by UID:GID 7777:7777 on the host
-      # Use 'sudo chown -R 1000:1000 ./ServerFiles ./Instance_* ./Cluster' or 
-      # Use 'sudo chown -R 7777:7777 ./ServerFiles ./Instance_* ./Cluster' to set permissions
 EOF
 
   # Iterate over the config_order to maintain the order in Docker Compose
