@@ -254,46 +254,30 @@ Note: Restoring a backup will overwrite the current saved game data for the spec
 
 ### For Existing Users (Running Prior Versions)
 
-If you're upgrading from an earlier version, you have two options:
+If you're upgrading from an earlier version, you have these options:
 
-1. **Continue using 1000:1000 (backward compatibility):**
+1. **Automatic Detection:** The script will automatically detect your file ownership and use the appropriate Docker image:
+   - Files owned by 1000:1000 → Uses acekorneya/asa_server:2_0_latest (compatible with older settings)
+   - Files owned by other UIDs → Uses acekorneya/asa_server:2_1_latest (new default)
+
+2. **Option 1: Continue using 1000:1000 (backward compatibility):**
    ```bash
-   # Specify the PUID/PGID values when running POK-manager.sh
-   CONTAINER_PUID=1000 CONTAINER_PGID=1000 ./POK-manager.sh <commands>
-   
-   # Or add these lines to your docker-compose files:
-   - PUID=1000
-   - PGID=1000
+   # Your files stay owned by 1000:1000
+   # The script will automatically use the 2_0_latest image
    ```
 
-2. **Migrate to the new 7777:7777 user (recommended):**
+3. **Option 2: Migrate to the new 7777:7777 user (recommended):**
    ```bash
-   # Change ownership of your existing files
+   # Use the built-in migration tool
+   sudo ./POK-manager.sh -migrate
+   
+   # Or manually change ownership of your existing files
    sudo chown -R 7777:7777 ./ServerFiles ./Instance_* ./Cluster
    ```
 
 ### For New Users
 
-POK-manager.sh can work with any user as long as it has the correct PUID and PGID (now 7777:7777 by default). This prevents running as root and enhances security.
-
-If you prefer to use a different UID/GID, you can:
-
-1. Set environment variables when running commands:
-   ```bash
-   CONTAINER_PUID=<your_uid> CONTAINER_PGID=<your_gid> ./POK-manager.sh <commands>
-   ```
-
-2. Modify your docker-compose files to include:
-   ```yaml
-   environment:
-     - PUID=<your_uid>
-     - PGID=<your_gid>
-   ```
-
-3. Run with `sudo` to bypass permission checks (not recommended for regular use):
-   ```bash
-   sudo ./POK-manager.sh <commands>
-   ```
+New installations will default to the 7777:7777 user ID and group ID. This prevents running as root and enhances security while avoiding conflicts with the common default user ID (1000) on many Linux distributions.
 
 ## Docker Compose Configuration
 
@@ -456,6 +440,29 @@ Proxmox VM
 The default CPU type (kvm64) in proxmox for linux VMs does not seem to implement all features needed to run the server. When running the docker contain
 In that case just change your CPU type to host in the hardware settings of your VM. After a restart of the VM the container should work without any issues.
 
+## Docker Image Versions
+
+POK-manager supports multiple Docker image versions to ensure backward compatibility:
+
+| Image Tag | Default PUID:PGID | Description |
+|-----------|-----------------|-------------|
+| `2_0_latest` | 1000:1000 | Legacy image for backward compatibility with existing installations |
+| `2_1_latest` | 7777:7777 | New default image that avoids conflicts with common user IDs |
+| `2_0_beta` | 1000:1000 | Beta version of the legacy image |
+| `2_1_beta` | 7777:7777 | Beta version of the new image |
+
+The script automatically selects the appropriate image based on your file ownership:
+- If your server files are owned by UID:GID 1000:1000, it will use the 2_0 image
+- If your server files have any other ownership, it will use the 2_1 image
+
+You can manually migrate from 2_0 to 2_1 by running:
+```bash
+sudo ./POK-manager.sh -migrate
+```
+
+This will update the ownership of all your server files to 7777:7777 for compatibility with the new images.
+
+
 ## Links
 
 - [Docker Installation](https://docs.docker.com/engine/install/)
@@ -512,3 +519,4 @@ Thank you for your support!
     <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Acekorneya/Ark-Survival-Ascended-Server&type=Date" />
   </picture>
 </a>
+

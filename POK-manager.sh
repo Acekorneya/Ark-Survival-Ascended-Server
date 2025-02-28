@@ -707,7 +707,8 @@ root_tasks() {
 }
 
 pull_docker_image() {
-  local image_tag=$(get_docker_image_tag)
+  local instance_name="$1"
+  local image_tag=$(get_docker_image_tag "$instance_name")
   local image_name="acekorneya/asa_server:${image_tag}"
   echo "Pulling Docker image: $image_name"
   sudo docker pull "$image_name"
@@ -781,7 +782,7 @@ write_docker_compose_file() {
   local base_dir=$(dirname "$(realpath "$0")")
   local instance_dir="${base_dir}/Instance_${instance_name}"
   local docker_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
-  local image_tag=$(get_docker_image_tag)
+  local image_tag=$(get_docker_image_tag "$instance_name")
 
   # Ensure the instance directory exists
   mkdir -p "${instance_dir}"
@@ -799,10 +800,24 @@ services:
     environment:
       - INSTANCE_NAME=${instance_name}
       - TZ=$TZ
-      # User/Group settings - Default is now 7777:7777, use 1000:1000 for legacy compatibility
+EOF
+
+  # Add the PUID/PGID comments or values based on the determined image tag
+  if [[ "$image_tag" == 2_0* ]]; then
+    # For 2_0 images, the default is 1000:1000
+    cat >> "$docker_compose_file" <<-EOF
+      # User/Group settings for legacy compatibility with 2_0 images (1000:1000)
+      - PUID=1000                          # User ID for container processes and file ownership
+      - PGID=1000                          # Group ID for container processes and file ownership
+EOF
+  else
+    # For 2_1 images, the default is 7777:7777
+    cat >> "$docker_compose_file" <<-EOF
+      # User/Group settings - Default is now 7777:7777, uncomment and set to 1000:1000 for legacy compatibility if needed
       # - PUID=7777                          # User ID for container processes and file ownership
       # - PGID=7777                          # Group ID for container processes and file ownership
 EOF
+  fi
 
   # Iterate over the config_order to maintain the order in Docker Compose
   for key in "${config_order[@]}"; do
@@ -871,6 +886,16 @@ EOF
   fi
 
   echo "Created Docker Compose file: $docker_compose_file"
+  echo "Using Docker image with tag: ${image_tag}"
+  
+  # Display information about file ownership and container permissions
+  if [[ "$image_tag" == 2_0* ]]; then
+    echo -e "\n⚠️ IMPORTANT: This instance will use the 2_0 image with PUID:PGID 1000:1000."
+    echo "Make sure your files are owned by a user with UID:GID 1000:1000 or modify the PUID/PGID settings in the compose file."
+  else
+    echo -e "\n⚠️ IMPORTANT: This instance will use the 2_1 image with PUID:PGID 7777:7777."
+    echo "Make sure your files are owned by a user with UID:GID 7777:7777 or uncomment and modify the PUID/PGID settings in the compose file."
+  fi
 }
 
 # Function to check and optionally adjust Docker command permissions
@@ -1144,7 +1169,7 @@ find_editor() {
 start_instance() {
   local instance_name=$1
   local docker_compose_file="./Instance_${instance_name}/docker-compose-${instance_name}.yaml"
-  local image_tag=$(get_docker_image_tag)
+  local image_tag=$(get_docker_image_tag "$instance_name")
   
   echo "-----Starting ${instance_name} Server with image tag ${image_tag}-----"
   
@@ -1154,6 +1179,9 @@ start_instance() {
     echo "Make sure the instance ${instance_name} exists and is properly configured."
     exit 1
   fi
+  
+  # Update the docker-compose.yaml file to use the correct image tag
+  update_docker_compose_image_tag "$docker_compose_file" "$image_tag"
   
   # Check permission issues with the compose file
   if [ ! -r "$docker_compose_file" ]; then
@@ -2223,7 +2251,7 @@ manage_service() {
 }
 # Define valid actions
 declare -a valid_actions
-valid_actions=("-create" "-start" "-stop" "-saveworld" "-shutdown" "-restart" "-status" "-update" "-install" "-list" "-beta" "-stable" "-version" "-upgrade" "-console" "-logs" "-backup" "-restore" "-showconfig")
+valid_actions=("-create" "-start" "-stop" "-saveworld" "-shutdown" "-restart" "-status" "-update" "-install" "-list" "-beta" "-stable" "-version" "-upgrade" "-console" "-logs" "-backup" "-restore" "-showconfig" "-migrate")
 
 display_usage() {
   echo "Usage: $0 {action} [instance_name|-all] [additional_args...]"
@@ -2248,6 +2276,7 @@ display_usage() {
   echo "  -logs [-live] <instance_name>             Display logs for an instance (optionally live)"
   echo "  -beta                                     Switch to beta mode to use beta version Docker images"
   echo "  -stable                                   Switch to stable mode to use stable version Docker images"
+  echo "  -migrate                                  Migrate file ownership from 1000:1000 to 7777:7777 for compatibility with 2_1 images"
   echo "  -version                                  Display the current version of POK-manager"
 }
 
@@ -2492,11 +2521,25 @@ upgrade_pok_manager() {
 
 # Function to get the active container tag (latest or beta)
 get_container_tag() {
-  # If a beta flag file exists and POK_MANAGER_BRANCH is beta, use beta version
+  local instance_name="$1"
+  
+  # Determine the version based on instance name or file ownership
+  local image_tag_version="2_1"  # Default to the new version
+  
+  # Check ownership of files to determine version compatibility
+  if [ -d "${BASE_DIR}/ServerFiles/arkserver" ]; then
+    local file_ownership=$(stat -c '%u:%g' "${BASE_DIR}/ServerFiles/arkserver")
+    
+    if [ "$file_ownership" = "1000:1000" ]; then
+      image_tag_version="2_0"
+    fi
+  fi
+  
+  # If a beta flag file exists and POK_MANAGER_BRANCH is beta, use beta suffix
   if [ -f "${BASE_DIR}/config/POK-manager/beta_mode" ] && [ "$POK_MANAGER_BRANCH" = "beta" ]; then
-    echo "2_0_beta"
+    echo "${image_tag_version}_beta"
   else
-    echo "2_0_latest"
+    echo "${image_tag_version}_latest"
   fi
 }
 
@@ -2528,10 +2571,22 @@ update_server_files_and_docker() {
   echo "----- Checking for ARK server files & Docker image updates -----"
   echo "Note: This WILL update server files and Docker images, but NOT the script itself"
 
-  # Pull the latest image
-  local image_tag=$(get_docker_image_tag)
-  echo "Using Docker image tag: ${image_tag}"
-  pull_docker_image
+  # Pull the latest image - detect from any running instance or from file ownership
+  # If there are running instances, use the first one's image
+  local running_instances=($(list_running_instances))
+  if [ ${#running_instances[@]} -gt 0 ]; then
+    local instance_name="${running_instances[0]}"
+    echo "Using instance '$instance_name' to determine appropriate Docker image"
+    local image_tag=$(get_docker_image_tag "$instance_name")
+    echo "Using Docker image tag: ${image_tag}"
+    pull_docker_image "$instance_name"
+  else 
+    # No running instances, determine from file ownership
+    echo "Determining Docker image based on file ownership"
+    local image_tag=$(get_docker_image_tag "")
+    echo "Using Docker image tag: ${image_tag}"
+    pull_docker_image ""
+  fi
 
   # Check if SteamCMD is installed, and install it if necessary
   install_steamcmd
@@ -2608,6 +2663,114 @@ update_server_files_and_docker() {
   echo "----- Update process completed -----"
 }
 
+# Function to update the Docker image tag in a docker-compose.yaml file
+update_docker_compose_image_tag() {
+  local compose_file="$1"
+  local new_image_tag="$2"
+  
+  # Check if the file exists
+  if [ ! -f "$compose_file" ]; then
+    echo "Error: Docker compose file not found at $compose_file"
+    return 1
+  fi
+  
+  # Create a temporary file
+  local tmp_file="${compose_file}.tmp"
+  
+  # Record the original ownership
+  local file_owner=$(stat -c '%u' "$compose_file")
+  local file_group=$(stat -c '%g' "$compose_file")
+  
+  # Read the file line by line and update the image tag
+  while IFS= read -r line; do
+    if [[ "$line" =~ image:[[:space:]]*acekorneya/asa_server:[0-9]+_[0-9]+_(latest|beta) ]]; then
+      # Replace the image tag with the new one
+      echo "    image: acekorneya/asa_server:${new_image_tag}" >> "$tmp_file"
+    else
+      # Keep the line as is
+      echo "$line" >> "$tmp_file"
+    fi
+  done < "$compose_file"
+  
+  # Replace the original file with the updated one
+  mv "$tmp_file" "$compose_file"
+  
+  # Restore the original ownership if running as sudo
+  if is_sudo && [ -n "$file_owner" ] && [ -n "$file_group" ]; then
+    chown "${file_owner}:${file_group}" "$compose_file"
+  fi
+  
+  echo "Updated Docker Compose file to use image tag: ${new_image_tag}"
+}
+
+# Function to help users migrate file ownership
+migrate_file_ownership() {
+  echo "===== File Ownership Migration Tool ====="
+  echo "This tool will help you migrate your file ownership from 1000:1000 to 7777:7777"
+  echo "for compatibility with the new default Docker image."
+  echo ""
+  echo "⚠️ WARNING: This will change ownership of all your server files and may require elevated privileges."
+  echo "Make sure all your server instances are stopped before proceeding."
+  echo ""
+  
+  # Check if we have sudo access
+  if ! is_sudo; then
+    echo "This operation requires sudo privileges."
+    echo "Please run this command with sudo: sudo ./POK-manager.sh -migrate"
+    return 1
+  fi
+  
+  # List all the directories that need ownership changes
+  local dirs_to_change=()
+  
+  # Check if ServerFiles exists
+  if [ -d "${BASE_DIR}/ServerFiles" ]; then
+    dirs_to_change+=("${BASE_DIR}/ServerFiles")
+  fi
+  
+  # Check for instance directories
+  for instance_dir in "${BASE_DIR}"/Instance_*/; do
+    if [ -d "$instance_dir" ]; then
+      dirs_to_change+=("$instance_dir")
+    fi
+  done
+  
+  # Check for Cluster directory
+  if [ -d "${BASE_DIR}/Cluster" ]; then
+    dirs_to_change+=("${BASE_DIR}/Cluster")
+  fi
+  
+  # Show the user which directories will be changed
+  echo "The following directories will have their ownership changed to 7777:7777:"
+  for dir in "${dirs_to_change[@]}"; do
+    echo "  - $dir"
+  done
+  
+  # Ask for confirmation
+  read -p "Are you sure you want to proceed? (y/N): " confirm
+  if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+    echo "Migration cancelled."
+    return 1
+  fi
+  
+  # Change ownership of each directory
+  echo "Changing file ownership to 7777:7777..."
+  for dir in "${dirs_to_change[@]}"; do
+    echo "Processing: $dir"
+    chown -R 7777:7777 "$dir"
+  done
+  
+  echo "✅ File ownership migration complete."
+  echo ""
+  echo "Your files are now compatible with the 2_1_latest Docker image."
+  echo "Any running servers will need to be restarted to use the new image."
+  echo ""
+  echo "Note: If you want to go back to the 1000:1000 ownership, you can run:"
+  echo "sudo chown -R 1000:1000 ${BASE_DIR}/ServerFiles ${BASE_DIR}/Instance_* ${BASE_DIR}/Cluster"
+  
+  return 0
+}
+
 main() {
   # Extract the command portion without PUID/PGID
   local command_args=""
@@ -2664,6 +2827,9 @@ main() {
   elif [[ "$action" == "-upgrade" ]]; then
     upgrade_pok_manager
     exit 0
+  elif [[ "$action" == "-migrate" ]]; then
+    migrate_file_ownership
+    exit 0
   fi
 
   # Check if instance_name or -all is provided for actions that require it
@@ -2719,8 +2885,33 @@ main() {
 
 # Function to determine Docker image tag based on branch
 get_docker_image_tag() {
-  # Use the get_container_tag function for consistency
-  get_container_tag
+  local instance_name="$1"
+  
+  # If running in beta mode, use beta suffix, otherwise use latest
+  local branch_suffix="latest"
+  if check_beta_mode; then
+    branch_suffix="beta"
+  fi
+  
+  # Default to the new version
+  local image_tag_version="2_1"
+  
+  # If server files directory exists, check ownership to determine backward compatibility
+  local server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
+  if [ -d "$server_files_dir" ]; then
+    local file_ownership=$(stat -c '%u:%g' "$server_files_dir")
+    
+    # If files are owned by 1000:1000, use the 2_0 image for compatibility
+    if [ "$file_ownership" = "1000:1000" ]; then
+      image_tag_version="2_0"
+      # If running interactively, inform the user
+      if [ -t 0 ]; then
+        echo "ℹ️ Detected legacy file ownership (1000:1000). Using compatible image version."
+      fi
+    fi
+  fi
+  
+  echo "${image_tag_version}_${branch_suffix}"
 }
 
 # Invoke the main function with all passed arguments
