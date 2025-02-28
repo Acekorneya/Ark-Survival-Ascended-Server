@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.12"
+POK_MANAGER_VERSION="2.1.13"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -1694,6 +1694,18 @@ check_for_POK_updates() {
     fi
   fi
   
+  # Check if we've just upgraded the script
+  local just_upgraded="${BASE_DIR%/}/config/POK-manager/just_upgraded"
+  if [ -f "$just_upgraded" ]; then
+    # Remove the flag file
+    rm -f "$just_upgraded"
+    
+    # Skip update check since we just upgraded
+    echo " GitHub version: $POK_MANAGER_VERSION, Local version: $POK_MANAGER_VERSION"
+    echo "----- POK-manager.sh is already up to date (version $POK_MANAGER_VERSION) -----"
+    return
+  fi
+  
   # Determine which branch to use for updates
   local branch_name="master"
   if [ "$POK_MANAGER_BRANCH" = "beta" ]; then
@@ -2501,6 +2513,10 @@ upgrade_pok_manager() {
     # Replace the old file with the new one
     mv "${BASE_DIR%/}/POK-manager.sh.new" "$0"
     echo "Update successful. POK-manager.sh has been updated to the latest version."
+    
+    # Create a flag file to indicate that we've just upgraded
+    # This will be checked when the script restarts to prevent a second prompt
+    touch "${BASE_DIR%/}/config/POK-manager/just_upgraded"
     
     # Re-execute the script with the same arguments to load the new version
     echo "Restarting script to load updated version..."
