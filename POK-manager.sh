@@ -1,13 +1,19 @@
 #!/bin/bash
-BASE_DIR="$(dirname "$(realpath "$0")")/"
-MAIN_DIR="$BASE_DIR"
-SERVER_FILES_DIR="./ServerFiles/arkserver"
-CLUSTER_DIR="./Cluster"
-instance_dir="./Instance_${instance_name}"
-
 # Version information
-POK_MANAGER_VERSION="2.1.0"
+POK_MANAGER_VERSION="3.1.0"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
+
+# Get the base directory
+SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
+BASE_DIR="$SCRIPT_DIR"
+
+# Check for beta mode early
+if [ -f "${BASE_DIR}/config/POK-manager/beta_mode" ]; then
+  POK_MANAGER_BRANCH="beta"
+fi
+
+# Define colors for pretty output
+RED='\033[0;31m'
 
 # Set PUID and PGID to match the container's expected values
 # Legacy default was 1000:1000, new default is 7777:7777
@@ -1703,16 +1709,26 @@ check_for_POK_updates() {
   
   mkdir -p "${BASE_DIR}/config/POK-manager"
 
-  if command -v wget &>/dev/null; then
+  local download_output
+  local http_code
+  
+  if command -v curl &>/dev/null; then
+    download_output=$(curl -s -w "%{http_code}" -o "$temp_file" "$script_url")
+    http_code=${download_output: -3}  # Get the last 3 characters (HTTP status code)
+  elif command -v wget &>/dev/null; then
     wget -q -O "$temp_file" "$script_url"
-  elif command -v curl &>/dev/null; then
-    curl -s -o "$temp_file" "$script_url"
+    # wget doesn't return HTTP codes the same way, so we check if the file exists and has content
+    if [ -s "$temp_file" ]; then
+      http_code="200"
+    else
+      http_code="404"  # Default error code for wget
+    fi
   else
     echo "Neither wget nor curl is available. Unable to check for updates."
     return
   fi
 
-  if [ -f "$temp_file" ]; then
+  if [ "$http_code" = "200" ] && [ -f "$temp_file" ]; then
     # Check if the downloaded file is at least 1KB in size
     if [ -s "$temp_file" ] && [ $(stat -c%s "$temp_file") -ge 1024 ]; then
       # Extract version information from the downloaded file
@@ -1721,11 +1737,28 @@ check_for_POK_updates() {
       if [ -n "$new_version" ]; then
         # Compare versions using sort for proper semantic versioning comparison
         local current_version="$POK_MANAGER_VERSION"
-        local sorted_versions=$(printf "%s\n%s\n" "$current_version" "$new_version" | sort -V)
-        local latest_version=$(echo "$sorted_versions" | tail -n1)
+        
+        # Function to convert version string to comparable number
+        version_to_number() {
+          local ver=$1
+          # Remove any non-numeric characters except for dots, then split on dots
+          local parts=(${ver//[^0-9.]/ })
+          local major=0 minor=0 patch=0
+          
+          # Parse out the parts
+          if [[ "${parts[0]}" =~ ^[0-9]+$ ]]; then major=${parts[0]}; fi
+          if [[ "${parts[1]}" =~ ^[0-9]+$ ]]; then minor=${parts[1]}; fi
+          if [[ "${parts[2]}" =~ ^[0-9]+$ ]]; then patch=${parts[2]}; fi
+          
+          # Convert to a single number for comparison
+          echo $((major * 1000000 + minor * 1000 + patch))
+        }
+        
+        local current_num=$(version_to_number "$current_version")
+        local new_num=$(version_to_number "$new_version")
         
         # Only notify if the new version is actually newer
-        if [ "$latest_version" = "$new_version" ] && [ "$new_version" != "$current_version" ]; then
+        if [ $new_num -gt $current_num ]; then
           echo "************************************************************"
           echo "* A newer version of POK-manager.sh is available: $new_version *"
           echo "* Current version: $current_version                           *"
@@ -1752,16 +1785,30 @@ check_for_POK_updates() {
       else
         # If we can't extract a version but files differ, just notify about the difference
         if ! cmp -s "$0" "$temp_file"; then
-          echo "************************************************************"
-          echo "* An update to POK-manager.sh is available                 *"
-          echo "* Run './POK-manager.sh -upgrade' to perform the update    *"
-          echo "************************************************************"
+          # Check if the files are functionally different by comparing checksums of content 
+          # excluding comments, whitespace, and empty lines
+          local file1_checksum=$(grep -v "^#" "$0" | grep -v "^$" | tr -d '[:space:]' | md5sum | cut -d' ' -f1)
+          local file2_checksum=$(grep -v "^#" "$temp_file" | grep -v "^$" | tr -d '[:space:]' | md5sum | cut -d' ' -f1)
           
-          # Store the update information for later use
-          echo "unknown" > "$update_info_file"
-          # Copy the downloaded script to a temporary location for later use
-          cp "$temp_file" "${BASE_DIR}/config/POK-manager/new_version"
-          chmod +x "${BASE_DIR}/config/POK-manager/new_version"
+          if [ "$file1_checksum" != "$file2_checksum" ]; then
+            echo "************************************************************"
+            echo "* An update to POK-manager.sh is available                 *"
+            echo "* Run './POK-manager.sh -upgrade' to perform the update    *"
+            echo "************************************************************"
+            
+            # Store the update information for later use
+            echo "unknown" > "$update_info_file"
+            # Copy the downloaded script to a temporary location for later use
+            cp "$temp_file" "${BASE_DIR}/config/POK-manager/new_version"
+            chmod +x "${BASE_DIR}/config/POK-manager/new_version"
+          else
+            if [ -t 0 ]; then # Only show this in interactive mode
+              echo "----- POK-manager.sh is already up to date -----"
+            fi
+            # Remove the update info file if it exists but no update is available
+            rm -f "$update_info_file"
+            rm -f "${BASE_DIR}/config/POK-manager/new_version"
+          fi
           
           # Clean up
           rm "$temp_file"
@@ -1783,8 +1830,14 @@ check_for_POK_updates() {
     fi
   else
     if [ -t 0 ]; then # Only show this in interactive mode
-      echo "Failed to download the update. Skipping update check."
+      if [ "$http_code" = "404" ]; then
+        echo "Error: File not found on GitHub (404). This might happen if you're using a branch that doesn't exist."
+        echo "Current branch setting: $branch_name"
+      else
+        echo "Failed to download the update (HTTP code: $http_code). Skipping update check."
+      fi
     fi
+    rm -f "$temp_file"
   fi
 }
 
@@ -2405,15 +2458,32 @@ upgrade_pok_manager() {
   
   # Download the latest version from GitHub
   echo "Downloading the latest version from GitHub ($branch branch)..."
-  if curl -s -o "${BASE_DIR%/}/POK-manager.sh.new" "https://raw.githubusercontent.com/Pok-Official/Ark-Survival-Ascended-Server/$branch/POK-manager.sh"; then
+  
+  # URL to download from
+  local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/$branch/POK-manager.sh"
+  local download_output
+  
+  # Execute curl and capture both output and HTTP status code
+  download_output=$(curl -s -w "%{http_code}" -o "${BASE_DIR%/}/POK-manager.sh.new" "$script_url")
+  local http_code=${download_output: -3}  # Get the last 3 characters (HTTP status code)
+  
+  if [ "$http_code" = "200" ] && [ -s "${BASE_DIR%/}/POK-manager.sh.new" ]; then
     # Make the new file executable
     chmod +x "${BASE_DIR%/}/POK-manager.sh.new"
     
     # Replace the old file with the new one
     mv "${BASE_DIR%/}/POK-manager.sh.new" "$0"
     echo "Update successful. POK-manager.sh has been updated to the latest version."
+  elif [ "$http_code" = "404" ]; then
+    echo "Error: File not found on GitHub (404). Please check that the repository and branch exist:"
+    echo "Repository: https://github.com/Acekorneya/Ark-Survival-Ascended-Server"
+    echo "Branch: $branch"
+    # Clean up the incomplete download
+    rm -f "${BASE_DIR%/}/POK-manager.sh.new"
   else
-    echo "Failed to download the update. Please try again later or check your internet connection."
+    echo "Failed to download the update (HTTP code: $http_code). Please try again later or check your internet connection."
+    # Clean up the incomplete download
+    rm -f "${BASE_DIR%/}/POK-manager.sh.new"
     # Restore from backup if download failed
     cp "${BASE_DIR%/}/config/POK-manager/pok-manager.backup" "$0"
     echo "Restored from backup."
