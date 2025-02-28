@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.24"
+POK_MANAGER_VERSION="2.1.25"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -2962,6 +2962,29 @@ migrate_file_ownership() {
       echo "Creating user with UID 7777..."
       useradd -u 7777 -g 7777 -m -s /bin/bash "$new_username" || { echo "Failed to create user. You may need to manually create a user with UID/GID 7777."; exit 1; }
       
+      # Add the new user to the sudo group
+      echo "Adding user to sudo group for Docker management..."
+      # Try adding to sudo group first (most distros)
+      if getent group sudo >/dev/null; then
+        usermod -aG sudo "$new_username" && echo "✅ Added user to the sudo group successfully"
+      # If sudo group doesn't exist, try wheel group (some distros like CentOS)
+      elif getent group wheel >/dev/null; then
+        usermod -aG wheel "$new_username" && echo "✅ Added user to the wheel group successfully"
+      # If neither exists, try admin group (some Debian-based distros)
+      elif getent group admin >/dev/null; then
+        usermod -aG admin "$new_username" && echo "✅ Added user to the admin group successfully"
+      # If no standard sudo group is found, create a sudoers entry directly
+      else
+        echo "$new_username ALL=(ALL) ALL" > /etc/sudoers.d/"$new_username"
+        chmod 440 /etc/sudoers.d/"$new_username"
+        echo "✅ Created a custom sudoers entry for the user"
+      fi
+      
+      # Also add the user to the docker group if it exists
+      if getent group docker >/dev/null; then
+        usermod -aG docker "$new_username" && echo "✅ Added user to the docker group successfully"
+      fi
+      
       if id "$new_username" &>/dev/null; then
         # Prompt for password
         echo ""
@@ -2973,6 +2996,7 @@ migrate_file_ownership() {
         if [ $? -eq 0 ]; then
           echo ""
           echo "✅ User '$new_username' created successfully with UID/GID 7777:7777 and password set"
+          echo "This user has been added to the sudo group and can run sudo commands."
           echo "You can now switch to this user to manage your server:"
           echo "  su - $new_username"
           echo "  cd $(realpath ${BASE_DIR}) && ./POK-manager.sh"
@@ -2981,6 +3005,9 @@ migrate_file_ownership() {
           echo "Or with sudo:"
           echo "  sudo su - $new_username"
           echo "  cd $(realpath ${BASE_DIR}) && ./POK-manager.sh"
+          
+          echo ""
+          echo "NOTE: You may need to log out and log back in for the group changes to take effect."
         else
           echo ""
           echo "⚠️ User created but password setting failed. You can set it manually with:"
@@ -2992,13 +3019,61 @@ migrate_file_ownership() {
       echo "⚠️ No user created. You'll need to run this script with sudo from now on,"
       echo "or manually create a user with UID/GID 7777:7777 later."
       echo ""
-      echo "To manually create a user with these IDs, you can run:"
+      echo "To manually create a user with these IDs and sudo privileges, you can run:"
       echo "  sudo groupadd -g 7777 pokuser"
       echo "  sudo useradd -u 7777 -g 7777 -m -s /bin/bash pokuser"
+      echo "  sudo usermod -aG sudo pokuser  # Add to sudo group"
+      echo "  sudo passwd pokuser            # Set a password"
     fi
   else
     echo ""
     echo "A user with UID 7777 already exists: $existing_user"
+    
+    # Check if the existing user is already in the sudo group
+    if groups "$existing_user" | grep -qE '\b(sudo|wheel|admin)\b'; then
+      echo "User $existing_user is already in a sudo-capable group."
+    else
+      echo "User $existing_user is not in a sudo-capable group."
+      read -p "Add $existing_user to sudo group? (y/N): " add_to_sudo
+      
+      if [[ "$add_to_sudo" =~ ^[Yy]$ ]]; then
+        # Try adding to sudo group first (most distros)
+        if getent group sudo >/dev/null; then
+          usermod -aG sudo "$existing_user" && echo "✅ Added user to the sudo group successfully"
+        # If sudo group doesn't exist, try wheel group (some distros like CentOS)
+        elif getent group wheel >/dev/null; then
+          usermod -aG wheel "$existing_user" && echo "✅ Added user to the wheel group successfully"
+        # If neither exists, try admin group (some Debian-based distros)
+        elif getent group admin >/dev/null; then
+          usermod -aG admin "$existing_user" && echo "✅ Added user to the admin group successfully"
+        # If no standard sudo group is found, create a sudoers entry directly
+        else
+          echo "$existing_user ALL=(ALL) ALL" > /etc/sudoers.d/"$existing_user"
+          chmod 440 /etc/sudoers.d/"$existing_user"
+          echo "✅ Created a custom sudoers entry for the user"
+        fi
+        
+        echo "NOTE: You may need to log out and log back in for the group changes to take effect."
+      fi
+    fi
+    
+    # Check if the existing user is already in the docker group
+    if groups "$existing_user" | grep -q '\bdocker\b'; then
+      echo "User $existing_user is already in the docker group."
+    else
+      echo "User $existing_user is not in the docker group."
+      read -p "Add $existing_user to docker group? (y/N): " add_to_docker
+      
+      if [[ "$add_to_docker" =~ ^[Yy]$ ]]; then
+        if getent group docker >/dev/null; then
+          usermod -aG docker "$existing_user" && echo "✅ Added user to the docker group successfully"
+          echo "NOTE: You may need to log out and log back in for the group changes to take effect."
+        else
+          echo "Docker group does not exist. Make sure Docker is installed correctly."
+        fi
+      fi
+    fi
+    
     echo "You can switch to this user to manage your server:"
     echo "  sudo su - $existing_user"
     echo "  cd $(realpath ${BASE_DIR}) && ./POK-manager.sh"
