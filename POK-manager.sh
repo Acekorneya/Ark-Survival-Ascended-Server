@@ -2284,7 +2284,8 @@ display_usage() {
 display_version() {
   echo "POK-manager.sh version ${POK_MANAGER_VERSION} (${POK_MANAGER_BRANCH})"
   echo "Default PUID: ${PUID}, PGID: ${PGID}"
-  echo "Docker image: acekorneya/asa_server:$(get_docker_image_tag)"
+  local image_tag=$(get_docker_image_tag)
+  echo "Docker image: acekorneya/asa_server:${image_tag}"
 }
 
 # Function to set beta/stable mode
@@ -2349,108 +2350,8 @@ set_beta_mode() {
       local instance_name=$(basename "$compose_file" | sed -E 's/docker-compose-(.*)\.yaml/\1/')
       echo "Updating docker-compose file for instance: ${instance_name}"
       
-      # Create a temporary file
-      local tmp_file="${compose_file}.tmp"
-      
-      # Store the original file ownership to restore it later
-      local file_owner=""
-      local file_group=""
-      if [ -f "$compose_file" ]; then
-        file_owner=$(stat -c '%u' "$compose_file")
-        file_group=$(stat -c '%g' "$compose_file")
-      fi
-      
-      # Check if PUID/PGID lines are completely missing from the file
-      local has_puid=false
-      local has_pgid=false
-      
-      if grep -q "PUID=" "$compose_file"; then
-        has_puid=true
-      fi
-      
-      if grep -q "PGID=" "$compose_file"; then
-        has_pgid=true
-      fi
-      
-      # Read the file and update both the image tag and ensure PUID/PGID values are correct
-      local in_environment_section=false
-      local added_missing_puid_pgid=false
-      
-      while IFS= read -r line; do
-        # Track if we're in the environment section
-        if [[ "$line" =~ ^[[:space:]]*environment:[[:space:]]*$ ]]; then
-          in_environment_section=true
-        elif [[ "$line" =~ ^[[:space:]]*[a-zA-Z][a-zA-Z0-9_]*:[[:space:]]*$ ]]; then
-          # We've reached a new section
-          
-          # If we're leaving the environment section and haven't seen PUID/PGID, add them commented out
-          if [ "$in_environment_section" = true ] && [ "$added_missing_puid_pgid" = false ] && ([ "$has_puid" = false ] || [ "$has_pgid" = false ]); then
-            echo "      # User/Group settings - Default is now 7777:7777, use 1000:1000 for legacy compatibility" >> "$tmp_file"
-            if [ "$has_puid" = false ]; then
-              echo "      # - PUID=7777                          # User ID for container processes and file ownership" >> "$tmp_file"
-            fi
-            if [ "$has_pgid" = false ]; then
-              echo "      # - PGID=7777                          # Group ID for container processes and file ownership" >> "$tmp_file"
-            fi
-            added_missing_puid_pgid=true
-          fi
-          
-          in_environment_section=false
-        fi
-        
-        # Update the image tag
-        if [[ "$line" =~ image:[[:space:]]*acekorneya/asa_server:2_0_ ]]; then
-          echo "    image: acekorneya/asa_server:${new_tag}" >> "$tmp_file"
-        # For PUID and PGID handling:
-        # 1. If they're already defined and not commented, keep the existing values for backward compatibility
-        # 2. If they're commented out, leave them commented out for backward compatibility
-        # 3. This ensures we don't modify any existing PUID/PGID settings
-        elif [[ "$line" =~ ^[[:space:]]*#[[:space:]]*-[[:space:]]*PUID= ]]; then
-          # Keep commented PUID lines as they are
-          echo "$line" >> "$tmp_file"
-        elif [[ "$line" =~ ^[[:space:]]*#[[:space:]]*-[[:space:]]*PGID= ]]; then
-          # Keep commented PGID lines as they are
-          echo "$line" >> "$tmp_file"
-        elif [[ "$line" =~ ^[[:space:]]*-[[:space:]]*PUID= ]]; then
-          # Keep existing uncommented PUID lines as they are
-          echo "$line" >> "$tmp_file"
-        elif [[ "$line" =~ ^[[:space:]]*-[[:space:]]*PGID= ]]; then
-          # Keep existing uncommented PGID lines as they are
-          echo "$line" >> "$tmp_file"
-        else
-          # Keep other lines unchanged
-          echo "$line" >> "$tmp_file"
-        fi
-      done < "$compose_file"
-      
-      # Replace the original file with the updated one
-      mv "$tmp_file" "$compose_file"
-      
-      # Restore the original file ownership if we're running as sudo
-      if is_sudo && [ -n "$file_owner" ] && [ -n "$file_group" ]; then
-        chown "${file_owner}:${file_group}" "$compose_file"
-        echo "Restored file ownership to ${file_owner}:${file_group}"
-      fi
-      
-      # Verify the change was made for the image tag
-      if grep -q "image:.*${new_tag}" "$compose_file"; then
-        echo "Verified: Image tag updated to ${new_tag} in ${compose_file}"
-      else
-        echo "Warning: Could not verify image tag was updated in ${compose_file}"
-        # If couldn't verify with grep, we'll try with direct check
-        if [ -f "$compose_file" ]; then
-          local has_tag=$(grep -E 'image:[[:space:]]*acekorneya/asa_server:' "$compose_file")
-          if [ -n "$has_tag" ]; then
-            echo "Debug info - found image line: $has_tag"
-          else
-            echo "Debug info - no image line found in file"
-          fi
-        else
-          echo "Debug info - file doesn't exist after attempted update"
-        fi
-      fi
-      
-      # Don't verify PUID/PGID as we're preserving the existing values
+      # Use the dedicated function to update the image tag
+      update_docker_compose_image_tag "$compose_file" "$new_tag"
     done
   fi
   
@@ -2683,8 +2584,9 @@ update_docker_compose_image_tag() {
   
   # Read the file line by line and update the image tag
   while IFS= read -r line; do
-    if [[ "$line" =~ image:[[:space:]]*acekorneya/asa_server:[0-9]+_[0-9]+_(latest|beta) ]]; then
-      # Replace the image tag with the new one
+    if [[ "$line" =~ image:[[:space:]]*acekorneya/asa_server:[0-9]+_[0-9]+_(latest|beta) ]] || 
+       [[ "$line" =~ image:[[:space:]]*acekorneya/asa_server:.*$ ]]; then
+      # Replace the image tag with the new one, ensuring we only output the exact tag string
       echo "    image: acekorneya/asa_server:${new_image_tag}" >> "$tmp_file"
     else
       # Keep the line as is
@@ -2904,9 +2806,9 @@ get_docker_image_tag() {
     # If files are owned by 1000:1000, use the 2_0 image for compatibility
     if [ "$file_ownership" = "1000:1000" ]; then
       image_tag_version="2_0"
-      # If running interactively, inform the user
+      # If running interactively, inform the user - but only to stderr so it doesn't get captured
       if [ -t 0 ]; then
-        echo "ℹ️ Detected legacy file ownership (1000:1000). Using compatible image version."
+        echo "ℹ️ Detected legacy file ownership (1000:1000). Using compatible image version." >&2
       fi
     fi
   fi
