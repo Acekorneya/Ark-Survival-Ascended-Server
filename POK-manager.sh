@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.17"
+POK_MANAGER_VERSION="2.1.18"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -2760,7 +2760,8 @@ migrate_file_ownership() {
     return 1
   fi
   
-  # List all the directories that need ownership changes
+  # First list the specific directories that we know need to be changed
+  # (for better user information and backwards compatibility)
   local dirs_to_change=()
   
   # Check if ServerFiles exists
@@ -2786,6 +2787,9 @@ migrate_file_ownership() {
     echo "  - $dir"
   done
   
+  # Additional directories that will be changed
+  echo -e "\nAdditionally, all other files and folders in the base directory will have their ownership changed."
+  
   # Ask for confirmation
   read -p "Are you sure you want to proceed? (y/N): " confirm
   if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
@@ -2795,10 +2799,28 @@ migrate_file_ownership() {
   
   # Change ownership of each directory
   echo "Changing file ownership to 7777:7777..."
+  
+  # First process the specific directories we listed
   for dir in "${dirs_to_change[@]}"; do
     echo "Processing: $dir"
     chown -R 7777:7777 "$dir"
   done
+  
+  # Now process all other files and directories in the base directory
+  echo "Processing remaining files and directories in ${BASE_DIR}"
+  
+  # Find and change ownership of all other files/directories in BASE_DIR except POK-manager.sh
+  find "${BASE_DIR}" -maxdepth 1 -not -name "POK-manager.sh" -not -path "${BASE_DIR}" | while read item; do
+    if [[ ! " ${dirs_to_change[@]} " =~ " ${item} " ]]; then
+      echo "Processing: $item"
+      chown -R 7777:7777 "$item"
+    fi
+  done
+  
+  # Ensure POK-manager.sh has correct ownership and permissions
+  echo "Setting correct permissions for POK-manager.sh"
+  chown 7777:7777 "${BASE_DIR}/POK-manager.sh"
+  chmod 755 "${BASE_DIR}/POK-manager.sh"
   
   echo "✅ File ownership migration complete."
   echo ""
@@ -2806,9 +2828,7 @@ migrate_file_ownership() {
   echo "Any running servers will need to be restarted to use the new image."
   echo ""
   echo "Note: If you want to go back to the 1000:1000 ownership, you can run:"
-  echo "sudo chown -R 1000:1000 ${BASE_DIR}/ServerFiles ${BASE_DIR}/Instance_* ${BASE_DIR}/Cluster"
-  
-  return 0
+  echo "sudo chown -R 1000:1000 ${BASE_DIR}"
 }
 
 main() {
