@@ -1,0 +1,43 @@
+version: '2.4'
+
+services:
+  asaserver:
+    build: .
+    image: acekorneya/asa_server:2_1_beta
+    container_name: asa_POK_TEST
+    restart: unless-stopped
+    environment:
+      - INSTANCE_NAME=POK_TEST
+      - TZ=America/Los_Angeles
+      - BATTLEEYE=TRUE
+      - RCON_ENABLED=TRUE
+      - DISPLAY_POK_MONITOR_MESSAGE=FALSE
+      - UPDATE_SERVER=FALSE
+      - CHECK_FOR_UPDATE_INTERVAL=1
+      - UPDATE_WINDOW_MINIMUM_TIME=4:00 AM
+      - UPDATE_WINDOW_MAXIMUM_TIME=6:00 AM
+      - RESTART_NOTICE_MINUTES=30
+      - ENABLE_MOTD=TRUE
+      - MOTD=<RichColor Color="0.65, 0, 1 ,1">Welcom To Our POK Server</> \n <RichColor Color="1, 1, 0, 1">Official Server Rates for Taming/Harvest/Maturation/Hatch/XP/Imprint</> \n <RichColor Color="1, 0, 0, 1">Join Our Discord discord.gg/9GJKWjQuXy For Server Updates</> \n <RichColor Color="1, 1, 0, 1">No Cryopod Restrictions</>
+      - MOTD_DURATION=40
+      - MAP_NAME=TheCenter
+      - SESSION_NAME=POK-TESTING-SERVER
+      - SERVER_ADMIN_PASSWORD=acekORNEYA512!
+      - SERVER_PASSWORD=
+      - ASA_PORT=8788
+      - RCON_PORT=27028
+      - MAX_PLAYERS=70
+      - SHOW_ADMIN_COMMANDS_IN_CHAT=TRUE
+      - CLUSTER_ID=
+      - MOD_IDS=946694,924900,934749
+      - PASSIVE_MODS=
+      - CUSTOM_SERVER_ARGS=-UseDynamicConfig
+    ports:
+      - "8788:8788/tcp"
+      - "8788:8788/udp"
+      - "27028:27028/tcp"
+    volumes:
+      - "/home/factorioserver/ASA_TESTING/ServerFiles/arkserver:/home/pok/arkserver"
+      - "/home/factorioserver/ASA_TESTING/Instance-POK_TEST/Saved:/home/pok/arkserver/ShooterGame/Saved"
+      - "/home/factorioserver/ASA_TESTING/Cluster:/home/pok/arkserver/ShooterGame/Saved/clusters"
+    mem_limit: 16G

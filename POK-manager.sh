@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.25"
+POK_MANAGER_VERSION="2.1.26"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -2450,7 +2450,7 @@ manage_service() {
 }
 # Define valid actions
 declare -a valid_actions
-valid_actions=("-create" "-start" "-stop" "-saveworld" "-shutdown" "-restart" "-status" "-update" "-install" "-list" "-beta" "-stable" "-version" "-upgrade" "-console" "-logs" "-backup" "-restore" "-showconfig" "-migrate")
+valid_actions=("-create" "-start" "-stop" "-saveworld" "-shutdown" "-restart" "-status" "-update" "-list" "-beta" "-stable" "-version" "-upgrade" "-logs" "-backup" "-restore" "-migrate" "-setup" "-edit" "-custom" "-chat")
 
 display_usage() {
   echo "Usage: $0 {action} [instance_name|-all] [additional_args...]"
