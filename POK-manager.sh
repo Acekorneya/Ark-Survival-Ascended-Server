@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.13"
+POK_MANAGER_VERSION="2.1.14"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -17,8 +17,28 @@ RED='\033[0;31m'
 
 # Set PUID and PGID to match the container's expected values
 # Legacy default was 1000:1000, new default is 7777:7777
-PUID=${CONTAINER_PUID:-7777}
-PGID=${CONTAINER_PGID:-7777}
+if [ "$POK_MANAGER_BRANCH" = "beta" ]; then
+  # Beta branch uses 7777:7777
+  PUID=${CONTAINER_PUID:-7777}
+  PGID=${CONTAINER_PGID:-7777}
+else
+  # For stable branch, determine the appropriate PUID:PGID based on file ownership
+  # Default to 2_0_latest values
+  PUID=${CONTAINER_PUID:-1000}
+  PGID=${CONTAINER_PGID:-1000}
+  
+  # Check if server files exist and determine ownership
+  local server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
+  if [ -d "$server_files_dir" ]; then
+    local file_ownership=$(stat -c '%u:%g' "$server_files_dir")
+    
+    # If files are NOT owned by 1000:1000, we're using 2_1_latest
+    if [ "$file_ownership" != "1000:1000" ]; then
+      PUID=${CONTAINER_PUID:-7777}
+      PGID=${CONTAINER_PGID:-7777}
+    fi
+  fi
+fi
 
 # Define the order in which the settings should be displayed
 declare -a config_order=(
@@ -2452,14 +2472,31 @@ set_beta_mode() {
   local legacy_puid=1000
   local legacy_pgid=1000
   
-  if [ "${PUID}" = "${legacy_puid}" ] && [ "${PGID}" = "${legacy_pgid}" ]; then
-    echo "Running in legacy compatibility mode with PUID:PGID=${PUID}:${PGID}"
-    echo "Docker Compose files will maintain existing PUID/PGID settings."
+  if [ "$mode" = "beta" ]; then
+    echo "Using PUID:PGID=7777:7777 for beta mode (2_1_beta image)"
   else
-    echo "Using PUID:PGID=${PUID}:${PGID}"
-    echo "Docker Compose files will maintain their existing PUID/PGID settings for backward compatibility."
-    echo "New instances will use the commented out PUID/PGID values by default."
+    # For stable mode, check which image tag version we're using
+    local image_version="2_0"
+    
+    # Check if server files exist and determine ownership
+    local server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
+    if [ -d "$server_files_dir" ]; then
+      local file_ownership=$(stat -c '%u:%g' "$server_files_dir")
+      
+      # If files are NOT owned by 1000:1000, we're using 2_1_latest
+      if [ "$file_ownership" != "1000:1000" ]; then
+        image_version="2_1"
+      fi
+    fi
+    
+    if [ "$image_version" = "2_1" ]; then
+      echo "Using PUID:PGID=7777:7777 for stable mode (2_1_latest image)"
+    else
+      echo "Using PUID:PGID=1000:1000 for stable mode (2_0_latest image)"
+    fi
   fi
+  echo "Docker Compose files will maintain their existing PUID/PGID settings for backward compatibility."
+  echo "New instances will use the commented out PUID/PGID values by default."
   
   echo "Please restart any running containers to apply the changes."
 }
