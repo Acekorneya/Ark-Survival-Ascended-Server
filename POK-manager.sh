@@ -2353,7 +2353,7 @@ set_beta_mode() {
     echo "Setting POK-manager to beta mode"
     echo "beta" > "${config_dir}/beta_mode"
     POK_MANAGER_BRANCH="beta"
-    new_tag="2_0_beta"
+    new_tag="2_1_beta"
   else
     echo "Setting POK-manager to stable mode"
     rm -f "${config_dir}/beta_mode"
