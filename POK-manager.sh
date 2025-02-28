@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.1"
+POK_MANAGER_VERSION="2.1.0"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -1746,14 +1746,17 @@ check_for_POK_updates() {
         # Function to convert version string to comparable number
         version_to_number() {
           local ver=$1
-          # Remove any non-numeric characters except for dots, then split on dots
-          local parts=(${ver//[^0-9.]/ })
-          local major=0 minor=0 patch=0
           
-          # Parse out the parts
-          if [[ "${parts[0]}" =~ ^[0-9]+$ ]]; then major=${parts[0]}; fi
-          if [[ "${parts[1]}" =~ ^[0-9]+$ ]]; then minor=${parts[1]}; fi
-          if [[ "${parts[2]}" =~ ^[0-9]+$ ]]; then patch=${parts[2]}; fi
+          # Parse the version string directly to extract major, minor, and patch
+          IFS='.' read -r major minor patch <<< "$ver"
+          
+          # Default values if any part is missing
+          major=${major:-0}
+          minor=${minor:-0}
+          patch=${patch:-0}
+          
+          # Debug output
+          echo "DEBUG: Parsing version $ver into: major=$major, minor=$minor, patch=$patch" >&2
           
           # Convert to a single number for comparison
           echo $((major * 1000000 + minor * 1000 + patch))
@@ -1769,7 +1772,21 @@ check_for_POK_updates() {
           echo "************************************************************"
           echo "* A newer version of POK-manager.sh is available: $new_version *"
           echo "* Current version: $current_version                           *"
-          echo "* Run './POK-manager.sh -upgrade' to perform the update     *"
+          
+          # Ask if the user wants to upgrade if we're in interactive mode
+          if [ -t 0 ]; then
+            echo -n "* Would you like to upgrade now? (y/n): "
+            read -r upgrade_response
+            if [[ "$upgrade_response" =~ ^[Yy]$ ]]; then
+              # Call the upgrade function
+              upgrade_pok_manager
+              return
+            else
+              echo "* Run './POK-manager.sh -upgrade' later to perform the update     *"
+            fi
+          else
+            echo "* Run './POK-manager.sh -upgrade' to perform the update     *"
+          fi
           echo "************************************************************"
           
           # Store the update information for later use
