@@ -28,9 +28,9 @@ else
   PGID=${CONTAINER_PGID:-1000}
   
   # Check if server files exist and determine ownership
-  local server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
+  server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
   if [ -d "$server_files_dir" ]; then
-    local file_ownership=$(stat -c '%u:%g' "$server_files_dir")
+    file_ownership=$(stat -c '%u:%g' "$server_files_dir")
     
     # If files are NOT owned by 1000:1000, we're using 2_1_latest
     if [ "$file_ownership" != "1000:1000" ]; then
@@ -395,6 +395,23 @@ get_docker_compose_cmd() {
 
 get_config_file_path() {
   local config_dir="./config/POK-manager"
+  
+  # Check if we're in post-migration state with wrong user ID
+  if [ "$(id -u)" -ne 0 ] && [ -f "${BASE_DIR}/config/POK-manager/migration_complete" ]; then
+    # Check if config directory is owned by 7777 but we're not running as 7777
+    if [ -d "$config_dir" ]; then
+      local config_dir_ownership="$(stat -c '%u:%g' $config_dir)"
+      local config_dir_uid=$(echo "$config_dir_ownership" | cut -d: -f1)
+      
+      if [ "$config_dir_uid" = "7777" ] && [ "$(id -u)" -ne 7777 ]; then
+        # Return path but don't try to create the directory - will be handled by permission check
+        echo "$config_dir/config.txt"
+        return
+      fi
+    fi
+  fi
+  
+  # Normal behavior - create directory if it doesn't exist
   mkdir -p "$config_dir"
   echo "$config_dir/config.txt"
 }
@@ -497,6 +514,7 @@ check_puid_pgid_user() {
   local legacy_puid=1000
   local legacy_pgid=1000
   local user_info_flag_file="${BASE_DIR}/config/POK-manager/user_info_shown"
+  local migration_complete_file="${BASE_DIR}/config/POK-manager/migration_complete"
 
   # Check if the script is run with sudo (EUID is 0)
   if is_sudo; then
@@ -507,6 +525,51 @@ check_puid_pgid_user() {
   local current_uid=$(id -u)
   local current_gid=$(id -g)
   local current_user=$(id -un)
+
+  # Skip showing migration info if migration is complete
+  if [ -f "$migration_complete_file" ]; then
+    # Still use the correct PUID/PGID values, but don't show the info message
+    if [ -d "${BASE_DIR}/ServerFiles/arkserver" ]; then
+      local dir_ownership="$(stat -c '%u:%g' ${BASE_DIR}/ServerFiles/arkserver)"
+      local dir_uid=$(echo "$dir_ownership" | cut -d: -f1)
+      local dir_gid=$(echo "$dir_ownership" | cut -d: -f2)
+      
+      # If directory ownership doesn't match current PUID/PGID, adjust for this execution
+      if [ "${puid}" != "${dir_uid}" ] || [ "${pgid}" != "${dir_gid}" ]; then
+        PUID=${dir_uid}
+        PGID=${dir_gid}
+      fi
+    fi
+    
+    # ENHANCEMENT: Check if user has correct permissions after migration
+    if [ -f "$migration_complete_file" ] && [ "${current_uid}" -ne 7777 ] && [ "${current_uid}" -ne 0 ]; then
+      echo ""
+      echo "⚠️ POST-MIGRATION PERMISSION ISSUE DETECTED ⚠️"
+      echo "Your server files are owned by UID:GID 7777:7777 after migration, but you're running"
+      echo "this script as user '${current_user}' with UID:GID ${current_uid}:${current_gid}."
+      echo ""
+      echo "You have two options to fix this:"
+      echo ""
+      echo "1. Run commands with sudo (easiest temporary solution):"
+      echo "   sudo ./POK-manager.sh $original_command"
+      echo ""
+      
+      # Check if pokuser or any user with UID 7777 exists
+      local pokuser=$(grep ":7777:" /etc/passwd | cut -d: -f1)
+      if [ -n "$pokuser" ]; then
+        echo "2. Switch to the correct user account with UID 7777 (recommended):"
+        echo "   sudo su - $pokuser"
+        echo "   cd $(pwd) && ./POK-manager.sh $original_command"
+      else
+        echo "2. The migration should have created a user with UID 7777."
+        echo "   If this user doesn't exist, please run the migration again:"
+        echo "   sudo ./POK-manager.sh -migrate"
+      fi
+      exit 1
+    fi
+    
+    return
+  fi
 
   # Check if user is already using 7777:7777 and has seen the info message
   local show_info=true
@@ -969,27 +1032,47 @@ EOF
 # Function to check and optionally adjust Docker command permissions
 adjust_docker_permissions() {
   local config_file=$(get_config_file_path)
+  local config_dir=$(dirname "$config_file")
 
-  if [ -f "$config_file" ]; then
+  # Ensure the directory exists
+  mkdir -p "$config_dir"
+
+  # If we can access the file, read its content
+  if [ -f "$config_file" ] && [ -r "$config_file" ]; then
     local use_sudo
-    use_sudo=$(cat "$config_file")
+    use_sudo=$(cat "$config_file" 2>/dev/null || echo "true")
     if [ "$use_sudo" = "false" ]; then
       echo "User has chosen to run Docker commands without 'sudo'."
       return
     fi
   else
+    # If we can't read the file due to permissions
+    if [ "$(id -u)" -eq 0 ]; then
+      # If running as root/sudo, fix permissions and try again
+      if [ -d "${BASE_DIR}/ServerFiles/arkserver" ]; then
+        local dir_owner=$(stat -c '%u' "${BASE_DIR}/ServerFiles/arkserver")
+        local dir_group=$(stat -c '%g' "${BASE_DIR}/ServerFiles/arkserver")
+        chown -R "${dir_owner}:${dir_group}" "$config_dir"
+      fi
+    fi
+    
+    # After fixing permissions, check if user is in docker group
     if groups $USER | grep -q '\bdocker\b'; then
       echo "User $USER is already in the docker group."
       read -r -p "Would you like to run Docker commands without 'sudo'? [y/N] " response
       if [[ "$response" =~ ^[Yy]$ ]]; then
         echo "Changing ownership of /var/run/docker.sock to $USER..."
         sudo chown $USER /var/run/docker.sock
-        echo "false" > "$config_file"
-        echo "User preference saved. You can now run Docker commands without 'sudo'."
-        return
+        echo "false" > "$config_file" 2>/dev/null || true
+        if [ -f "$config_file" ] && [ "$(cat "$config_file" 2>/dev/null)" = "false" ]; then
+          echo "User preference saved. You can now run Docker commands without 'sudo'."
+          return
+        else
+          echo "Failed to save user preference. You may need to run with sudo."
+        fi
       fi
     else
-      read -r -p "Config file not found. Do you want to add user $USER to the 'docker' group? [y/N] " add_to_group
+      read -r -p "Config file not found or inaccessible. Do you want to add user $USER to the 'docker' group? [y/N] " add_to_group
       if [[ "$add_to_group" =~ ^[Yy]$ ]]; then
         echo "Adding user $USER to the 'docker' group..."
         sudo usermod -aG docker $USER
@@ -999,28 +1082,73 @@ adjust_docker_permissions() {
         sudo chown $USER /var/run/docker.sock
         
         echo "You can now run Docker commands without 'sudo'."
-        echo "false" > "$config_file"
+        echo "false" > "$config_file" 2>/dev/null || true
         
-        return
-      else
-        echo "true" > "$config_file"
-        echo "Please ensure to use 'sudo' for Docker commands or run this script with 'sudo'."
         return
       fi
     fi
   fi
 
-  echo "true" > "$config_file"
+  # If we got here, use sudo for docker commands
+  echo "true" > "$config_file" 2>/dev/null || true
   echo "Please ensure to use 'sudo' for Docker commands or run this script with 'sudo'."
 }
 
 get_docker_preference() {
   local config_file=$(get_config_file_path)
+  local config_dir=$(dirname "$config_file")
+
+  # Quick check for post-migration permission issues
+  if [ "$(id -u)" -ne 0 ] && [ -f "${BASE_DIR}/config/POK-manager/migration_complete" ]; then
+    if [ -d "$config_dir" ]; then
+      local dir_owner=$(stat -c '%u' "$config_dir")
+      if [ "$dir_owner" = "7777" ] && [ "$(id -u)" -ne 7777 ]; then
+        # Return true (use sudo) if we're running with wrong permissions after migration
+        echo "true"
+        return
+      fi
+    fi
+  fi
+
+  # Ensure config directory exists with proper permissions
+  if [ ! -d "$config_dir" ]; then
+    mkdir -p "$config_dir"
+    # If running as root/sudo, set proper ownership
+    if [ "$(id -u)" -eq 0 ]; then
+      if [ -d "${BASE_DIR}/ServerFiles/arkserver" ]; then
+        local dir_owner=$(stat -c '%u' "${BASE_DIR}/ServerFiles/arkserver")
+        local dir_group=$(stat -c '%g' "${BASE_DIR}/ServerFiles/arkserver")
+        chown -R "${dir_owner}:${dir_group}" "$config_dir"
+      else
+        chown -R "${PUID}:${PGID}" "$config_dir"
+      fi
+    fi
+  fi
 
   if [ -f "$config_file" ]; then
-    local use_sudo
-    use_sudo=$(cat "$config_file")
-    echo "$use_sudo"
+    # Try to read the file
+    if [ -r "$config_file" ]; then
+      local use_sudo
+      use_sudo=$(cat "$config_file")
+      echo "$use_sudo"
+    else
+      # If we can't read the file due to permissions, try with sudo
+      if [ "$(id -u)" -eq 0 ]; then
+        local use_sudo
+        use_sudo=$(cat "$config_file" 2>/dev/null || echo "true")
+        echo "$use_sudo"
+      else
+        # Check if migration has been completed and user has incorrect UID
+        if [ -f "${BASE_DIR}/config/POK-manager/migration_complete" ] && [ "$(id -u)" -ne 7777 ] && [ "$(id -u)" -ne 0 ]; then
+          # We'll handle this with the main check_post_migration_permissions function
+          # Just return true here to use sudo by default
+          echo "true"
+        else
+          # Default to true if we can't read the file
+          echo "true"
+        fi
+      fi
+    fi
   else
     echo "true"
   fi
@@ -1817,6 +1945,23 @@ check_for_POK_updates() {
     fi
   fi
   
+  # Check if we're in post-migration state with wrong user ID
+  if [ "$(id -u)" -ne 0 ] && [ -f "${BASE_DIR}/config/POK-manager/migration_complete" ]; then
+    # Check if config directory is owned by 7777 but we're not running as 7777
+    if [ -d "${BASE_DIR}/config/POK-manager" ]; then
+      local config_dir_ownership="$(stat -c '%u:%g' ${BASE_DIR}/config/POK-manager)"
+      local config_dir_uid=$(echo "$config_dir_ownership" | cut -d: -f1)
+      
+      if [ "$config_dir_uid" = "7777" ] && [ "$(id -u)" -ne 7777 ]; then
+        # Skip update check due to permission issues
+        if [ -t 0 ]; then # Only show in interactive mode
+          echo "Skipping update check due to post-migration permission issues"
+        fi
+        return
+      fi
+    fi
+  fi
+  
   # Check if we've just upgraded the script
   local just_upgraded="${BASE_DIR%/}/config/POK-manager/just_upgraded"
   if [ -f "$just_upgraded" ]; then
@@ -1844,7 +1989,27 @@ check_for_POK_updates() {
   local temp_file="/tmp/POK-manager.sh"
   local update_info_file="${BASE_DIR}/config/POK-manager/update_available"
   
+  # Ensure config directory exists with proper permissions
   mkdir -p "${BASE_DIR}/config/POK-manager"
+  
+  # Fix permissions on the config directory if needed
+  if [ -d "${BASE_DIR}/config/POK-manager" ]; then
+    # Check if we're running as root/sudo
+    if [ "$(id -u)" -eq 0 ]; then
+      # If server files exist, get the ownership to match
+      if [ -d "${BASE_DIR}/ServerFiles/arkserver" ]; then
+        local dir_owner=$(stat -c '%u' "${BASE_DIR}/ServerFiles/arkserver")
+        local dir_group=$(stat -c '%g' "${BASE_DIR}/ServerFiles/arkserver")
+        chown -R "${dir_owner}:${dir_group}" "${BASE_DIR}/config/POK-manager"
+      else
+        # Default to PUID:PGID from the script if no server files
+        chown -R "${PUID}:${PGID}" "${BASE_DIR}/config/POK-manager"
+      fi
+    else
+      # If not running as root, try to match current user
+      chmod -R u+w "${BASE_DIR}/config/POK-manager" 2>/dev/null || true
+    fi
+  fi
 
   local download_output
   local http_code
@@ -1958,10 +2123,41 @@ check_for_POK_updates() {
             echo "************************************************************"
             
             # Store the update information for later use
-            echo "unknown" > "$update_info_file"
+            if ! echo "unknown" > "$update_info_file" 2>/dev/null; then
+              # Handle permission error when running as the wrong user after migration
+              if [ -f "${BASE_DIR}/config/POK-manager/migration_complete" ] && [ "$(id -u)" -ne 7777 ] && [ "$(id -u)" -ne 0 ]; then
+                echo ""
+                echo "⚠️ PERMISSION ERROR DETECTED: Cannot write to ${BASE_DIR}/config/POK-manager/update_available"
+                echo "This error occurs because you're running as user '$(id -un)' (UID:$(id -u)) but your files"
+                echo "are owned by UID:GID 7777:7777 after migration."
+                echo ""
+                echo "To fix this, either:"
+                echo "  1. Run with sudo: sudo ./POK-manager.sh $@"
+                
+                # Check if a user with UID 7777 exists
+                local pokuser=$(grep ":7777:" /etc/passwd | cut -d: -f1 2>/dev/null)
+                if [ -n "$pokuser" ]; then
+                  echo "  2. Switch to user with UID 7777: sudo su - $pokuser"
+                  echo "     cd $(pwd) && ./POK-manager.sh $@"
+                else
+                  echo "  2. The migration should have created a user with UID 7777."
+                  echo "     If this user doesn't exist, please run the migration again:"
+                  echo "     sudo ./POK-manager.sh -migrate"
+                fi
+                echo ""
+              fi
+            fi
+            
             # Copy the downloaded script to a temporary location for later use
-            cp "$temp_file" "${BASE_DIR}/config/POK-manager/new_version"
-            chmod +x "${BASE_DIR}/config/POK-manager/new_version"
+            if ! cp "$temp_file" "${BASE_DIR}/config/POK-manager/new_version" 2>/dev/null; then
+              # We already displayed the error message for the update_available file, no need to repeat
+              true
+            else
+              if ! chmod +x "${BASE_DIR}/config/POK-manager/new_version" 2>/dev/null; then
+                # Permission error for chmod, but we already showed the message
+                true
+              fi
+            fi
           else
             if [ -t 0 ]; then # Only show this in interactive mode
               echo "----- POK-manager.sh is already up to date -----"
@@ -3009,6 +3205,10 @@ migrate_file_ownership() {
     dirs_to_change+=("${BASE_DIR}/Cluster")
   fi
   
+  # Ensure config/POK-manager directory exists and is included
+  mkdir -p "${BASE_DIR}/config/POK-manager"
+  dirs_to_change+=("${BASE_DIR}/config/POK-manager")
+  
   # Show the user which directories will be changed
   echo "The following directories will have their ownership changed to 7777:7777:"
   for dir in "${dirs_to_change[@]}"; do
@@ -3049,6 +3249,10 @@ migrate_file_ownership() {
   echo "Setting correct permissions for POK-manager.sh"
   chown 7777:7777 "${BASE_DIR}/POK-manager.sh"
   chmod 755 "${BASE_DIR}/POK-manager.sh"
+  
+  # Create a flag file to indicate migration has completed successfully
+  touch "${BASE_DIR}/config/POK-manager/migration_complete"
+  chown 7777:7777 "${BASE_DIR}/config/POK-manager/migration_complete"
   
   echo "✅ File ownership migration complete."
   echo ""
@@ -3233,6 +3437,83 @@ migrate_file_ownership() {
   echo "sudo chown -R 1000:1000 ${BASE_DIR}"
 }
 
+# Function to check for post-migration permission issues
+check_post_migration_permissions() {
+  local command_args="$1"
+  
+  # Only run this check if we're not root and migration has been completed
+  if [ "$(id -u)" -ne 0 ] && [ -f "${BASE_DIR}/config/POK-manager/migration_complete" ]; then
+    # Check if server files exist and are owned by UID 7777
+    if [ -d "${BASE_DIR}/ServerFiles/arkserver" ]; then
+      local dir_ownership="$(stat -c '%u:%g' ${BASE_DIR}/ServerFiles/arkserver)"
+      local dir_uid=$(echo "$dir_ownership" | cut -d: -f1)
+      
+      # If files are owned by 7777 but current user is not 7777
+      if [ "$dir_uid" = "7777" ] && [ "$(id -u)" -ne 7777 ]; then
+        echo ""
+        echo "⚠️ POST-MIGRATION PERMISSION ISSUE DETECTED ⚠️"
+        echo "You are running the script as user '$(id -un)' (UID:$(id -u)) after migration,"
+        echo "but your server files are now owned by UID:GID 7777:7777."
+        echo ""
+        echo "This will cause permission errors. You have two options:"
+        echo ""
+        echo "1. Run with sudo (easiest temporary solution):"
+        echo "   sudo ./POK-manager.sh $command_args"
+        echo ""
+        
+        # Check if a user with UID 7777 exists
+        local pokuser=$(grep ":7777:" /etc/passwd | cut -d: -f1 2>/dev/null)
+        if [ -n "$pokuser" ]; then
+          echo "2. Switch to the user with UID 7777 (recommended):"
+          echo "   sudo su - $pokuser"
+          echo "   cd $(pwd) && ./POK-manager.sh $command_args"
+        else
+          echo "2. The migration should have created a user with UID 7777."
+          echo "   If this user doesn't exist, please run the migration again:"
+          echo "   sudo ./POK-manager.sh -migrate"
+        fi
+        echo ""
+        # Exit with status code 1 to indicate an error
+        exit 1
+      fi
+    fi
+    
+    # ADDITIONAL CHECK: Also verify if config directory permissions are correct
+    if [ -d "${BASE_DIR}/config/POK-manager" ]; then
+      local config_dir_ownership="$(stat -c '%u:%g' ${BASE_DIR}/config/POK-manager)"
+      local config_dir_uid=$(echo "$config_dir_ownership" | cut -d: -f1)
+      
+      if [ "$config_dir_uid" = "7777" ] && [ "$(id -u)" -ne 7777 ]; then
+        echo ""
+        echo "⚠️ POST-MIGRATION PERMISSION ISSUE DETECTED ⚠️"
+        echo "You are running the script as user '$(id -un)' (UID:$(id -u)) after migration,"
+        echo "but your config directory is now owned by UID:GID 7777:7777."
+        echo ""
+        echo "This will cause permission errors. You have two options:"
+        echo ""
+        echo "1. Run with sudo (easiest temporary solution):"
+        echo "   sudo ./POK-manager.sh $command_args"
+        echo ""
+        
+        # Check if a user with UID 7777 exists
+        local pokuser=$(grep ":7777:" /etc/passwd | cut -d: -f1 2>/dev/null)
+        if [ -n "$pokuser" ]; then
+          echo "2. Switch to the user with UID 7777 (recommended):"
+          echo "   sudo su - $pokuser"
+          echo "   cd $(pwd) && ./POK-manager.sh $command_args"
+        else
+          echo "2. The migration should have created a user with UID 7777."
+          echo "   If this user doesn't exist, please run the migration again:"
+          echo "   sudo ./POK-manager.sh -migrate"
+        fi
+        echo ""
+        # Exit with status code 1 to indicate an error
+        exit 1
+      fi
+    fi
+  fi
+}
+
 main() {
   # Extract the command portion without PUID/PGID
   local command_args=""
@@ -3244,6 +3525,9 @@ main() {
   
   # Remove leading space
   command_args="${command_args# }"
+  
+  # Add a post-migration permissions check - MUST be first before any file operations
+  check_post_migration_permissions "$command_args"
   
   # Check for required user and group at the start
   check_puid_pgid_user "$PUID" "$PGID" "$command_args"
