@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.27"
+POK_MANAGER_VERSION="2.1.28"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -1444,7 +1444,7 @@ start_instance() {
     fi
     
     echo "✅ Server ${instance_name} started successfully with image tag ${image_tag}."
-    echo "You can view logs with: ./POK-manager.sh -logs ${instance_name}"
+    echo "You can view logs while container is running with: ./POK-manager.sh -logs -live ${instance_name}"
   else
     echo "❌ ERROR: Docker Compose file not found for instance ${instance_name}."
     exit 1
