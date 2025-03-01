@@ -2010,74 +2010,59 @@ check_for_POK_updates() {
     fi
   fi
   
-  # Add timestamp as cache-busting parameter and a random string to avoid caching
+  # Add timestamp and random string as cache-busting parameters
   local timestamp=$(date +%s)
   local random_str=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 10)
   local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/${branch_name}/POK-manager.sh?nocache=${timestamp}_${random_str}"
-  local temp_file="/tmp/POK-manager.sh"
+  local temp_file="/tmp/POK-manager.sh.${timestamp}.tmp"
   local update_info_file="${BASE_DIR}/config/POK-manager/update_available"
   
   # Ensure config directory exists with proper permissions
   mkdir -p "${BASE_DIR}/config/POK-manager"
   
-  # Fix permissions on the config directory if needed
-  if [ -d "${BASE_DIR}/config/POK-manager" ]; then
-    # Check if we're running as root/sudo
-    if [ "$(id -u)" -eq 0 ]; then
-      # If server files exist, get the ownership to match
-      if [ -d "${BASE_DIR}/ServerFiles/arkserver" ]; then
-        local dir_owner=$(stat -c '%u' "${BASE_DIR}/ServerFiles/arkserver")
-        local dir_group=$(stat -c '%g' "${BASE_DIR}/ServerFiles/arkserver")
-        chown -R "${dir_owner}:${dir_group}" "${BASE_DIR}/config/POK-manager"
-      else
-        # Default to PUID:PGID from the script if no server files
-        chown -R "${PUID}:${PGID}" "${BASE_DIR}/config/POK-manager"
-      fi
-    else
-      # If not running as root, try to match current user
-      chmod -R u+w "${BASE_DIR}/config/POK-manager" 2>/dev/null || true
-    fi
-  fi
-
-  local download_output
-  local http_code
-  
+  # Download the file using wget or curl with aggressive cache-busting
+  local download_success=false
   if command -v wget &>/dev/null; then
-    download_output=$(wget -q --no-cache -O "$temp_file" "$script_url" && echo "200" || echo "404")
-    http_code=${download_output}
+    if wget -q --no-cache -O "$temp_file" "$script_url"; then
+      download_success=true
+    fi
   elif command -v curl &>/dev/null; then
-    download_output=$(curl -s -H "Cache-Control: no-cache, no-store" -H "Pragma: no-cache" -w "%{http_code}" -o "$temp_file" "$script_url")
-    http_code=${download_output: -3}  # Get the last 3 characters (HTTP status code)
+    if curl -s -H "Cache-Control: no-cache, no-store" -H "Pragma: no-cache" -o "$temp_file" "$script_url"; then
+      download_success=true
+    fi
   else
     echo "Neither wget nor curl is available. Unable to check for updates."
     return
   fi
 
-  if [ "$http_code" = "200" ] && [ -f "$temp_file" ]; then
-    # Check if the downloaded file is at least 1KB in size
-    if [ -s "$temp_file" ] && [ $(stat -c%s "$temp_file") -ge 1024 ]; then
+  if [ "$download_success" = "true" ] && [ -f "$temp_file" ] && [ -s "$temp_file" ]; then
+    # Make sure the file is at least 1KB in size (sanity check)
+    if [ $(stat -c%s "$temp_file") -ge 1024 ]; then
       # Extract version information from the downloaded file
       local new_version=$(grep -m 1 "POK_MANAGER_VERSION=" "$temp_file" | cut -d'"' -f2)
       
-      echo " GitHub version: $new_version, Local version: $POK_MANAGER_VERSION" >&2
-      
       if [ -n "$new_version" ]; then
-        # Compare versions using sort for proper semantic versioning comparison
-        local current_version="$POK_MANAGER_VERSION"
+        echo " GitHub version: $new_version, Local version: $POK_MANAGER_VERSION"
         
-        # Function to convert version string to comparable number
+        # Compare versions using simple numeric comparison for reliability
+        # Convert version strings to numbers for comparison
+        local current_version=$POK_MANAGER_VERSION
+        
+        # Function to convert version to comparable number
         version_to_number() {
           local ver=$1
+          local major=0
+          local minor=0
+          local patch=0
           
-          # Parse the version string directly to extract major, minor, and patch
-          IFS='.' read -r major minor patch <<< "$ver"
+          # Parse the version into components
+          if [[ $ver =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            major=${BASH_REMATCH[1]}
+            minor=${BASH_REMATCH[2]}
+            patch=${BASH_REMATCH[3]}
+          fi
           
-          # Default values if any part is missing
-          major=${major:-0}
-          minor=${minor:-0}
-          patch=${patch:-0}
-          
-          # Convert to a single number for comparison
+          # Convert to a single number (allowing for versions up to 999.999.999)
           echo $((major * 1000000 + minor * 1000 + patch))
         }
         
@@ -2090,135 +2075,70 @@ check_for_POK_updates() {
           echo "* A newer version of POK-manager.sh is available: $new_version *"
           echo "* Current version: $current_version                           *"
           
-          # Ask if the user wants to upgrade if we're in interactive mode
+          # Ask if the user wants to upgrade in interactive mode
           if [ -t 0 ]; then
             echo -n "* Would you like to upgrade now? (y/n): "
             read -r upgrade_response
             if [[ "$upgrade_response" =~ ^[Yy]$ ]]; then
-              # Save the new version to the upgraded_version file before calling upgrade
+              # Save the new version to the file so upgrade_pok_manager can use it
               echo "$new_version" > "${BASE_DIR}/config/POK-manager/upgraded_version"
-              # Call the upgrade function
-              upgrade_pok_manager
+              
+              # Save the downloaded file for later use
+              cp "$temp_file" "${BASE_DIR}/config/POK-manager/new_version"
+              chmod +x "${BASE_DIR}/config/POK-manager/new_version"
+              
+              # Call the upgrade function directly
+              upgrade_pok_manager "$@"
               return
             else
               echo "* Run './POK-manager.sh -upgrade' later to perform the update     *"
               echo "* If an update causes issues, you can restore the previous        *"
-              echo "* version with './POK-manager.sh -force-restore' or               *"
-              echo "* './POK-manager.sh -emergency-restore' (for severe failures)     *"
+              echo "* version with './POK-manager.sh -force-restore'                  *"
             fi
           else
             echo "* Run './POK-manager.sh -upgrade' to perform the update     *"
             echo "* If an update causes issues, you can restore with:         *"
-            echo "* './POK-manager.sh -force-restore' or '-emergency-restore' *"
+            echo "* './POK-manager.sh -force-restore'                         *"
           fi
           echo "************************************************************"
           
           # Store the update information for later use
           echo "$new_version" > "$update_info_file"
-          # Copy the downloaded script to a temporary location for later use
+          
+          # Save the downloaded file for later use
           cp "$temp_file" "${BASE_DIR}/config/POK-manager/new_version"
           chmod +x "${BASE_DIR}/config/POK-manager/new_version"
-          
-          # Clean up
-          rm "$temp_file"
         else
-          if [ -t 0 ]; then # Only show this in interactive mode
+          if [ -t 0 ]; then # Only show in interactive mode
             echo "----- POK-manager.sh is already up to date (version $current_version) -----"
           fi
-          rm "$temp_file"
-          # Remove the update info file if it exists but no update is available
+          
+          # Remove any existing update info since we're up to date
           rm -f "$update_info_file"
           rm -f "${BASE_DIR}/config/POK-manager/new_version"
         fi
       else
-        # If we can't extract a version but files differ, just notify about the difference
-        if ! cmp -s "$0" "$temp_file"; then
-          # Check if the files are functionally different by comparing checksums of content 
-          # excluding comments, whitespace, and empty lines
-          local file1_checksum=$(grep -v "^#" "$0" | grep -v "^$" | tr -d '[:space:]' | md5sum | cut -d' ' -f1)
-          local file2_checksum=$(grep -v "^#" "$temp_file" | grep -v "^$" | tr -d '[:space:]' | md5sum | cut -d' ' -f1)
-          
-          #echo "DEBUG: File checksums - Local: $file1_checksum, GitHub: $file2_checksum" >&2
-          
-          if [ "$file1_checksum" != "$file2_checksum" ]; then
-            echo "************************************************************"
-            echo "* An update to POK-manager.sh is available                 *"
-            echo "* Run './POK-manager.sh -upgrade' to perform the update    *"
-            echo "************************************************************"
-            
-            # Store the update information for later use
-            if ! echo "unknown" > "$update_info_file" 2>/dev/null; then
-              # Handle permission error when running as the wrong user after migration
-              if [ -f "${BASE_DIR}/config/POK-manager/migration_complete" ] && [ "$(id -u)" -ne 7777 ] && [ "$(id -u)" -ne 0 ]; then
-                echo ""
-                echo "⚠️ PERMISSION ERROR DETECTED: Cannot write to ${BASE_DIR}/config/POK-manager/update_available"
-                echo "This error occurs because you're running as user '$(id -un)' (UID:$(id -u)) but your files"
-                echo "are owned by UID:GID 7777:7777 after migration."
-                echo ""
-                echo "To fix this, either:"
-                echo "  1. Run with sudo: sudo ./POK-manager.sh $@"
-                
-                # Check if a user with UID 7777 exists
-                local pokuser=$(grep ":7777:" /etc/passwd | cut -d: -f1 2>/dev/null)
-                if [ -n "$pokuser" ]; then
-                  echo "  2. Switch to user with UID 7777: sudo su - $pokuser"
-                  echo "     cd $(pwd) && ./POK-manager.sh $@"
-                else
-                  echo "  2. The migration should have created a user with UID 7777."
-                  echo "     If this user doesn't exist, please run the migration again:"
-                  echo "     sudo ./POK-manager.sh -migrate"
-                fi
-                echo ""
-              fi
-            fi
-            
-            # Copy the downloaded script to a temporary location for later use
-            if ! cp "$temp_file" "${BASE_DIR}/config/POK-manager/new_version" 2>/dev/null; then
-              # We already displayed the error message for the update_available file, no need to repeat
-              true
-            else
-              if ! chmod +x "${BASE_DIR}/config/POK-manager/new_version" 2>/dev/null; then
-                # Permission error for chmod, but we already showed the message
-                true
-              fi
-            fi
-          else
-            if [ -t 0 ]; then # Only show this in interactive mode
-              echo "----- POK-manager.sh is already up to date -----"
-            fi
-            # Remove the update info file if it exists but no update is available
-            rm -f "$update_info_file"
-            rm -f "${BASE_DIR}/config/POK-manager/new_version"
-          fi
-          
-          # Clean up
-          rm "$temp_file"
-        else
-          if [ -t 0 ]; then # Only show this in interactive mode
-            echo "----- POK-manager.sh is already up to date -----"
-          fi
-          rm "$temp_file"
-          # Remove the update info file if it exists but no update is available
-          rm -f "$update_info_file"
-          rm -f "${BASE_DIR}/config/POK-manager/new_version"
+        if [ -t 0 ]; then # Only show in interactive mode
+          echo "WARNING: Could not determine version from downloaded file."
         fi
       fi
     else
-      if [ -t 0 ]; then # Only show this in interactive mode
-        echo "Downloaded file is either empty or too small. Skipping update check."
-      fi
-      rm "$temp_file"
-    fi
-  else
-    if [ -t 0 ]; then # Only show this in interactive mode
-      if [ "$http_code" = "404" ]; then
-        echo "Error: File not found on GitHub (404). This might happen if you're using a branch that doesn't exist."
-        echo "Current branch setting: $branch_name"
-      else
-        echo "Failed to download the update (HTTP code: $http_code). Skipping update check."
+      if [ -t 0 ]; then # Only show in interactive mode
+        echo "WARNING: Downloaded file is too small to be valid."
       fi
     fi
+    
+    # Clean up the temporary file
     rm -f "$temp_file"
+  else
+    if [ -t 0 ]; then # Only show in interactive mode
+      echo "Failed to download file from GitHub. Skipping update check."
+    fi
+    
+    # Clean up any partial downloads
+    if [ -f "$temp_file" ]; then
+      rm -f "$temp_file"
+    fi
   fi
 }
 
@@ -2926,20 +2846,17 @@ upgrade_pok_manager() {
   # Keep track of the script's original path
   local original_script="$0"
   
-  # Create timestamps and backup names
-  local timestamp=$(date +%Y%m%d_%H%M%S)
-  local backup_path="${BASE_DIR%/}/config/POK-manager/pok-manager.backup_${timestamp}"
+  # Create a backup name
   local safe_backup="${BASE_DIR%/}/config/POK-manager/pok-manager.backup"
   
-  # Backup the current script with timestamp for tracking history
-  cp "$original_script" "$backup_path"
-  
-  # Also create a simple backup for easy restore
+  # Backup the current script
   cp "$original_script" "$safe_backup"
   echo "Backed up current script to $safe_backup"
   
-  # Get the original file's owner and permissions
-  local original_owner=$(stat -c '%u:%g' "$original_script")
+  # Create a rollback flag file to enable automatic recovery if the update fails
+  echo "1" > "${BASE_DIR%/}/config/POK-manager/rollback_source"
+  
+  # Get the original file's permissions
   local original_perms=$(stat -c '%a' "$original_script")
   
   # Check if we're in beta mode
@@ -2948,157 +2865,71 @@ upgrade_pok_manager() {
     branch="beta"
   fi
   
-  # Download the latest version from GitHub
+  # Download the latest version from GitHub with aggressive cache-busting
   echo "Downloading the latest version from GitHub ($branch branch)..."
   
-  # URL to download from with cache-busting parameter
+  # Generate a unique timestamp and random string to prevent caching
   local timestamp=$(date +%s)
-  local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/$branch/POK-manager.sh?t=${timestamp}"
+  local random_str=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 10)
+  local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/$branch/POK-manager.sh?nocache=${timestamp}_${random_str}"
   local temp_file="${BASE_DIR%/}/POK-manager.sh.new"
   
-  # Create temp file with proper permissions before downloading
-  if ! touch "$temp_file" 2>/dev/null; then
-    echo "ERROR: Cannot create temporary file at $temp_file"
-    echo "This is likely due to permission issues in the base directory."
-    echo ""
-    local dir_owner=$(stat -c '%u:%g' "${BASE_DIR}")
-    echo "Current directory ownership: $dir_owner"
-    echo "Your current user: $(id -un) ($(id -u):$(id -g))"
-    echo ""
-    echo "You have two options:"
-    echo "1. Run with sudo: sudo ./POK-manager.sh -upgrade"
-    echo "2. Fix the directory ownership to match your user:"
-    echo "   sudo chown $(id -u):$(id -g) ${BASE_DIR}"
-    return 1
-  fi
-  
-  # Use wget instead of curl if available, as it's more reliable
+  # Download the file using wget or curl with strong cache-busting
   local download_success=false
   if command -v wget &>/dev/null; then
     if wget -q --no-cache -O "$temp_file" "$script_url"; then
       download_success=true
     fi
   else
-    # Fallback to curl if wget is not available - add no-cache headers
     if curl -s -H "Cache-Control: no-cache, no-store" -H "Pragma: no-cache" -o "$temp_file" "$script_url"; then
       download_success=true
     fi
   fi
   
-  if $download_success && [ -s "$temp_file" ]; then
-    # Validate the downloaded script
-    if ! validate_script "$temp_file"; then
-      echo "❌ ERROR: Downloaded script failed validation checks."
-      echo "This could indicate a corrupted download or incomplete file."
-      rm -f "$temp_file"
-      echo "✅ Download removed. Original script is unchanged."
-      return 1
-    fi
-    
-    # Extract the new version from the downloaded script
-    local new_version=$(grep -m 1 "POK_MANAGER_VERSION=" "$temp_file" | cut -d'"' -f2)
-    if [ -z "$new_version" ]; then
-      echo "❌ ERROR: Could not determine the version of the downloaded script."
-      rm -f "$temp_file"
-      echo "✅ Download removed. Original script is unchanged."
-      return 1
-    fi
-    
-    # Make sure the new version is actually different
-    if [ "$new_version" == "$POK_MANAGER_VERSION" ]; then
-      echo "⚠️ The downloaded version ($new_version) is the same as the current version."
-      echo "This may indicate a GitHub caching issue. Retrying with forced cache clearing..."
+  if [ "$download_success" = "true" ] && [ -s "$temp_file" ]; then
+    # Make sure the downloaded file is valid by checking key elements
+    if grep -q "POK_MANAGER_VERSION=" "$temp_file" && grep -q "upgrade_pok_manager" "$temp_file"; then
+      # Extract new version number
+      local new_version=$(grep -m 1 "POK_MANAGER_VERSION=" "$temp_file" | cut -d'"' -f2)
       
-      # Try one more time with an even more aggressive cache-busting approach
-      local random_str=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 10)
-      script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/$branch/POK-manager.sh?nocache=${timestamp}_${random_str}"
-      
-      if command -v wget &>/dev/null; then
-        wget -q --no-cache -O "$temp_file" "$script_url"
+      if [ -n "$new_version" ]; then
+        # Make downloaded file executable
+        chmod +x "$temp_file"
+        
+        # Replace the original script with the new one
+        mv -f "$temp_file" "$original_script"
+        chmod "$original_perms" "$original_script"
+        
+        # Save the new version to a file so it can be loaded on restart
+        echo "$new_version" > "${BASE_DIR%/}/config/POK-manager/upgraded_version"
+        
+        # Create a flag file to indicate we just upgraded
+        touch "${BASE_DIR%/}/config/POK-manager/just_upgraded"
+        
+        echo "Update successful. POK-manager.sh has been updated to version $new_version"
+        echo "Restarting script to load updated version..."
+        
+        # Execute the updated script with the same arguments
+        exec "$original_script" "$@"
       else
-        curl -s -H "Cache-Control: no-cache, no-store" -H "Pragma: no-cache" -o "$temp_file" "$script_url"
-      fi
-      
-      # Re-extract version after the retry
-      new_version=$(grep -m 1 "POK_MANAGER_VERSION=" "$temp_file" | cut -d'"' -f2)
-      if [ -z "$new_version" ] || [ "$new_version" == "$POK_MANAGER_VERSION" ]; then
-        echo "❌ Still getting the same version after retry. Aborting update."
+        echo "ERROR: Couldn't determine version in the downloaded file."
         rm -f "$temp_file"
+        echo "Update failed. Original script is unchanged."
         return 1
       fi
-    fi
-    
-    # Make the new file executable
-    chmod +x "$temp_file"
-    
-    # Create a rollback flag file to indicate we're in the upgrade process
-    # This will be used by the script to auto-rollback if it fails to start
-    echo "$safe_backup" > "${BASE_DIR%/}/config/POK-manager/rollback_source"
-    
-    # Replace the old file with the new one
-    mv -f "$temp_file" "$original_script"
-    
-    # Restore original ownership and permissions
-    if [ -n "$original_owner" ]; then
-      # Only use chown if we have permission to do so
-      if [ "$(id -u)" -eq 0 ]; then
-        chown "$original_owner" "$original_script"
-      fi
-    fi
-    if [ -n "$original_perms" ]; then
-      chmod "$original_perms" "$original_script"
-    fi
-    
-    # Validating the updated script...
-    echo "Validating the updated script..."
-    if "$original_script" -validate_update >/dev/null 2>&1; then
-      echo "✅ Validation successful. The updated script is functioning properly."
-      
-      # Store the new version for the restarted script to acknowledge
-      echo "$new_version" > "${BASE_DIR%/}/config/POK-manager/upgraded_version"
-      
-      echo "Update successful. POK-manager.sh has been updated to version $new_version"
-      
-      # Remove the rollback source file since the script is working
-      rm -f "${BASE_DIR%/}/config/POK-manager/rollback_source"
-      
-      # Create a flag file to indicate that we've just upgraded
-      # This will be checked when the script restarts to prevent a second prompt
-      touch "${BASE_DIR%/}/config/POK-manager/just_upgraded"
-      
-      # Re-execute the script with the same arguments to load the new version
-      if [ -n "$*" ]; then
-        echo "Restarting script to load updated version and execute your original command: ./POK-manager.sh $*"
-      else
-        echo "Restarting script to load updated version..."
-      fi
-      exec "$original_script" "$@"
     else
-      echo "❌ ERROR: The updated script failed validation."
-      echo "Automatically rolling back to the previous version..."
-      cp "$safe_backup" "$original_script"
-      chmod +x "$original_script"
-      if [ -n "$original_owner" ] && [ "$(id -u)" -eq 0 ]; then
-        chown "$original_owner" "$original_script"
-      fi
-      if [ -n "$original_perms" ]; then
-        chmod "$original_perms" "$original_script"
-      fi
-      rm -f "${BASE_DIR%/}/config/POK-manager/rollback_source"
-      echo "✅ Rollback complete. The script has been restored to the previous version."
-      echo "Please try the update again later or report this issue to the developers."
+      echo "ERROR: Downloaded file is invalid or incomplete."
+      rm -f "$temp_file"
+      echo "Update failed. Original script is unchanged."
       return 1
     fi
-  elif [ ! -s "$temp_file" ]; then
-    echo "Error: Downloaded file is empty. Please check your internet connection."
-    # Clean up the incomplete download
-    rm -f "$temp_file"
-    echo "Original script is unchanged."
   else
-    echo "Failed to download the update. Please try again later or check your internet connection."
-    # Clean up the incomplete download
-    rm -f "$temp_file"
-    echo "Original script is unchanged."
+    echo "Failed to download update from GitHub. Please check your internet connection."
+    if [ -f "$temp_file" ]; then
+      rm -f "$temp_file"
+    fi
+    echo "Update failed. Original script is unchanged."
+    return 1
   fi
 }
 
@@ -3145,32 +2976,31 @@ validate_script() {
 
 # Function to handle automatic rollback if script fails to run
 check_for_rollback() {
-  # If rollback_source file exists, it means we're in the process of an upgrade
-  # that might have failed before the validation step could complete
-  local rollback_source="${BASE_DIR%/}/config/POK-manager/rollback_source"
+  # Only check for rollbacks if both the flag file and backup file exist
+  local rollback_file="${BASE_DIR%/}/config/POK-manager/rollback_source"
+  local backup_file="${BASE_DIR%/}/config/POK-manager/pok-manager.backup"
   
-  if [ -f "$rollback_source" ]; then
-    local backup_path=$(cat "$rollback_source")
-    if [ -f "$backup_path" ]; then
-      echo "⚠️ WARNING: Previous upgrade appears to have failed."
-      echo "Automatically rolling back to the previous version..."
-      
-      # Copy the backup file to the original script location
-      cp "$backup_path" "$0"
+  if [ -f "$rollback_file" ] && [ -f "$backup_file" ]; then
+    echo "⚠️ WARNING: Detected an incomplete update process."
+    echo "Automatically restoring from backup..."
+    
+    # Perform the actual restore
+    if cp "$backup_file" "$0"; then
       chmod +x "$0"
+      echo "✅ Rollback complete. The script has been restored from backup."
       
-      # Remove the rollback source file
-      rm -f "$rollback_source"
+      # Clean up the rollback file
+      rm -f "$rollback_file"
       
-      echo "✅ Rollback complete. The script has been restored to the previous version."
-      echo "Please try the update again later or report this issue to the developers."
+      # Clean up other update-related files for a fresh start
+      rm -f "${BASE_DIR%/}/config/POK-manager/upgraded_version" 2>/dev/null
+      rm -f "${BASE_DIR%/}/config/POK-manager/just_upgraded" 2>/dev/null
       
-      # Continue executing with the restored script
+      # Re-execute the script with the same arguments
       exec "$0" "$@"
     else
-      echo "⚠️ WARNING: Previous upgrade appears to have failed but backup file not found."
-      echo "Please run: ./POK-manager.sh -force-restore to attempt recovery"
-      rm -f "$rollback_source"
+      echo "❌ Failed to restore from backup. Please try manually:"
+      echo "sudo ./POK-manager.sh -force-restore"
     fi
   fi
 }
@@ -3183,11 +3013,26 @@ force_restore_from_backup() {
     echo "Restoring POK-manager.sh from backup..."
     
     # Copy the backup file to the original script location
-    cp "$backup_path" "$0"
-    chmod +x "$0"
-    
-    echo "✅ Restoration complete. The script has been restored to the backup version."
-    echo "You can now run the script normally."
+    if cp "$backup_path" "$0"; then
+      chmod +x "$0"
+      echo "✅ Restoration complete. The script has been restored to the backup version."
+      
+      # Clear any update flags or temporary files to start fresh
+      rm -f "${BASE_DIR%/}/config/POK-manager/upgraded_version" 2>/dev/null
+      rm -f "${BASE_DIR%/}/config/POK-manager/just_upgraded" 2>/dev/null
+      rm -f "${BASE_DIR%/}/config/POK-manager/rollback_source" 2>/dev/null
+      
+      # Read the version from the restored script for display
+      local restored_version=$(grep -m 1 "POK_MANAGER_VERSION=" "$0" | cut -d'"' -f2)
+      if [ -n "$restored_version" ]; then
+        echo "Restored to version: $restored_version"
+      fi
+      
+      echo "You can now run the script normally."
+    else
+      echo "❌ ERROR: Failed to copy backup file. You may need to run with sudo:"
+      echo "sudo ./POK-manager.sh -force-restore"
+    fi
   else
     echo "❌ ERROR: No backup file found at $backup_path"
     echo "Cannot restore the script. You may need to re-download it from GitHub."
