@@ -1972,9 +1972,21 @@ check_for_POK_updates() {
   
   # Check if we've just upgraded the script
   local just_upgraded="${BASE_DIR%/}/config/POK-manager/just_upgraded"
+  local upgraded_version_file="${BASE_DIR%/}/config/POK-manager/upgraded_version"
+  
   if [ -f "$just_upgraded" ]; then
     # Remove the flag file
     rm -f "$just_upgraded"
+    
+    # Check if we have a stored upgraded version
+    if [ -f "$upgraded_version_file" ]; then
+      local new_version=$(cat "$upgraded_version_file")
+      # Update the version number in memory to match what we just upgraded to
+      if [ -n "$new_version" ]; then
+        POK_MANAGER_VERSION="$new_version"
+        rm -f "$upgraded_version_file"
+      fi
+    fi
     
     # Extract version information from the current script
     local current_script_version=$(grep -m 1 "POK_MANAGER_VERSION=" "$0" | cut -d'"' -f2)
@@ -1998,9 +2010,10 @@ check_for_POK_updates() {
     fi
   fi
   
-  # Add timestamp as cache-busting parameter
+  # Add timestamp as cache-busting parameter and a random string to avoid caching
   local timestamp=$(date +%s)
-  local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/${branch_name}/POK-manager.sh?t=${timestamp}"
+  local random_str=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 10)
+  local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/${branch_name}/POK-manager.sh?nocache=${timestamp}_${random_str}"
   local temp_file="/tmp/POK-manager.sh"
   local update_info_file="${BASE_DIR}/config/POK-manager/update_available"
   
@@ -2029,17 +2042,12 @@ check_for_POK_updates() {
   local download_output
   local http_code
   
-  if command -v curl &>/dev/null; then
-    download_output=$(curl -s -w "%{http_code}" -o "$temp_file" "$script_url")
+  if command -v wget &>/dev/null; then
+    download_output=$(wget -q --no-cache -O "$temp_file" "$script_url" && echo "200" || echo "404")
+    http_code=${download_output}
+  elif command -v curl &>/dev/null; then
+    download_output=$(curl -s -H "Cache-Control: no-cache, no-store" -H "Pragma: no-cache" -w "%{http_code}" -o "$temp_file" "$script_url")
     http_code=${download_output: -3}  # Get the last 3 characters (HTTP status code)
-  elif command -v wget &>/dev/null; then
-    wget -q -O "$temp_file" "$script_url"
-    # wget doesn't return HTTP codes the same way, so we check if the file exists and has content
-    if [ -s "$temp_file" ]; then
-      http_code="200"
-    else
-      http_code="404"  # Default error code for wget
-    fi
   else
     echo "Neither wget nor curl is available. Unable to check for updates."
     return
@@ -2052,7 +2060,6 @@ check_for_POK_updates() {
       local new_version=$(grep -m 1 "POK_MANAGER_VERSION=" "$temp_file" | cut -d'"' -f2)
       
       echo " GitHub version: $new_version, Local version: $POK_MANAGER_VERSION" >&2
-      #echo "DEBUG: GitHub URL: $script_url" >&2
       
       if [ -n "$new_version" ]; then
         # Compare versions using sort for proper semantic versioning comparison
@@ -2070,17 +2077,12 @@ check_for_POK_updates() {
           minor=${minor:-0}
           patch=${patch:-0}
           
-          # Debug output
-          #echo "DEBUG: Parsing version $ver into: major=$major, minor=$minor, patch=$patch" >&2
-          
           # Convert to a single number for comparison
           echo $((major * 1000000 + minor * 1000 + patch))
         }
         
         local current_num=$(version_to_number "$current_version")
         local new_num=$(version_to_number "$new_version")
-        
-        #echo "DEBUG: Numeric comparison - Local: $current_num, GitHub: $new_num" >&2
         
         # Only notify if the new version is actually newer
         if [ $new_num -gt $current_num ]; then
@@ -2093,6 +2095,8 @@ check_for_POK_updates() {
             echo -n "* Would you like to upgrade now? (y/n): "
             read -r upgrade_response
             if [[ "$upgrade_response" =~ ^[Yy]$ ]]; then
+              # Save the new version to the upgraded_version file before calling upgrade
+              echo "$new_version" > "${BASE_DIR}/config/POK-manager/upgraded_version"
               # Call the upgrade function
               upgrade_pok_manager
               return
@@ -2971,12 +2975,12 @@ upgrade_pok_manager() {
   # Use wget instead of curl if available, as it's more reliable
   local download_success=false
   if command -v wget &>/dev/null; then
-    if wget -q -O "$temp_file" "$script_url"; then
+    if wget -q --no-cache -O "$temp_file" "$script_url"; then
       download_success=true
     fi
   else
-    # Fallback to curl if wget is not available
-    if curl -s -o "$temp_file" "$script_url"; then
+    # Fallback to curl if wget is not available - add no-cache headers
+    if curl -s -H "Cache-Control: no-cache, no-store" -H "Pragma: no-cache" -o "$temp_file" "$script_url"; then
       download_success=true
     fi
   fi
@@ -2989,6 +2993,39 @@ upgrade_pok_manager() {
       rm -f "$temp_file"
       echo "✅ Download removed. Original script is unchanged."
       return 1
+    fi
+    
+    # Extract the new version from the downloaded script
+    local new_version=$(grep -m 1 "POK_MANAGER_VERSION=" "$temp_file" | cut -d'"' -f2)
+    if [ -z "$new_version" ]; then
+      echo "❌ ERROR: Could not determine the version of the downloaded script."
+      rm -f "$temp_file"
+      echo "✅ Download removed. Original script is unchanged."
+      return 1
+    fi
+    
+    # Make sure the new version is actually different
+    if [ "$new_version" == "$POK_MANAGER_VERSION" ]; then
+      echo "⚠️ The downloaded version ($new_version) is the same as the current version."
+      echo "This may indicate a GitHub caching issue. Retrying with forced cache clearing..."
+      
+      # Try one more time with an even more aggressive cache-busting approach
+      local random_str=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 10)
+      script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/$branch/POK-manager.sh?nocache=${timestamp}_${random_str}"
+      
+      if command -v wget &>/dev/null; then
+        wget -q --no-cache -O "$temp_file" "$script_url"
+      else
+        curl -s -H "Cache-Control: no-cache, no-store" -H "Pragma: no-cache" -o "$temp_file" "$script_url"
+      fi
+      
+      # Re-extract version after the retry
+      new_version=$(grep -m 1 "POK_MANAGER_VERSION=" "$temp_file" | cut -d'"' -f2)
+      if [ -z "$new_version" ] || [ "$new_version" == "$POK_MANAGER_VERSION" ]; then
+        echo "❌ Still getting the same version after retry. Aborting update."
+        rm -f "$temp_file"
+        return 1
+      fi
     fi
     
     # Make the new file executable
@@ -3012,28 +3049,22 @@ upgrade_pok_manager() {
       chmod "$original_perms" "$original_script"
     fi
     
-    # Removing this echo to prevent duplication - it will be displayed after validation instead
-    # echo "Update successful. POK-manager.sh has been updated to the latest version."
-    
-    # Create a flag file to indicate that we've just upgraded
-    # This will be checked when the script restarts to prevent a second prompt
-    touch "${BASE_DIR%/}/config/POK-manager/just_upgraded"
-    
-    # Run the updated script with a validation flag to test it
+    # Validating the updated script...
     echo "Validating the updated script..."
     if "$original_script" -validate_update >/dev/null 2>&1; then
       echo "✅ Validation successful. The updated script is functioning properly."
       
-      # Extract and display the actual new version from the updated script
-      local new_script_version=$(grep -m 1 "POK_MANAGER_VERSION=" "$original_script" | cut -d'"' -f2)
-      if [ -n "$new_script_version" ]; then
-        echo "Update successful. POK-manager.sh has been updated to version $new_script_version"
-      else
-        echo "Update successful. POK-manager.sh has been updated to the latest version."
-      fi
+      # Store the new version for the restarted script to acknowledge
+      echo "$new_version" > "${BASE_DIR%/}/config/POK-manager/upgraded_version"
+      
+      echo "Update successful. POK-manager.sh has been updated to version $new_version"
       
       # Remove the rollback source file since the script is working
       rm -f "${BASE_DIR%/}/config/POK-manager/rollback_source"
+      
+      # Create a flag file to indicate that we've just upgraded
+      # This will be checked when the script restarts to prevent a second prompt
+      touch "${BASE_DIR%/}/config/POK-manager/just_upgraded"
       
       # Re-execute the script with the same arguments to load the new version
       if [ -n "$*" ]; then
@@ -3851,6 +3882,18 @@ main() {
   if [ -n "$script_version" ]; then
     # Update the global variable to ensure consistency
     POK_MANAGER_VERSION="$script_version"
+  fi
+  
+  # Check if we have a stored upgraded version from a recent upgrade
+  local upgraded_version_file="${BASE_DIR%/}/config/POK-manager/upgraded_version"
+  if [ -f "$upgraded_version_file" ]; then
+    local upgraded_version=$(cat "$upgraded_version_file")
+    if [ -n "$upgraded_version" ]; then
+      # Use the upgraded version instead of what's in the script
+      POK_MANAGER_VERSION="$upgraded_version"
+      # Remove the file so we don't keep using it
+      rm -f "$upgraded_version_file"
+    fi
   fi
   
   # First, check if we need to perform an emergency rollback
