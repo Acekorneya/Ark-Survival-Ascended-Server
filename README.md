@@ -310,6 +310,7 @@ When creating a new server instance using POK-manager.sh, a Docker Compose confi
 | ------------------------------| ------------------| ------------------------------------------------------------------------------------------|
 | `INSTANCE_NAME`               | `Instance_name`   | The name of the instance                                                                  |
 | `TZ`                          | `America/Los_Angeles`| Timezone setting: Change this to your local timezone.                                  |
+| `RANDOM_STARTUP_DELAY`        | `TRUE`            | Add a random delay (0-30s) during startup to prevent update conflicts when multiple instances start simultaneously |
 | `BATTLEEYE`                   | `TRUE`            | Set to TRUE to use BattleEye, FALSE to not use BattleEye                                  |
 | `RCON_ENABLED`                | `TRUE`            | Needed for Graceful Shutdown                                                              |
 | `DISPLAY_POK_MONITOR_MESSAGE` | `FALSE`           | TRUE to Show the Server Monitor Messages / Update Monitor Shutdown                        |
@@ -354,6 +355,7 @@ services:
     environment:
       - INSTANCE_NAME=my_instance            # The name of the instance
       - TZ=America/Los_Angeles               # Timezone setting: Change this to your local timezone. Ex.America/New_York, Europe/Berlin, Asia/Tokyo
+      - RANDOM_STARTUP_DELAY=TRUE            # Add a random delay (0-30s) during startup to prevent update conflicts when multiple instances start simultaneously
       - BATTLEEYE=FALSE                      # Set to TRUE to use BattleEye, FALSE to not use BattleEye
       - RCON_ENABLED=TRUE                    # Needed for Graceful Shutdown / Updates / Server Notifications
       - DISPLAY_POK_MONITOR_MESSAGE=FALSE    # Or TRUE to Show the Server Monitor Messages / Update Monitor 

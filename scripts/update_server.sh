@@ -18,7 +18,7 @@ cleanup() {
 }
 
 # Set up trap to call cleanup on exit (including normal exit, crashes, and signals)
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 # Function to check if the server needs to be updated
 server_needs_update() {
@@ -31,12 +31,47 @@ server_needs_update() {
   fi
 }
 
+# Improved update lock acquisition with retry logic
+acquire_update_lock() {
+  local lock_file="$ASA_DIR/updating.flag"
+  local max_attempts=10
+  local attempt=1
+  local retry_delay=5
+  
+  echo "Attempting to acquire update lock..."
+  
+  while [ $attempt -le $max_attempts ]; do
+    # Try to create the lock file atomically
+    if ! touch "$lock_file" 2>/dev/null; then
+      echo "Update lock is held by another process (attempt $attempt/$max_attempts)..."
+      sleep $retry_delay
+      attempt=$((attempt + 1))
+      continue
+    fi
+    
+    # Write the current timestamp and process info to the lock file for tracking
+    echo "$(date +"%Y-%m-%d %H:%M:%S") - Lock acquired by instance: ${INSTANCE_NAME:-unknown} (PID: $$)" > "$lock_file"
+    echo "Update lock acquired successfully"
+    return 0
+  done
+  
+  echo "Failed to acquire update lock after $max_attempts attempts. Aborting update."
+  return 1
+}
+
 # Update logic
 echo "---checking for server update---"
 
 if server_needs_update; then
   echo "A server update is available. Updating server to build ID $current_build_id..."
-  touch "$ASA_DIR/updating.flag"
+  
+  # Attempt to acquire the update lock
+  if ! acquire_update_lock; then
+    echo "Another instance is currently updating the server. Aborting update."
+    exit 0
+  fi
+  
+  # We now have the update lock, proceed with update
   /opt/steamcmd/steamcmd.sh +force_install_dir "$ASA_DIR" +login anonymous +app_update "$APPID" +quit
 
   # Copy the new appmanifest for future checks
@@ -47,7 +82,7 @@ if server_needs_update; then
     echo "Error: appmanifest_$APPID.acf was not found after update."
     exit 1
   fi
-  # Note: We no longer need to explicitly remove the flag here because the trap will handle it
+  # Note: We no longer need to explicitly remove the flag here because the trap will handle this
   # rm "$ASA_DIR/updating.flag"  - Commented out as trap will handle this
 else
   echo "Server is already running the latest build ID: $current_build_id; no update needed."

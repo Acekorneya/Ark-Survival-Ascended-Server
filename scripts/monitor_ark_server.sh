@@ -19,13 +19,29 @@ while true; do
   # Check for stale update flags (older than 6 hours) 
   # This prevents server from being stuck in "updating" mode if an update was interrupted
   if [ -f "$lock_file" ]; then
-    check_stale_update_flag 6
-    if [ $? -eq 0 ]; then
-      # Stale flag was detected and cleared, continue with normal monitoring
-      echo "Stale update flag was cleared. Continuing with normal monitoring."
-    else
-      # Update is still in progress or flag is not stale yet
+    # Use the enhanced lock checking mechanism
+    lock_status=$(check_lock_status)
+    status_code=$?
+    
+    if [ $status_code -eq 1 ]; then
+      # Lock seems stale, try to clear it
+      echo "Stale update lock detected. Details:"
+      echo "$lock_status"
+      echo "Attempting to clear stale update flag..."
+      
+      if check_stale_update_flag 6; then
+        # Stale flag was detected and cleared, continue with normal monitoring
+        echo "Stale update flag was cleared. Continuing with normal monitoring."
+      else
+        # Flag might not be stale enough yet for automatic clearing
+        echo "Update flag not cleared automatically. It may still be valid or not old enough."
+        echo "If you believe this is stuck, manually clear it with: ./POK-manager.sh -clearupdateflag <instance_name>"
+      fi
+    elif [ $status_code -eq 0 ]; then
+      # Lock is valid
       echo "Update/Installation in progress. Please wait for it to complete..."
+      echo "Update details: "
+      echo "$lock_status"
       sleep 15
       continue
     fi

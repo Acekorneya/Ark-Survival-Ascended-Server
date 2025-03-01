@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.29"
+POK_MANAGER_VERSION="2.1.30"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -46,6 +46,7 @@ declare -a config_order=(
     "BattleEye"
     "RCON Enabled"
     "POK Monitor Message"
+    "Random Startup Delay"
     "Update Server"
     "Update Interval"
     "Update Window Start"
@@ -74,6 +75,7 @@ declare -A default_config_values=(
     ["BattleEye"]="FALSE"
     ["RCON Enabled"]="TRUE"
     ["POK Monitor Message"]="FALSE"
+    ["Random Startup Delay"]="TRUE"
     ["Update Server"]="TRUE"
     ["Update Interval"]="24"
     ["Update Window Start"]="12:00 AM"
@@ -216,7 +218,7 @@ prompt_for_input() {
 
   # Proceed with specific validation based on the config key
   case $config_key in
-    "BattleEye"|"RCON Enabled"|"POK Monitor Message"|"Update Server"|"MOTD Enabled"|"Show Admin Commands In Chat")
+    "BattleEye"|"RCON Enabled"|"POK Monitor Message"|"Update Server"|"MOTD Enabled"|"Show Admin Commands In Chat"|"Random Startup Delay")
       config_values[$config_key]=$(validate_boolean "$user_input" "$config_key")
       ;;
     "Update Window Start"|"Update Window End")
@@ -885,6 +887,7 @@ read_docker_compose_config() {
     "BATTLEEYE") config_key="BattleEye" ;;  
     "RCON_ENABLED") config_key="RCON Enabled" ;;
     "DISPLAY_POK_MONITOR_MESSAGE") config_key="POK Monitor Message" ;;
+    "RANDOM_STARTUP_DELAY") config_key="Random Startup Delay" ;;
     "UPDATE_SERVER") config_key="Update Server" ;;
     "CHECK_FOR_UPDATE_INTERVAL") config_key="Update Interval" ;;
     "UPDATE_WINDOW_MINIMUM_TIME") config_key="Update Window Start" ;;
@@ -955,6 +958,7 @@ EOF
       "BattleEye") env_key="BATTLEEYE" ;;
       "RCON Enabled") env_key="RCON_ENABLED" ;;
       "POK Monitor Message") env_key="DISPLAY_POK_MONITOR_MESSAGE" ;;
+      "Random Startup Delay") env_key="RANDOM_STARTUP_DELAY" ;;
       "Update Server") env_key="UPDATE_SERVER" ;;
       "Update Interval") env_key="CHECK_FOR_UPDATE_INTERVAL" ;;
       "Update Window Start") env_key="UPDATE_WINDOW_MINIMUM_TIME" ;;

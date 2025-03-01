@@ -14,6 +14,7 @@ services:
       # - For 2_1_latest images: Files must be owned by UID:GID 7777:7777 on the host
       # Use 'sudo chown -R 1000:1000 /path/to/your/POK-manager/directory' or
       # Use 'sudo chown -R 7777:7777 /path/to/your/POK-manager/directory' to set permissions
+      - RANDOM_STARTUP_DELAY=TRUE            # Add a random delay (0-30s) during startup to prevent update conflicts
       - BATTLEEYE=FALSE                      # Set to TRUE to use BattleEye, FALSE to not use BattleEye
       - RCON_ENABLED=TRUE                    # Needed for Graceful Shutdown / Updates / Server Notifications
       - DISPLAY_POK_MONITOR_MESSAGE=FALSE    # Or TRUE to Show the Server Monitor Messages / Update Monitor 

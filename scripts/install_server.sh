@@ -16,7 +16,35 @@ cleanup() {
 }
 
 # Set up trap to call cleanup on exit (including normal exit, crashes, and signals)
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
+
+# Improved update lock acquisition with retry logic
+acquire_update_lock() {
+  local lock_file="$ASA_DIR/updating.flag"
+  local max_attempts=10
+  local attempt=1
+  local retry_delay=5
+  
+  echo "Attempting to acquire installation lock..."
+  
+  while [ $attempt -le $max_attempts ]; do
+    # Try to create the lock file atomically
+    if ! touch "$lock_file" 2>/dev/null; then
+      echo "Installation lock is held by another process (attempt $attempt/$max_attempts)..."
+      sleep $retry_delay
+      attempt=$((attempt + 1))
+      continue
+    fi
+    
+    # Write the current timestamp and process info to the lock file for tracking
+    echo "$(date +"%Y-%m-%d %H:%M:%S") - Lock acquired by instance: ${INSTANCE_NAME:-unknown} (PID: $$)" > "$lock_file"
+    echo "Installation lock acquired successfully"
+    return 0
+  done
+  
+  echo "Failed to acquire installation lock after $max_attempts attempts. Aborting installation."
+  return 1
+}
 
 # Installation logic
 echo "Starting server installation process..."
@@ -26,7 +54,34 @@ current_build_id=$(get_current_build_id)
 
 if [[ -z "$saved_build_id" || "$saved_build_id" != "$current_build_id" ]]; then
   echo "-----Installing ARK server-----"
-  touch "$ASA_DIR/updating.flag"
+  
+  # Attempt to acquire the installation lock
+  if ! acquire_update_lock; then
+    echo "Another instance is currently installing or updating the server. Waiting for it to complete..."
+    
+    # Wait for the other installation to complete
+    lock_file="$ASA_DIR/updating.flag"
+    while [ -f "$lock_file" ]; do
+      echo "Installation in progress by another instance. Waiting..."
+      sleep 15
+    done
+    
+    # After the lock is released, check if installation is still needed
+    saved_build_id=$(get_build_id_from_acf)
+    current_build_id=$(get_current_build_id)
+    
+    if [[ -z "$saved_build_id" || "$saved_build_id" != "$current_build_id" ]]; then
+      echo "Still need to install/update after waiting. Retrying acquisition..."
+      if ! acquire_update_lock; then
+        echo "Failed to acquire lock after waiting. Aborting installation."
+        exit 1
+      fi
+    else
+      echo "Server is now up to date after waiting. No installation needed."
+      exit 0
+    fi
+  fi
+  
   echo "Current build ID is $current_build_id, initiating installation.."
   /opt/steamcmd/steamcmd.sh +force_install_dir "$ASA_DIR" +login anonymous +app_update "$APPID" +quit
 

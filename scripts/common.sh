@@ -116,6 +116,49 @@ get_build_id_from_acf() {
   fi
 }
 
+# Check the lock status with enhanced details about the lock holder
+check_lock_status() {
+  local lock_file="$ASA_DIR/updating.flag"
+  
+  if [ -f "$lock_file" ]; then
+    echo "Lock file exists:"
+    echo "-----------------"
+    cat "$lock_file"
+    echo "-----------------"
+    
+    # Check if the lock file contains a PID
+    local lock_pid=$(grep -o "PID: [0-9]*" "$lock_file" | cut -d' ' -f2)
+    
+    if [ -n "$lock_pid" ]; then
+      # Check if the process is still running
+      if kill -0 "$lock_pid" 2>/dev/null; then
+        echo "Process with PID $lock_pid is still running"
+        return 0  # Lock is valid
+      else
+        echo "Process with PID $lock_pid is no longer running"
+        echo "This may be a stale lock"
+        return 1  # Lock seems stale
+      fi
+    else
+      echo "No PID information found in lock file"
+      # Use file age to determine if lock might be stale
+      local file_age=$((($(date +%s) - $(stat -c %Y "$lock_file")) / 60))
+      echo "Lock file age: $file_age minutes"
+      
+      if [ $file_age -gt 30 ]; then
+        echo "Lock file is older than 30 minutes and might be stale"
+        return 1  # Lock seems stale
+      else
+        echo "Lock file is recent (less than 30 minutes old)"
+        return 0  # Assume lock is still valid
+      fi
+    fi
+  else
+    echo "No lock file exists"
+    return 2  # No lock file
+  fi
+}
+
 # Function to get the current build ID from SteamCMD API
 get_current_build_id() {
   local build_id=$(curl -sX GET "https://api.steamcmd.net/v1/info/$APPID" | jq -r ".data.\"$APPID\".depots.branches.public.buildid")
