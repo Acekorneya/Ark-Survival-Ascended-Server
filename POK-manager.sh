@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.33"
+POK_MANAGER_VERSION="2.1.34"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -2091,9 +2091,14 @@ check_for_POK_updates() {
               return
             else
               echo "* Run './POK-manager.sh -upgrade' later to perform the update     *"
+              echo "* If an update causes issues, you can restore the previous        *"
+              echo "* version with './POK-manager.sh -force-restore' or               *"
+              echo "* './POK-manager.sh -emergency-restore' (for severe failures)     *"
             fi
           else
             echo "* Run './POK-manager.sh -upgrade' to perform the update     *"
+            echo "* If an update causes issues, you can restore with:         *"
+            echo "* './POK-manager.sh -force-restore' or '-emergency-restore' *"
           fi
           echo "************************************************************"
           
@@ -2705,7 +2710,7 @@ manage_service() {
 }
 # Define valid actions
 declare -a valid_actions
-valid_actions=("-create" "-start" "-stop" "-saveworld" "-shutdown" "-restart" "-status" "-update" "-list" "-beta" "-stable" "-version" "-upgrade" "-logs" "-backup" "-restore" "-migrate" "-setup" "-edit" "-custom" "-chat" "-clearupdateflag" "-API")
+valid_actions=("-create" "-start" "-stop" "-saveworld" "-shutdown" "-restart" "-status" "-update" "-list" "-beta" "-stable" "-version" "-upgrade" "-logs" "-backup" "-restore" "-migrate" "-setup" "-edit" "-custom" "-chat" "-clearupdateflag" "-API" "-validate_update" "-force-restore" "-emergency-restore")
 
 display_usage() {
   echo "Usage: $0 {action} [instance_name|-all] [additional_args...]"
@@ -2720,6 +2725,7 @@ display_usage() {
   echo "  -shutdown [minutes] <instance_name|-all>  Shutdown an instance or all instances with an optional countdown"
   echo "  -update                                   Check for server files & Docker image updates (doesn't modify the script itself)"
   echo "  -upgrade                                  Upgrade POK-manager.sh script to the latest version (requires confirmation)"
+  echo "  -force-restore                            Force restore POK-manager.sh from backup in case of update failure"
   echo "  -status <instance_name|-all>              Show the status of an instance or all instances"
   echo "  -restart [minutes] <instance_name|-all>   Restart an instance or all instances"
   echo "  -saveworld <instance_name|-all>           Save the world of an instance or all instances"
@@ -2899,13 +2905,24 @@ upgrade_pok_manager() {
     return 1
   fi
   
-  # Backup the current script
-  cp "$0" "${BASE_DIR%/}/config/POK-manager/pok-manager.backup"
-  echo "Backed up current script to ${BASE_DIR%/}/config/POK-manager/pok-manager.backup"
+  # Keep track of the script's original path
+  local original_script="$0"
+  
+  # Create timestamps and backup names
+  local timestamp=$(date +%Y%m%d_%H%M%S)
+  local backup_path="${BASE_DIR%/}/config/POK-manager/pok-manager.backup_${timestamp}"
+  local safe_backup="${BASE_DIR%/}/config/POK-manager/pok-manager.backup"
+  
+  # Backup the current script with timestamp for tracking history
+  cp "$original_script" "$backup_path"
+  
+  # Also create a simple backup for easy restore
+  cp "$original_script" "$safe_backup"
+  echo "Backed up current script to $safe_backup"
   
   # Get the original file's owner and permissions
-  local original_owner=$(stat -c '%u:%g' "$0")
-  local original_perms=$(stat -c '%a' "$0")
+  local original_owner=$(stat -c '%u:%g' "$original_script")
+  local original_perms=$(stat -c '%a' "$original_script")
   
   # Check if we're in beta mode
   local branch="master"
@@ -2951,21 +2968,34 @@ upgrade_pok_manager() {
   fi
   
   if $download_success && [ -s "$temp_file" ]; then
+    # Validate the downloaded script
+    if ! validate_script "$temp_file"; then
+      echo "❌ ERROR: Downloaded script failed validation checks."
+      echo "This could indicate a corrupted download or incomplete file."
+      rm -f "$temp_file"
+      echo "✅ Download removed. Original script is unchanged."
+      return 1
+    fi
+    
     # Make the new file executable
     chmod +x "$temp_file"
     
+    # Create a rollback flag file to indicate we're in the upgrade process
+    # This will be used by the script to auto-rollback if it fails to start
+    echo "$safe_backup" > "${BASE_DIR%/}/config/POK-manager/rollback_source"
+    
     # Replace the old file with the new one
-    mv -f "$temp_file" "$0"
+    mv -f "$temp_file" "$original_script"
     
     # Restore original ownership and permissions
     if [ -n "$original_owner" ]; then
       # Only use chown if we have permission to do so
       if [ "$(id -u)" -eq 0 ]; then
-        chown "$original_owner" "$0"
+        chown "$original_owner" "$original_script"
       fi
     fi
     if [ -n "$original_perms" ]; then
-      chmod "$original_perms" "$0"
+      chmod "$original_perms" "$original_script"
     fi
     
     echo "Update successful. POK-manager.sh has been updated to the latest version."
@@ -2974,29 +3004,138 @@ upgrade_pok_manager() {
     # This will be checked when the script restarts to prevent a second prompt
     touch "${BASE_DIR%/}/config/POK-manager/just_upgraded"
     
-    # Re-execute the script with the same arguments to load the new version
-    if [ -n "$*" ]; then
-      echo "Update successful. POK-manager.sh has been updated to the latest version."
-      echo "Restarting script to load updated version and execute your original command: ./POK-manager.sh $*"
+    # Run the updated script with a validation flag to test it
+    echo "Validating the updated script..."
+    if "$original_script" -validate_update >/dev/null 2>&1; then
+      echo "✅ Validation successful. The updated script is functioning properly."
+      # Remove the rollback source file since the script is working
+      rm -f "${BASE_DIR%/}/config/POK-manager/rollback_source"
+      
+      # Re-execute the script with the same arguments to load the new version
+      if [ -n "$*" ]; then
+        echo "Restarting script to load updated version and execute your original command: ./POK-manager.sh $*"
+      else
+        echo "Restarting script to load updated version..."
+      fi
+      exec "$original_script" "$@"
     else
-      echo "Update successful. POK-manager.sh has been updated to the latest version."
-      echo "Restarting script to load updated version..."
+      echo "❌ ERROR: The updated script failed validation."
+      echo "Automatically rolling back to the previous version..."
+      cp "$safe_backup" "$original_script"
+      chmod +x "$original_script"
+      if [ -n "$original_owner" ] && [ "$(id -u)" -eq 0 ]; then
+        chown "$original_owner" "$original_script"
+      fi
+      if [ -n "$original_perms" ]; then
+        chmod "$original_perms" "$original_script"
+      fi
+      rm -f "${BASE_DIR%/}/config/POK-manager/rollback_source"
+      echo "✅ Rollback complete. The script has been restored to the previous version."
+      echo "Please try the update again later or report this issue to the developers."
+      return 1
     fi
-    exec "$0" "$@"
   elif [ ! -s "$temp_file" ]; then
     echo "Error: Downloaded file is empty. Please check your internet connection."
     # Clean up the incomplete download
     rm -f "$temp_file"
-    # Restore from backup if download failed
-    cp "${BASE_DIR%/}/config/POK-manager/pok-manager.backup" "$0"
-    echo "Restored from backup."
+    echo "Original script is unchanged."
   else
     echo "Failed to download the update. Please try again later or check your internet connection."
     # Clean up the incomplete download
     rm -f "$temp_file"
-    # Restore from backup if download failed
-    cp "${BASE_DIR%/}/config/POK-manager/pok-manager.backup" "$0"
-    echo "Restored from backup."
+    echo "Original script is unchanged."
+  fi
+}
+
+# Function to validate a script file
+validate_script() {
+  local script_file="$1"
+  
+  # Check if the file exists
+  if [ ! -f "$script_file" ]; then
+    echo "Validation error: Script file does not exist" >&2
+    return 1
+  fi
+  
+  # Check if the file has reasonable size (at least 10KB)
+  local file_size=$(stat -c '%s' "$script_file")
+  if [ "$file_size" -lt 10240 ]; then
+    echo "Validation error: Script file is too small ($file_size bytes)" >&2
+    return 1
+  fi
+  
+  # Check for required shell header
+  if ! head -n 1 "$script_file" | grep -q "#!/bin/bash"; then
+    echo "Validation error: Missing proper shell header" >&2
+    return 1
+  fi
+  
+  # Check for critical functions
+  for func in "upgrade_pok_manager" "main" "list_instances" "start_instance" "stop_instance"; do
+    if ! grep -q "^[[:space:]]*${func}[[:space:]]*(" "$script_file"; then
+      echo "Validation error: Critical function '$func' not found" >&2
+      return 1
+    fi
+  done
+  
+  # Try to parse the script with bash -n (syntax check)
+  if ! bash -n "$script_file"; then
+    echo "Validation error: Script contains syntax errors" >&2
+    return 1
+  fi
+  
+  # All checks passed
+  return 0
+}
+
+# Function to handle automatic rollback if script fails to run
+check_for_rollback() {
+  # If rollback_source file exists, it means we're in the process of an upgrade
+  # that might have failed before the validation step could complete
+  local rollback_source="${BASE_DIR%/}/config/POK-manager/rollback_source"
+  
+  if [ -f "$rollback_source" ]; then
+    local backup_path=$(cat "$rollback_source")
+    if [ -f "$backup_path" ]; then
+      echo "⚠️ WARNING: Previous upgrade appears to have failed."
+      echo "Automatically rolling back to the previous version..."
+      
+      # Copy the backup file to the original script location
+      cp "$backup_path" "$0"
+      chmod +x "$0"
+      
+      # Remove the rollback source file
+      rm -f "$rollback_source"
+      
+      echo "✅ Rollback complete. The script has been restored to the previous version."
+      echo "Please try the update again later or report this issue to the developers."
+      
+      # Continue executing with the restored script
+      exec "$0" "$@"
+    else
+      echo "⚠️ WARNING: Previous upgrade appears to have failed but backup file not found."
+      echo "Please run: ./POK-manager.sh -force-restore to attempt recovery"
+      rm -f "$rollback_source"
+    fi
+  fi
+}
+
+# Function to force restore from backup
+force_restore_from_backup() {
+  local backup_path="${BASE_DIR%/}/config/POK-manager/pok-manager.backup"
+  
+  if [ -f "$backup_path" ]; then
+    echo "Restoring POK-manager.sh from backup..."
+    
+    # Copy the backup file to the original script location
+    cp "$backup_path" "$0"
+    chmod +x "$0"
+    
+    echo "✅ Restoration complete. The script has been restored to the backup version."
+    echo "You can now run the script normally."
+  else
+    echo "❌ ERROR: No backup file found at $backup_path"
+    echo "Cannot restore the script. You may need to re-download it from GitHub."
   fi
 }
 
@@ -3044,6 +3183,8 @@ update_server_files_and_docker() {
       echo "* An update to POK-manager.sh is available"
     fi
     echo "* Run './POK-manager.sh -upgrade' to upgrade the script (this won't happen automatically)"
+    echo "* Note: If an update fails, you can restore the previous version with:"
+    echo "*       './POK-manager.sh -force-restore' or './POK-manager.sh -emergency-restore'"
     echo "********************************************************************"
   else
     echo "POK-manager.sh script is up to date"
@@ -3052,6 +3193,7 @@ update_server_files_and_docker() {
   echo "----- Checking for ARK server files & Docker image updates -----"
   echo "Note: This WILL update server files and Docker images, but NOT the script itself"
 
+  # Rest of the function remains unchanged
   # Pull the latest image - detect from any running instance or from file ownership
   # If there are running instances, use the first one's image
   local running_instances=($(list_running_instances))
@@ -3087,8 +3229,8 @@ update_server_files_and_docker() {
       fi
     else
       echo "Failed to install ARK server files using SteamCMD. Please check the logs for more information."
-      exit 1
-    fi
+  exit 1
+fi
   else
     # Check for updates to the ARK server files
     local current_build_id=$(get_build_id_from_acf)
@@ -3679,12 +3821,39 @@ main() {
   # Remove leading space
   command_args="${command_args# }"
   
+  # First, check if we need to perform an emergency rollback
+  # This needs to be done before any other operations
+  if [[ "$1" == "-emergency-restore" ]]; then
+    echo "Emergency restore requested. Attempting to recover from backup..."
+    local backup_path="${BASE_DIR%/}/config/POK-manager/pok-manager.backup"
+    if [ -f "$backup_path" ]; then
+      cp "$backup_path" "$0"
+      chmod +x "$0"
+      echo "✅ Emergency restoration complete. The script has been restored to the backup version."
+      echo "You can now run the script normally."
+      exit 0
+    else
+      echo "❌ ERROR: No backup file found at $backup_path"
+      echo "Cannot restore the script. You may need to re-download it from GitHub."
+      exit 1
+    fi
+  fi
+  
+  # Check for rollback early - before ANY other operations
+  # This ensures we can recover even if basic script processing is broken
+  check_for_rollback "$@"
+  
   # Add a post-migration permissions check - MUST be first before any file operations
   check_post_migration_permissions "$command_args"
   
   # Check for required user and group at the start
   check_puid_pgid_user "$PUID" "$PGID" "$command_args"
-  check_for_POK_updates
+  
+  # Skip update check for validate_update to prevent loop
+  if [[ "$1" != "-validate_update" ]]; then
+    check_for_POK_updates
+  fi
+  
   # Check if we're in beta mode
   check_beta_mode
   
@@ -3697,6 +3866,18 @@ main() {
   shift # Remove the action from the argument list
   local instance_name="${1:-}" # Default to empty if not provided
   local additional_args="${@:2}" # Capture any additional arguments
+
+  # Handle validation update check
+  if [[ "$action" == "-validate_update" ]]; then
+    # Just return success - this is only called to verify a freshly updated script runs properly
+    exit 0
+  fi
+  
+  # Handle force restore from backup
+  if [[ "$action" == "-force-restore" ]]; then
+    force_restore_from_backup
+    exit 0
+  fi
 
   # Check if the provided action is valid
   local is_valid=false
@@ -3716,7 +3897,7 @@ main() {
   # Special cases for beta/stable/version/upgrade commands
   if [[ "$action" == "-beta" ]]; then
     set_beta_mode "beta"
-    exit 0
+exit 0
   elif [[ "$action" == "-stable" ]]; then
     set_beta_mode "stable"
     exit 0
@@ -3937,13 +4118,6 @@ configure_api() {
         fi
       else
         echo "Running in non-interactive mode. Please restart the instance manually to apply changes."
-      # Ask if user wants to restart instance now
-      read -p "Would you like to restart this instance now? (y/N): " restart_now
-      if [[ "$restart_now" =~ ^[Yy] ]]; then
-        echo "Restarting instance..."
-        stop_instance "$instance_name"
-        start_instance "$instance_name"
-        echo "✅ Instance '$instance_name' restarted with new API settings."
       fi
     else
       echo "❌ Failed to configure API for instance: $instance_name"
