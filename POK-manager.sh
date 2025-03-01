@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.32"
+POK_MANAGER_VERSION="2.1.33"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -2672,6 +2672,30 @@ manage_service() {
       docker exec -it "asa_${instance_name}" /bin/bash -c "/home/pok/scripts/rcon_interface.sh -clearupdateflag"
     fi
     ;;
+  -API)
+    if [[ -z "$instance_name" ]]; then
+      echo "Error: -API requires a TRUE/FALSE value and an instance name or -all."
+      echo "Usage: $0 -API <TRUE|FALSE> <instance_name|-all>"
+      echo "Examples:"
+      echo "  $0 -API TRUE my_instance    # Enable ArkServerAPI for 'my_instance'"
+      echo "  $0 -API FALSE -all          # Disable ArkServerAPI for all instances"
+      exit 1
+    fi
+    
+    local api_state="$instance_name"
+    instance_name="$additional_args"
+    
+    if [[ -z "$instance_name" ]]; then
+      echo "Error: -API requires an instance name or -all after the TRUE/FALSE value."
+      echo "Usage: $0 -API <TRUE|FALSE> <instance_name|-all>"
+      echo "Examples:"
+      echo "  $0 -API TRUE my_instance    # Enable ArkServerAPI for 'my_instance'"
+      echo "  $0 -API FALSE -all          # Disable ArkServerAPI for all instances"
+      exit 1
+    fi
+    
+    configure_api "$api_state" "$instance_name"
+    ;;
   *)
     echo "Invalid action. Usage: $0 {action} [additional_args...] {instance_name}"
     echo "Actions include: -start, -stop, -update, -create, -setup, -status, -restart, -saveworld, -chat, -custom, -backup, -restore"
@@ -2681,7 +2705,7 @@ manage_service() {
 }
 # Define valid actions
 declare -a valid_actions
-valid_actions=("-create" "-start" "-stop" "-saveworld" "-shutdown" "-restart" "-status" "-update" "-list" "-beta" "-stable" "-version" "-upgrade" "-logs" "-backup" "-restore" "-migrate" "-setup" "-edit" "-custom" "-chat" "-clearupdateflag")
+valid_actions=("-create" "-start" "-stop" "-saveworld" "-shutdown" "-restart" "-status" "-update" "-list" "-beta" "-stable" "-version" "-upgrade" "-logs" "-backup" "-restore" "-migrate" "-setup" "-edit" "-custom" "-chat" "-clearupdateflag" "-API")
 
 display_usage() {
   echo "Usage: $0 {action} [instance_name|-all] [additional_args...]"
@@ -2708,6 +2732,7 @@ display_usage() {
   echo "  -stable                                   Switch to stable mode to use stable version Docker images"
   echo "  -migrate                                  Migrate file ownership from 1000:1000 to 7777:7777 for compatibility with 2_1 images"
   echo "  -clearupdateflag <instance_name|-all>     Clear a stale updating.flag file if an update was interrupted"
+  echo "  -API <TRUE|FALSE> <instance_name|-all>    Enable or disable ArkServerAPI for specified instance(s)"
   echo "  -version                                  Display the current version of POK-manager"
 }
 
@@ -3795,6 +3820,170 @@ get_docker_image_tag() {
   fi
   
   echo "${image_tag_version}_${branch_suffix}"
+}
+
+# Function to enable or disable ArkServerAPI for instances
+configure_api() {
+  local api_state="$1"
+  local instance_name="$2"
+  local action_description=""
+  
+  # Check for empty state
+  if [ -z "$api_state" ]; then
+    echo "❌ Error: API state (TRUE or FALSE) is required."
+    echo "Usage: ./POK-manager.sh -API TRUE|FALSE <instance_name|-all>"
+    return 1
+  fi
+  
+  # Auto-correct common misspellings
+  api_state="${api_state^^}" # Convert to uppercase
+  case "$api_state" in
+    "T" | "Y" | "YES" | "ENABLE" | "ENABLED" | "ON" | "1" | "TURE" | "TRU" | "TTRUE" | "TRRUE" | "TRUEE")
+      echo "ℹ️ Interpreting '$api_state' as 'TRUE'"
+      api_state="TRUE"
+      ;;
+    "F" | "N" | "NO" | "DISABLE" | "DISABLED" | "OFF" | "0" | "FLASE" | "FASLE" | "FALS" | "FFALSE" | "FALLSE" | "FALSEE")
+      echo "ℹ️ Interpreting '$api_state' as 'FALSE'"
+      api_state="FALSE"
+      ;;
+  esac
+  
+  # Final validation (non-interactive safe)
+  if [[ ! "$api_state" =~ ^(TRUE|FALSE)$ ]]; then
+    echo "❌ Error: Invalid API state '$api_state'. Please use TRUE or FALSE."
+    echo "Usage: ./POK-manager.sh -API TRUE|FALSE <instance_name|-all>"
+    return 1
+  fi
+  
+  # Set action description based on validated state
+  if [ "$api_state" = "TRUE" ]; then
+    action_description="Enabling"
+  else
+    action_description="Disabling"
+  fi
+  
+  # Handle all instances if specified
+  if [ "$instance_name" = "-all" ]; then
+    echo "🔄 $action_description ArkServerAPI for all instances..."
+    local instances=($(list_instances))
+    if [ ${#instances[@]} -eq 0 ]; then
+      echo "❌ No instances found. Please create an instance first with './POK-manager.sh -create <instance_name>'."
+      return 1
+    fi
+    
+    local successful_instances=()
+    for instance in "${instances[@]}"; do
+      echo "  Processing instance: $instance"
+      if configure_api_for_instance "$api_state" "$instance"; then
+        successful_instances+=("$instance")
+      else
+        echo "  ❌ Failed to configure API for instance: $instance"
+      fi
+    done
+    
+    if [ ${#successful_instances[@]} -gt 0 ]; then
+      echo "✅ ArkServerAPI has been $( [ "$api_state" = "TRUE" ] && echo "enabled" || echo "disabled" ) for these instances:"
+      for instance in "${successful_instances[@]}"; do
+        echo "  - $instance"
+      done
+      
+      echo ""
+      echo "To apply these changes, restart the instances:"
+      echo "./POK-manager.sh -stop -all"
+      echo "./POK-manager.sh -start -all"
+      
+      # Ask if user wants to restart instances now - only in interactive mode
+      if [ -t 0 ]; then
+        read -p "Would you like to restart these instances now? (y/N): " restart_now
+        if [[ "$restart_now" =~ ^[Yy] ]]; then
+          echo "Restarting instances..."
+          for instance in "${successful_instances[@]}"; do
+            stop_instance "$instance"
+            start_instance "$instance"
+          done
+          echo "✅ All instances restarted with new API settings."
+        fi
+      else
+        echo "Running in non-interactive mode. Please restart instances manually to apply changes."
+      fi
+    else
+      echo "❌ Failed to configure API for any instances."
+      return 1
+    fi
+  else
+    # Handle single instance
+    if [ -z "$instance_name" ]; then
+      echo "❌ Instance name is required. Usage: ./POK-manager.sh -API TRUE|FALSE <instance_name|-all>"
+      return 1
+    fi
+    
+    echo "🔄 $action_description ArkServerAPI for instance: $instance_name"
+    if configure_api_for_instance "$api_state" "$instance_name"; then
+      echo "✅ ArkServerAPI has been $( [ "$api_state" = "TRUE" ] && echo "enabled" || echo "disabled" ) for instance: $instance_name"
+      
+      echo ""
+      echo "To apply these changes, restart the instance:"
+      echo "./POK-manager.sh -stop $instance_name"
+      echo "./POK-manager.sh -start $instance_name"
+      
+      # Ask if user wants to restart instance now - only in interactive mode
+      if [ -t 0 ]; then
+        read -p "Would you like to restart this instance now? (y/N): " restart_now
+        if [[ "$restart_now" =~ ^[Yy] ]]; then
+          echo "Restarting instance..."
+          stop_instance "$instance_name"
+          start_instance "$instance_name"
+          echo "✅ Instance '$instance_name' restarted with new API settings."
+        fi
+      else
+        echo "Running in non-interactive mode. Please restart the instance manually to apply changes."
+      # Ask if user wants to restart instance now
+      read -p "Would you like to restart this instance now? (y/N): " restart_now
+      if [[ "$restart_now" =~ ^[Yy] ]]; then
+        echo "Restarting instance..."
+        stop_instance "$instance_name"
+        start_instance "$instance_name"
+        echo "✅ Instance '$instance_name' restarted with new API settings."
+      fi
+    else
+      echo "❌ Failed to configure API for instance: $instance_name"
+      return 1
+    fi
+  fi
+  
+  return 0
+}
+
+# Function to configure API for a specific instance
+configure_api_for_instance() {
+  local api_state="$1"
+  local instance_name="$2"
+  local base_dir=$(dirname "$(realpath "$0")")
+  local docker_compose_file="${base_dir}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
+  
+  # Check if instance exists
+  if [ ! -f "$docker_compose_file" ]; then
+    echo "  ❌ Instance '$instance_name' does not exist (docker-compose file not found)"
+    return 1
+  fi
+  
+  # Get current API state from docker-compose file
+  local current_api_state=$(grep -o "API=.*" "$docker_compose_file" | cut -d= -f2 | tr -d ' ')
+  
+  # If the API state is already set to the desired value, skip
+  if [ "$current_api_state" = "$api_state" ]; then
+    echo "  ℹ️ API is already set to $api_state for instance: $instance_name"
+    return 0
+  fi
+  
+  # Update the API setting in the docker-compose file
+  if sed -i "s/- API=.*/- API=$api_state/" "$docker_compose_file"; then
+    echo "  ✅ Updated API setting to $api_state for instance: $instance_name"
+    return 0
+  else
+    echo "  ❌ Failed to update API setting for instance: $instance_name"
+    return 1
+  fi
 }
 
 # Invoke the main function with all passed arguments

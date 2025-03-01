@@ -117,6 +117,7 @@ Before using POK-manager.sh, ensure that you have the following prerequisites in
 - `-logs [-live] <instance_name>`: Displays logs for a specific server instance (optionally live).
 - `-beta`: Switches to beta mode, using the beta branch for updates and beta Docker images.
 - `-stable`: Switches to stable mode, using the master branch for updates and stable Docker images.
+- `-API <TRUE|FALSE> <instance_name|-all>`: Enables or disables ArkServerAPI for specified instance(s).
 - `-version`: Displays the current version of POK-manager.
 
 ### Examples
@@ -400,14 +401,32 @@ POK-manager now supports [ArkServerAPI](https://github.com/ServersHub/Framework-
 
 To enable ArkServerAPI on your server:
 
-1. Set the `API` environment variable to `TRUE` in your docker-compose file:
-   ```yaml
-   - API=TRUE    # Enable ArkServerAPI
+1. You can use the dedicated command to enable the API for one or all instances:
+   ```bash
+   # Enable ArkServerAPI for a specific instance
+   ./POK-manager.sh -API TRUE my_instance
+   
+   # Enable ArkServerAPI for all instances
+   ./POK-manager.sh -API TRUE -all
+   
+   # Disable ArkServerAPI for a specific instance
+   ./POK-manager.sh -API FALSE my_instance
    ```
+   The script will automatically update the configuration and offer to restart the instance(s) for you.
 
+   The command is user-friendly and flexible with input formats:
+   ```bash
+   # These all ENABLE the API
+   ./POK-manager.sh -API TRUE my_instance
+   ./POK-manager.sh -API true my_instance
+   
+   # These all DISABLE the API
+   ./POK-manager.sh -API FALSE my_instance
+   ./POK-manager.sh -API false my_instance
+   ```
 2. If you're creating a new instance, you can enable it during the configuration process.
 
-3. For existing instances, you can modify the docker-compose file and restart the server:
+3. For existing instances, you can also modify the docker-compose file using the edit command:
    ```bash
    ./POK-manager.sh -edit         # Select your instance to edit the config
    ./POK-manager.sh -stop my_instance
