@@ -8,6 +8,11 @@ if [ ! -d "${STEAM_COMPAT_DATA_PATH}" ]; then
   exit 1
 fi
 
+# Check for stale update flags which could prevent proper startup
+# If this was a previous interrupted update, clear the flag
+echo "----Checking for stale update flags----"
+check_stale_update_flag 6 # Consider flags older than 6 hours as stale
+
 echo "----Starting POK Ark Server Monitoring----"
 /home/pok/scripts/monitor_ark_server.sh &
 

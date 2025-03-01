@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.29"
+POK_MANAGER_VERSION="2.1.30"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -2652,6 +2652,18 @@ manage_service() {
     fi
     display_logs "$instance_name" "$live"
     ;;
+  -clearupdateflag)
+    if [ -z "$instance_name" ] || [ "$instance_name" == "-all" ]; then
+      echo "Clearing update flags for all instances..."
+      for instance in $(list_instances); do
+        echo "Processing instance: $instance"
+        docker exec -it "asa_${instance}" /bin/bash -c "/home/pok/scripts/rcon_interface.sh -clearupdateflag" || echo "Failed to clear update flag for $instance"
+      done
+    else
+      echo "Clearing update flag for instance: $instance_name"
+      docker exec -it "asa_${instance_name}" /bin/bash -c "/home/pok/scripts/rcon_interface.sh -clearupdateflag"
+    fi
+    ;;
   *)
     echo "Invalid action. Usage: $0 {action} [additional_args...] {instance_name}"
     echo "Actions include: -start, -stop, -update, -create, -setup, -status, -restart, -saveworld, -chat, -custom, -backup, -restore"
@@ -2661,7 +2673,7 @@ manage_service() {
 }
 # Define valid actions
 declare -a valid_actions
-valid_actions=("-create" "-start" "-stop" "-saveworld" "-shutdown" "-restart" "-status" "-update" "-list" "-beta" "-stable" "-version" "-upgrade" "-logs" "-backup" "-restore" "-migrate" "-setup" "-edit" "-custom" "-chat")
+valid_actions=("-create" "-start" "-stop" "-saveworld" "-shutdown" "-restart" "-status" "-update" "-list" "-beta" "-stable" "-version" "-upgrade" "-logs" "-backup" "-restore" "-migrate" "-setup" "-edit" "-custom" "-chat" "-clearupdateflag")
 
 display_usage() {
   echo "Usage: $0 {action} [instance_name|-all] [additional_args...]"
@@ -2687,6 +2699,7 @@ display_usage() {
   echo "  -beta                                     Switch to beta mode to use beta version Docker images"
   echo "  -stable                                   Switch to stable mode to use stable version Docker images"
   echo "  -migrate                                  Migrate file ownership from 1000:1000 to 7777:7777 for compatibility with 2_1 images"
+  echo "  -clearupdateflag <instance_name|-all>     Clear a stale updating.flag file if an update was interrupted"
   echo "  -version                                  Display the current version of POK-manager"
 }
 

@@ -47,6 +47,50 @@ is_server_updating() {
   fi
 }
 
+# Function to detect and clear stale update flags
+# This helps prevent issues if update process was interrupted
+check_stale_update_flag() {
+  local flag_file="$ASA_DIR/updating.flag"
+  local max_age_hours=${1:-6} # Default to 6 hours for stale flag
+  
+  if [ -f "$flag_file" ]; then
+    # Get current time and file modification time in seconds since epoch
+    local current_time=$(date +%s)
+    local file_mod_time=$(stat -c %Y "$flag_file")
+    local age_seconds=$((current_time - file_mod_time))
+    local age_hours=$((age_seconds / 3600))
+    
+    # If the flag file is older than the threshold, consider it stale
+    if [ $age_hours -ge $max_age_hours ]; then
+      echo "WARNING: Detected stale updating.flag file (last modified $age_hours hours ago)"
+      echo "This usually happens when an update process was interrupted."
+      echo "Removing stale flag to allow server to start."
+      rm -f "$flag_file"
+      return 0 # Flag was stale and removed
+    else
+      echo "Update flag exists and is recent ($age_hours hours old). Assuming update is in progress."
+      return 1 # Flag exists and is not stale
+    fi
+  fi
+  
+  return 2 # No flag found
+}
+
+# Function to manually clear update flag
+clear_update_flag() {
+  local flag_file="$ASA_DIR/updating.flag"
+  
+  if [ -f "$flag_file" ]; then
+    echo "Removing updating.flag file..."
+    rm -f "$flag_file"
+    echo "Flag file removed successfully."
+    return 0
+  else
+    echo "No updating.flag file found. Nothing to remove."
+    return 1
+  fi
+}
+
 # Function to clean and format MOD_IDS
 clean_format_mod_ids() {
   if [ -n "$MOD_IDS" ]; then

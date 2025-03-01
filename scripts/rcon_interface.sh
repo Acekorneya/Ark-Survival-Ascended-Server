@@ -14,6 +14,7 @@ usage() {
   echo "  -chat <message>           - Send a chat message to the server."
   echo "  -custom <RCON command>    - Send a custom RCON command."
   echo "  -status                   - Display server status."
+  echo "  -clearupdateflag          - Remove a stale updating.flag if update was interrupted."
   echo "  -interactive              - Enter interactive mode."
   echo "If no command is provided, the script enters interactive mode by default."
 }
@@ -50,6 +51,9 @@ main() {
     ;;
   -status)
     status
+    ;;
+  -clearupdateflag)
+    clear_update_flag
     ;;
   -custom)
     if [ -z "$1" ]; then

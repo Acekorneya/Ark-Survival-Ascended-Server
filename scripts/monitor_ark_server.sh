@@ -16,11 +16,19 @@ sleep $INITIAL_STARTUP_DELAY
 
 # Monitoring loop
 while true; do
-  # Check if an update is in progress (based on the presence of the updating.flag file)
+  # Check for stale update flags (older than 6 hours) 
+  # This prevents server from being stuck in "updating" mode if an update was interrupted
   if [ -f "$lock_file" ]; then
+    check_stale_update_flag 6
+    if [ $? -eq 0 ]; then
+      # Stale flag was detected and cleared, continue with normal monitoring
+      echo "Stale update flag was cleared. Continuing with normal monitoring."
+    else
+      # Update is still in progress or flag is not stale yet
       echo "Update/Installation in progress. Please wait for it to complete..."
       sleep 15
       continue
+    fi
   fi
   
   if [ "${UPDATE_SERVER}" = "TRUE" ]; then
