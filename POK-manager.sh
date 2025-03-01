@@ -2906,6 +2906,13 @@ upgrade_pok_manager() {
         # Create a flag file to indicate we just upgraded
         touch "${BASE_DIR%/}/config/POK-manager/just_upgraded"
         
+        # Create a flag to indicate this update completed successfully
+        # This will be checked by check_for_rollback to prevent unnecessary rollbacks
+        touch "${BASE_DIR%/}/config/POK-manager/update_completed"
+        
+        # Remove the rollback flag since we've successfully updated
+        rm -f "${BASE_DIR%/}/config/POK-manager/rollback_source"
+        
         echo "Update successful. POK-manager.sh has been updated to version $new_version"
         echo "Restarting script to load updated version..."
         
@@ -2979,6 +2986,15 @@ check_for_rollback() {
   # Only check for rollbacks if both the flag file and backup file exist
   local rollback_file="${BASE_DIR%/}/config/POK-manager/rollback_source"
   local backup_file="${BASE_DIR%/}/config/POK-manager/pok-manager.backup"
+  local update_completed="${BASE_DIR%/}/config/POK-manager/update_completed"
+  
+  # If update_completed exists, it means the previous update was successful
+  # Remove the rollback flag and the update_completed flag, then continue
+  if [ -f "$update_completed" ]; then
+    rm -f "$rollback_file" 2>/dev/null
+    rm -f "$update_completed" 2>/dev/null
+    return
+  fi
   
   if [ -f "$rollback_file" ] && [ -f "$backup_file" ]; then
     echo "⚠️ WARNING: Detected an incomplete update process."
@@ -2995,6 +3011,7 @@ check_for_rollback() {
       # Clean up other update-related files for a fresh start
       rm -f "${BASE_DIR%/}/config/POK-manager/upgraded_version" 2>/dev/null
       rm -f "${BASE_DIR%/}/config/POK-manager/just_upgraded" 2>/dev/null
+      rm -f "${BASE_DIR%/}/config/POK-manager/update_completed" 2>/dev/null
       
       # Re-execute the script with the same arguments
       exec "$0" "$@"
