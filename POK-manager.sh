@@ -3441,7 +3441,42 @@ migrate_file_ownership() {
 check_post_migration_permissions() {
   local command_args="$1"
   
-  # Only run this check if we're not root and migration has been completed
+  # Check if migration flag exists
+  if [ -f "${BASE_DIR}/config/POK-manager/migration_complete" ]; then
+    # Check if files have been reverted to legacy 1000:1000 ownership
+    local legacy_uid=1000
+    local legacy_gid=1000
+    local reverted_to_legacy=true
+    
+    # Check ServerFiles ownership
+    if [ -d "${BASE_DIR}/ServerFiles/arkserver" ]; then
+      local server_ownership="$(stat -c '%u:%g' ${BASE_DIR}/ServerFiles/arkserver)"
+      if [ "$server_ownership" != "${legacy_uid}:${legacy_gid}" ]; then
+        reverted_to_legacy=false
+      fi
+    else
+      # If ServerFiles doesn't exist, can't determine if reverted
+      reverted_to_legacy=false
+    fi
+    
+    # Check config directory ownership if still potentially reverted
+    if [ "$reverted_to_legacy" = "true" ] && [ -d "${BASE_DIR}/config/POK-manager" ]; then
+      local config_ownership="$(stat -c '%u:%g' ${BASE_DIR}/config/POK-manager)"
+      if [ "$config_ownership" != "${legacy_uid}:${legacy_gid}" ]; then
+        reverted_to_legacy=false
+      fi
+    fi
+    
+    # If all critical directories are back to legacy ownership, remove the migration flag
+    if [ "$reverted_to_legacy" = "true" ]; then
+      echo "Detected that files have been reverted to legacy ownership (1000:1000)."
+      echo "Removing migration flag to prevent permission warnings."
+      rm -f "${BASE_DIR}/config/POK-manager/migration_complete"
+      echo ""
+    fi
+  fi
+  
+  # Only run permission checks if we're not root and migration has been completed
   if [ "$(id -u)" -ne 0 ] && [ -f "${BASE_DIR}/config/POK-manager/migration_complete" ]; then
     # Check if server files exist
     if [ -d "${BASE_DIR}/ServerFiles/arkserver" ]; then
