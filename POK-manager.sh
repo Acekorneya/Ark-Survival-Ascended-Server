@@ -4143,22 +4143,25 @@ configure_api_for_instance() {
     return 1
   fi
   
-  # Get current API state from docker-compose file
-  local current_api_state=$(grep -o "API=.*" "$docker_compose_file" | cut -d= -f2 | tr -d ' ')
-  
-  # If the API state is already set to the desired value, skip
-  if [ "$current_api_state" = "$api_state" ]; then
-    echo "  ℹ️ API is already set to $api_state for instance: $instance_name"
-    return 0
-  fi
-  
-  # Update the API setting in the docker-compose file
-  if sed -i "s/- API=.*/- API=$api_state/" "$docker_compose_file"; then
-    echo "  ✅ Updated API setting to $api_state for instance: $instance_name"
-    return 0
+  # Check if API line already exists in the file
+  if grep -q "- API=" "$docker_compose_file"; then
+    # API line exists, update it
+    if sed -i "s/- API=.*/- API=$api_state/" "$docker_compose_file"; then
+      echo "  ✅ Updated API setting to $api_state for instance: $instance_name"
+      return 0
+    else
+      echo "  ❌ Failed to update API setting for instance: $instance_name"
+      return 1
+    fi
   else
-    echo "  ❌ Failed to update API setting for instance: $instance_name"
-    return 1
+    # API line doesn't exist, add it after INSTANCE_NAME line
+    if sed -i "/- INSTANCE_NAME/a \ \ \ \ \ \ - API=$api_state" "$docker_compose_file"; then
+      echo "  ✅ Added API=$api_state setting for instance: $instance_name"
+      return 0
+    else
+      echo "  ❌ Failed to add API setting for instance: $instance_name"
+      return 1
+    fi
   fi
 }
 
