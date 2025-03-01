@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.28"
+POK_MANAGER_VERSION="2.1.29"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -2519,7 +2519,22 @@ set_beta_mode() {
     echo "Setting POK-manager to stable mode"
     rm -f "${config_dir}/beta_mode"
     POK_MANAGER_BRANCH="stable"
-    new_tag="2_0_latest"
+    
+    # Default to the new version
+    local image_version="2_1"
+    
+    # Check if server files exist and determine ownership
+    local server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
+    if [ -d "$server_files_dir" ]; then
+      local file_ownership=$(stat -c '%u:%g' "$server_files_dir")
+      
+      # If files are owned by 1000:1000, use the 2_0 image for compatibility
+      if [ "$file_ownership" = "1000:1000" ]; then
+        image_version="2_0"
+      fi
+    fi
+    
+    new_tag="${image_version}_latest"
   fi
   
   # Update all docker-compose.yaml files to use the new image tag
@@ -2686,7 +2701,13 @@ upgrade_pok_manager() {
     touch "${BASE_DIR%/}/config/POK-manager/just_upgraded"
     
     # Re-execute the script with the same arguments to load the new version
-    echo "Restarting script to load updated version..."
+    if [ -n "$*" ]; then
+      echo "Update successful. POK-manager.sh has been updated to the latest version."
+      echo "Restarting script to load updated version and execute your original command: ./POK-manager.sh $*"
+    else
+      echo "Update successful. POK-manager.sh has been updated to the latest version."
+      echo "Restarting script to load updated version..."
+    fi
     exec "$0" "$@"
   elif [ ! -s "$temp_file" ]; then
     echo "Error: Downloaded file is empty. Please check your internet connection."
