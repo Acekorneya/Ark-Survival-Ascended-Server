@@ -2917,8 +2917,13 @@ migrate_file_ownership() {
   echo "This tool will help you migrate your file ownership from 1000:1000 to 7777:7777"
   echo "for compatibility with the new default Docker image."
   echo ""
-  echo "⚠️ WARNING: This will change ownership of all your server files and may require elevated privileges."
-  echo "Make sure all your server instances are stopped before proceeding."
+  echo "⚠️ WARNING: This process will:"
+  echo "  1. STOP ALL RUNNING SERVER INSTANCES"
+  echo "  2. Change ownership of all your server files"
+  echo "  3. Update your servers to use the newer 2.1 Docker image"
+  echo ""
+  echo "Don't worry - this is a simple process to improve your server's compatibility,"
+  echo "and we'll guide you through each step!"
   echo ""
   
   # Check if we have sudo access
@@ -2933,6 +2938,34 @@ migrate_file_ownership() {
     echo "If you don't have a user with UID 7777 on your system, you'll be prompted to create one."
     echo "Without a matching user, you'll need to use sudo to run the script after migration."
     return 1
+  fi
+  
+  # Check for running instances
+  local running_instances=($(list_running_instances))
+  if [ ${#running_instances[@]} -gt 0 ]; then
+    echo "The following server instances are currently running:"
+    for instance in "${running_instances[@]}"; do
+      echo "  - $instance"
+    done
+    echo ""
+    echo "These instances need to be stopped before migration can proceed."
+    read -p "Stop all running instances now? (Y/n): " stop_confirm
+    if [[ "$stop_confirm" =~ ^[Nn]$ ]]; then
+      echo "Migration cancelled. Please stop all instances manually and try again."
+      return 1
+    fi
+    
+    echo "Stopping all running instances..."
+    for instance in "${running_instances[@]}"; do
+      echo "Stopping instance: $instance"
+      stop_instance "$instance"
+    done
+    
+    echo "✅ All instances have been stopped successfully."
+    echo ""
+  else
+    echo "No running instances detected. Proceeding with migration."
+    echo ""
   fi
   
   # First list the specific directories that we know need to be changed
@@ -2966,8 +2999,8 @@ migrate_file_ownership() {
   echo -e "\nAdditionally, all other files and folders in the base directory will have their ownership changed."
   
   # Ask for confirmation
-  read -p "Are you sure you want to proceed? (y/N): " confirm
-  if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+  read -p "Proceed with migration? (Y/n): " confirm
+  if [[ "$confirm" =~ ^[Nn]$ ]]; then
     echo "Migration cancelled."
     return 1
   fi
@@ -3000,7 +3033,10 @@ migrate_file_ownership() {
   echo "✅ File ownership migration complete."
   echo ""
   echo "Your files are now compatible with the 2_1_latest Docker image."
-  echo "Any running servers will need to be restarted to use the new image."
+  
+  # Set to beta mode to ensure we use the new 2.1 image
+  set_beta_mode "stable"
+  echo "Updated all docker-compose files to use the 2_1_latest image."
   
   # Check if a user with UID 7777 already exists
   local existing_user=$(getent passwd 7777 | cut -d: -f1)
@@ -3144,6 +3180,34 @@ migrate_file_ownership() {
     echo "  cd $(realpath ${BASE_DIR}) && ./POK-manager.sh"
   fi
   
+  # If there were previously running instances, ask if they should be restarted
+  if [ ${#running_instances[@]} -gt 0 ]; then
+    echo ""
+    echo "The following server instances were stopped during migration:"
+    for instance in "${running_instances[@]}"; do
+      echo "  - $instance"
+    done
+    
+    echo ""
+    read -p "Would you like to restart these servers now with the new 2.1 image? (Y/n): " restart_servers
+    
+    if [[ ! "$restart_servers" =~ ^[Nn]$ ]]; then
+      echo "Restarting servers with the new 2.1 image..."
+      for instance in "${running_instances[@]}"; do
+        echo "Starting instance: $instance"
+        start_instance "$instance"
+      done
+      echo "✅ All servers have been restarted with the new 2.1 image."
+    else
+      echo "Servers have not been restarted. You can start them later with:"
+      echo "  ./POK-manager.sh -start -all"
+      echo "or start individual servers with:"
+      echo "  ./POK-manager.sh -start <instance_name>"
+    fi
+  fi
+  
+  echo ""
+  echo "✨ Migration complete! Your ARK server is now using the new 2.1 image with 7777:7777 permissions. ✨"
   echo ""
   echo "Note: If you want to go back to the 1000:1000 ownership, you can run:"
   echo "sudo chown -R 1000:1000 ${BASE_DIR}"
