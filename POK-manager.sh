@@ -2612,6 +2612,10 @@ upgrade_pok_manager() {
   cp "$0" "${BASE_DIR%/}/config/POK-manager/pok-manager.backup"
   echo "Backed up current script to ${BASE_DIR%/}/config/POK-manager/pok-manager.backup"
   
+  # Get the original file's owner and permissions
+  local original_owner=$(stat -c '%u:%g' "$0")
+  local original_perms=$(stat -c '%a' "$0")
+  
   # Check if we're in beta mode
   local branch="master"
   if check_beta_mode; then
@@ -2624,18 +2628,42 @@ upgrade_pok_manager() {
   # URL to download from with cache-busting parameter
   local timestamp=$(date +%s)
   local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/$branch/POK-manager.sh?t=${timestamp}"
-  local download_output
+  local temp_file="${BASE_DIR%/}/POK-manager.sh.new"
   
-  # Execute curl and capture both output and HTTP status code
-  download_output=$(curl -s -w "%{http_code}" -o "${BASE_DIR%/}/POK-manager.sh.new" "$script_url")
-  local http_code=${download_output: -3}  # Get the last 3 characters (HTTP status code)
+  # Create temp file with proper permissions before downloading
+  touch "$temp_file"
   
-  if [ "$http_code" = "200" ] && [ -s "${BASE_DIR%/}/POK-manager.sh.new" ]; then
+  # Use wget instead of curl if available, as it's more reliable
+  local download_success=false
+  if command -v wget &>/dev/null; then
+    if wget -q -O "$temp_file" "$script_url"; then
+      download_success=true
+    fi
+  else
+    # Fallback to curl if wget is not available
+    if curl -s -o "$temp_file" "$script_url"; then
+      download_success=true
+    fi
+  fi
+  
+  if $download_success && [ -s "$temp_file" ]; then
     # Make the new file executable
-    chmod +x "${BASE_DIR%/}/POK-manager.sh.new"
+    chmod +x "$temp_file"
     
     # Replace the old file with the new one
-    mv -f "${BASE_DIR%/}/POK-manager.sh.new" "$0"
+    mv -f "$temp_file" "$0"
+    
+    # Restore original ownership and permissions
+    if [ -n "$original_owner" ]; then
+      # Only use chown if we have permission to do so
+      if [ "$(id -u)" -eq 0 ]; then
+        chown "$original_owner" "$0"
+      fi
+    fi
+    if [ -n "$original_perms" ]; then
+      chmod "$original_perms" "$0"
+    fi
+    
     echo "Update successful. POK-manager.sh has been updated to the latest version."
     
     # Create a flag file to indicate that we've just upgraded
@@ -2645,16 +2673,17 @@ upgrade_pok_manager() {
     # Re-execute the script with the same arguments to load the new version
     echo "Restarting script to load updated version..."
     exec "$0" "$@"
-  elif [ "$http_code" = "404" ]; then
-    echo "Error: File not found on GitHub (404). Please check that the repository and branch exist:"
-    echo "Repository: https://github.com/Acekorneya/Ark-Survival-Ascended-Server"
-    echo "Branch: $branch"
+  elif [ ! -s "$temp_file" ]; then
+    echo "Error: Downloaded file is empty. Please check your internet connection."
     # Clean up the incomplete download
-    rm -f "${BASE_DIR%/}/POK-manager.sh.new"
+    rm -f "$temp_file"
+    # Restore from backup if download failed
+    cp "${BASE_DIR%/}/config/POK-manager/pok-manager.backup" "$0"
+    echo "Restored from backup."
   else
-    echo "Failed to download the update (HTTP code: $http_code). Please try again later or check your internet connection."
+    echo "Failed to download the update. Please try again later or check your internet connection."
     # Clean up the incomplete download
-    rm -f "${BASE_DIR%/}/POK-manager.sh.new"
+    rm -f "$temp_file"
     # Restore from backup if download failed
     cp "${BASE_DIR%/}/config/POK-manager/pok-manager.backup" "$0"
     echo "Restored from backup."
