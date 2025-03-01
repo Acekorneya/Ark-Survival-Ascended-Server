@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.30"
+POK_MANAGER_VERSION="2.1.29"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -2847,6 +2847,25 @@ upgrade_pok_manager() {
   # Create the config directory if it doesn't exist
   mkdir -p "${BASE_DIR%/}/config/POK-manager"
   
+  # Check if we have write permission to the base directory
+  if [ ! -w "${BASE_DIR}" ]; then
+    echo "ERROR: You don't have write permission to the base directory (${BASE_DIR})."
+    echo "This is likely because the directory is owned by a different user."
+    echo ""
+    local dir_owner=$(stat -c '%u:%g' "${BASE_DIR}")
+    echo "Current directory ownership: $dir_owner"
+    echo "Your current user: $(id -un) ($(id -u):$(id -g))"
+    echo ""
+    echo "You have two options:"
+    echo "1. Run with sudo: sudo ./POK-manager.sh -upgrade"
+    echo "2. Fix the directory ownership to match your user:"
+    echo "   sudo chown $(id -u):$(id -g) ${BASE_DIR}"
+    echo ""
+    echo "If you've migrated to the 7777:7777 user, the directory should be owned by 7777:7777."
+    echo "Run: sudo chown 7777:7777 ${BASE_DIR}"
+    return 1
+  fi
+  
   # Backup the current script
   cp "$0" "${BASE_DIR%/}/config/POK-manager/pok-manager.backup"
   echo "Backed up current script to ${BASE_DIR%/}/config/POK-manager/pok-manager.backup"
@@ -2870,7 +2889,20 @@ upgrade_pok_manager() {
   local temp_file="${BASE_DIR%/}/POK-manager.sh.new"
   
   # Create temp file with proper permissions before downloading
-  touch "$temp_file"
+  if ! touch "$temp_file" 2>/dev/null; then
+    echo "ERROR: Cannot create temporary file at $temp_file"
+    echo "This is likely due to permission issues in the base directory."
+    echo ""
+    local dir_owner=$(stat -c '%u:%g' "${BASE_DIR}")
+    echo "Current directory ownership: $dir_owner"
+    echo "Your current user: $(id -un) ($(id -u):$(id -g))"
+    echo ""
+    echo "You have two options:"
+    echo "1. Run with sudo: sudo ./POK-manager.sh -upgrade"
+    echo "2. Fix the directory ownership to match your user:"
+    echo "   sudo chown $(id -u):$(id -g) ${BASE_DIR}"
+    return 1
+  fi
   
   # Use wget instead of curl if available, as it's more reliable
   local download_success=false
@@ -3230,6 +3262,7 @@ migrate_file_ownership() {
   
   # Additional directories that will be changed
   echo -e "\nAdditionally, all other files and folders in the base directory will have their ownership changed."
+  echo "The base directory (${BASE_DIR}) will also have its ownership changed to 7777:7777."
   
   # Ask for confirmation
   read -p "Proceed with migration? (Y/n): " confirm
@@ -3247,7 +3280,7 @@ migrate_file_ownership() {
     chown -R 7777:7777 "$dir"
   done
   
-  # Now process all other files and directories in the base directory
+  # Now process all other files and directories in BASE_DIR except POK-manager.sh
   echo "Processing remaining files and directories in ${BASE_DIR}"
   
   # Find and change ownership of all other files/directories in BASE_DIR except POK-manager.sh
@@ -3257,6 +3290,10 @@ migrate_file_ownership() {
       chown -R 7777:7777 "$item"
     fi
   done
+  
+  # IMPORTANT: Change ownership of the BASE_DIR itself
+  echo "Changing ownership of base directory: ${BASE_DIR}"
+  chown 7777:7777 "${BASE_DIR}"
   
   # Ensure POK-manager.sh has correct ownership and permissions
   echo "Setting correct permissions for POK-manager.sh"
