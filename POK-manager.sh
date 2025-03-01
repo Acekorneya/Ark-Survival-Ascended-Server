@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.34"
+POK_MANAGER_VERSION="2.1.35"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -2998,7 +2998,8 @@ upgrade_pok_manager() {
       chmod "$original_perms" "$original_script"
     fi
     
-    echo "Update successful. POK-manager.sh has been updated to the latest version."
+    # Removing this echo to prevent duplication - it will be displayed after validation instead
+    # echo "Update successful. POK-manager.sh has been updated to the latest version."
     
     # Create a flag file to indicate that we've just upgraded
     # This will be checked when the script restarts to prevent a second prompt
@@ -3008,6 +3009,7 @@ upgrade_pok_manager() {
     echo "Validating the updated script..."
     if "$original_script" -validate_update >/dev/null 2>&1; then
       echo "✅ Validation successful. The updated script is functioning properly."
+      echo "Update successful. POK-manager.sh has been updated to the latest version."
       # Remove the rollback source file since the script is working
       rm -f "${BASE_DIR%/}/config/POK-manager/rollback_source"
       
