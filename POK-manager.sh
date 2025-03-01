@@ -3443,17 +3443,20 @@ check_post_migration_permissions() {
   
   # Only run this check if we're not root and migration has been completed
   if [ "$(id -u)" -ne 0 ] && [ -f "${BASE_DIR}/config/POK-manager/migration_complete" ]; then
-    # Check if server files exist and are owned by UID 7777
+    # Check if server files exist
     if [ -d "${BASE_DIR}/ServerFiles/arkserver" ]; then
       local dir_ownership="$(stat -c '%u:%g' ${BASE_DIR}/ServerFiles/arkserver)"
       local dir_uid=$(echo "$dir_ownership" | cut -d: -f1)
+      local dir_gid=$(echo "$dir_ownership" | cut -d: -f2)
+      local current_uid=$(id -u)
+      local current_gid=$(id -g)
       
-      # If files are owned by 7777 but current user is not 7777
-      if [ "$dir_uid" = "7777" ] && [ "$(id -u)" -ne 7777 ]; then
+      # Only show error if there's an actual permission mismatch
+      if [ "$dir_uid" -ne "$current_uid" ] || [ "$dir_gid" -ne "$current_gid" ]; then
         echo ""
-        echo "⚠️ POST-MIGRATION PERMISSION ISSUE DETECTED ⚠️"
-        echo "You are running the script as user '$(id -un)' (UID:$(id -u)) after migration,"
-        echo "but your server files are now owned by UID:GID 7777:7777."
+        echo "⚠️ PERMISSION MISMATCH DETECTED ⚠️"
+        echo "Your server files are owned by UID:GID ${dir_uid}:${dir_gid},"
+        echo "but you're running this script as user '$(id -un)' with UID:GID ${current_uid}:${current_gid}."
         echo ""
         echo "This will cause permission errors. You have two options:"
         echo ""
@@ -3461,16 +3464,16 @@ check_post_migration_permissions() {
         echo "   sudo ./POK-manager.sh $command_args"
         echo ""
         
-        # Check if a user with UID 7777 exists
-        local pokuser=$(grep ":7777:" /etc/passwd | cut -d: -f1 2>/dev/null)
-        if [ -n "$pokuser" ]; then
-          echo "2. Switch to the user with UID 7777 (recommended):"
-          echo "   sudo su - $pokuser"
+        # Check if a user with the directory's UID exists
+        local dir_user=$(getent passwd "$dir_uid" | cut -d: -f1 2>/dev/null)
+        if [ -n "$dir_user" ]; then
+          echo "2. Switch to the user with UID ${dir_uid} (recommended):"
+          echo "   sudo su - $dir_user"
           echo "   cd $(pwd) && ./POK-manager.sh $command_args"
         else
-          echo "2. The migration should have created a user with UID 7777."
-          echo "   If this user doesn't exist, please run the migration again:"
-          echo "   sudo ./POK-manager.sh -migrate"
+          echo "2. Consider creating a user with UID:GID ${dir_uid}:${dir_gid} to match file ownership"
+          echo "   Or change file ownership to match your current user:"
+          echo "   sudo chown -R ${current_uid}:${current_gid} ${BASE_DIR}"
         fi
         echo ""
         # Exit with status code 1 to indicate an error
@@ -3478,16 +3481,20 @@ check_post_migration_permissions() {
       fi
     fi
     
-    # ADDITIONAL CHECK: Also verify if config directory permissions are correct
+    # Also verify if config directory permissions are correct
     if [ -d "${BASE_DIR}/config/POK-manager" ]; then
       local config_dir_ownership="$(stat -c '%u:%g' ${BASE_DIR}/config/POK-manager)"
       local config_dir_uid=$(echo "$config_dir_ownership" | cut -d: -f1)
+      local config_dir_gid=$(echo "$config_dir_ownership" | cut -d: -f2)
+      local current_uid=$(id -u)
+      local current_gid=$(id -g)
       
-      if [ "$config_dir_uid" = "7777" ] && [ "$(id -u)" -ne 7777 ]; then
+      # Only show error if there's an actual permission mismatch
+      if [ "$config_dir_uid" -ne "$current_uid" ] || [ "$config_dir_gid" -ne "$current_gid" ]; then
         echo ""
-        echo "⚠️ POST-MIGRATION PERMISSION ISSUE DETECTED ⚠️"
-        echo "You are running the script as user '$(id -un)' (UID:$(id -u)) after migration,"
-        echo "but your config directory is now owned by UID:GID 7777:7777."
+        echo "⚠️ PERMISSION MISMATCH DETECTED ⚠️"
+        echo "Your config directory is owned by UID:GID ${config_dir_uid}:${config_dir_gid},"
+        echo "but you're running this script as user '$(id -un)' with UID:GID ${current_uid}:${current_gid}."
         echo ""
         echo "This will cause permission errors. You have two options:"
         echo ""
@@ -3495,16 +3502,16 @@ check_post_migration_permissions() {
         echo "   sudo ./POK-manager.sh $command_args"
         echo ""
         
-        # Check if a user with UID 7777 exists
-        local pokuser=$(grep ":7777:" /etc/passwd | cut -d: -f1 2>/dev/null)
-        if [ -n "$pokuser" ]; then
-          echo "2. Switch to the user with UID 7777 (recommended):"
-          echo "   sudo su - $pokuser"
+        # Check if a user with the config directory's UID exists
+        local dir_user=$(getent passwd "$config_dir_uid" | cut -d: -f1 2>/dev/null)
+        if [ -n "$dir_user" ]; then
+          echo "2. Switch to the user with UID ${config_dir_uid} (recommended):"
+          echo "   sudo su - $dir_user"
           echo "   cd $(pwd) && ./POK-manager.sh $command_args"
         else
-          echo "2. The migration should have created a user with UID 7777."
-          echo "   If this user doesn't exist, please run the migration again:"
-          echo "   sudo ./POK-manager.sh -migrate"
+          echo "2. Consider creating a user with UID:GID ${config_dir_uid}:${config_dir_gid} to match file ownership"
+          echo "   Or change config directory ownership to match your current user:"
+          echo "   sudo chown -R ${current_uid}:${current_gid} ${BASE_DIR}/config"
         fi
         echo ""
         # Exit with status code 1 to indicate an error
