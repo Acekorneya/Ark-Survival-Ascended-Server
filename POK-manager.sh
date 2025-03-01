@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.30"
+POK_MANAGER_VERSION="2.1.31"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -3066,43 +3066,71 @@ update_server_files_and_docker() {
     local latest_build_id=$(get_current_build_id)
 
     if [ "$current_build_id" != "$latest_build_id" ]; then
-      echo "---- New server build available: $latest_build_id Updating ARK server files -----"
+      echo "---- New server build available: $latest_build_id (current: $current_build_id) -----"
+      echo "Update required. Checking for running instances..."
+      
+      # Get list of running instances
+      local running_instances=($(list_running_instances))
+      
+      # Stop all running instances if any are found
+      if [ ${#running_instances[@]} -gt 0 ]; then
+        echo "----- Stopping all running instances before update -----"
+        echo "Found ${#running_instances[@]} running instances that need to be stopped:"
+        
+        for instance in "${running_instances[@]}"; do
+          echo "- $instance"
+        done
+        
+        echo "Stopping all instances..."
+        for instance in "${running_instances[@]}"; do
+          echo "Stopping instance: $instance"
+          stop_instance "$instance"
+        done
+        
+        echo "----- All instances have been stopped. Proceeding with update... -----"
+      else
+        echo "No running instances found. Proceeding with update..."
+      fi
 
-      # Check if any running instance has the update_server.sh script
-      local update_script_found=false
-      for instance in $(list_running_instances); do
-        if docker exec "asa_${instance}" test -f /home/pok/scripts/update_server.sh; then
-          update_script_found=true
-          echo "Running update_server.sh script in the container for instance: $instance"
-          docker exec -it "asa_${instance}" /bin/bash -c "/home/pok/scripts/update_server.sh" | while read -r line; do
-            echo "[$instance] $line"
-          done
-          break
-        fi
-      done
-
-      if [ "$update_script_found" = false ]; then
-        echo "No running instance found with the update_server.sh script. Updating server files using SteamCMD..."
-        ensure_steamcmd_executable # Make sure SteamCMD is executable
-        if "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +login anonymous +app_update 2430930 +quit; then
-          echo "SteamCMD update completed successfully."
-          # Move the appmanifest_2430930.acf file to the correct location
-          if [ -f "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" ]; then
-            cp "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" "${BASE_DIR%/}/ServerFiles/arkserver/"
-            echo "Copied appmanifest_2430930.acf to the correct location."
-          else
-            echo "appmanifest_2430930.acf not found in steamapps directory. Skipping move."
-          fi
+      # Now perform the update with SteamCMD
+      echo "Updating server files using SteamCMD..."
+      ensure_steamcmd_executable # Make sure SteamCMD is executable
+      if "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +login anonymous +app_update 2430930 +quit; then
+        echo "SteamCMD update completed successfully."
+        # Move the appmanifest_2430930.acf file to the correct location
+        if [ -f "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" ]; then
+          cp "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" "${BASE_DIR%/}/ServerFiles/arkserver/"
+          echo "Copied appmanifest_2430930.acf to the correct location."
         else
-          echo "SteamCMD update failed. Please check the logs for more information."
-          exit 1
+          echo "appmanifest_2430930.acf not found in steamapps directory. Skipping move."
         fi
+      else
+        echo "SteamCMD update failed. Please check the logs for more information."
+        exit 1
       fi
 
       # Check if the server files were updated successfully
       local updated_build_id=$(get_build_id_from_acf)
       if [ "$updated_build_id" == "$latest_build_id" ]; then
         echo "----- ARK server files updated successfully to build id: $latest_build_id -----"
+        
+        # If instances were running before, notify the user they need to restart them
+        if [ ${#running_instances[@]} -gt 0 ]; then
+          echo ""
+          echo "----- IMPORTANT: Server instances were stopped for the update -----"
+          echo "The following instances were running before the update:"
+          for instance in "${running_instances[@]}"; do
+            echo "- $instance"
+          done
+          echo ""
+          echo "You can restart them with:"
+          echo "./POK-manager.sh -start -all"
+          echo ""
+          echo "Or start them individually with:"
+          for instance in "${running_instances[@]}"; do
+            echo "./POK-manager.sh -start $instance"
+          done
+        fi
       else
         echo "----- Failed to update ARK server files to the latest build. Current build id: $updated_build_id -----"
         exit 1
