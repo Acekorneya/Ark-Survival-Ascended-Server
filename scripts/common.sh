@@ -167,3 +167,92 @@ get_current_build_id() {
 # Execute initialization functions
 clean_format_mod_ids
 validate_server_password
+
+# Function to install ArkServerAPI
+install_ark_server_api() {
+  if [ "${API}" != "TRUE" ]; then
+    echo "ArkServerAPI installation skipped (API is not set to TRUE)"
+    return 0
+  fi
+
+  echo "---- Installing/Updating ArkServerAPI ----"
+  
+  # Define paths
+  local api_dir="${ASA_DIR}/ShooterGame/Binaries/Win64/ArkApi"
+  local bin_dir="${ASA_DIR}/ShooterGame/Binaries/Win64"
+  local api_tmp="/tmp/arkserverapi.zip"
+  local api_version_file="${api_dir}/.api_version"
+  local current_api_version=""
+  
+  # Check if version file exists and get current version
+  if [ -f "$api_version_file" ]; then
+    current_api_version=$(cat "$api_version_file")
+    echo "Current ArkServerAPI version: $current_api_version"
+  else
+    echo "ArkServerAPI not found, will install for the first time."
+    # Create API directory if it doesn't exist
+    mkdir -p "$api_dir"
+  fi
+  
+  # Fetch the latest release info from GitHub
+  echo "Checking for latest ArkServerAPI version..."
+  local latest_release_info=$(curl -s "https://api.github.com/repos/ServersHub/Framework-ArkServerApi/releases/latest")
+  local latest_version=$(echo "$latest_release_info" | jq -r '.tag_name')
+  local download_url=$(echo "$latest_release_info" | jq -r '.assets[0].browser_download_url')
+  
+  if [ -z "$latest_version" ] || [ "$latest_version" = "null" ]; then
+    echo "ERROR: Failed to fetch latest version information from GitHub."
+    return 1
+  fi
+  
+  echo "Latest ArkServerAPI version: $latest_version"
+  
+  # Check if an update is needed
+  if [ "$current_api_version" = "$latest_version" ]; then
+    echo "ArkServerAPI is already up-to-date."
+    return 0
+  fi
+  
+  echo "Downloading ArkServerAPI $latest_version..."
+  
+  # Download the latest release
+  if ! curl -L -o "$api_tmp" "$download_url"; then
+    echo "ERROR: Failed to download ArkServerAPI."
+    return 1
+  fi
+  
+  echo "Extracting ArkServerAPI..."
+  
+  # Backup existing config if it exists
+  if [ -d "$api_dir/Plugins" ]; then
+    echo "Backing up existing plugins configuration..."
+    local backup_dir="${api_dir}_backup_$(date +%Y%m%d%H%M%S)"
+    mkdir -p "$backup_dir"
+    
+    # Find and copy only .json files to preserve configurations
+    find "$api_dir/Plugins" -name "*.json" -exec cp --parents {} "$backup_dir" \;
+    echo "Plugin configurations backed up to $backup_dir"
+  fi
+  
+  # Extract the API files (preserving existing configuration files)
+  unzip -o "$api_tmp" -d "$bin_dir"
+  
+  # Restore backed up configurations if we have them
+  if [ -d "$backup_dir" ]; then
+    echo "Restoring plugin configurations..."
+    cp -rf "$backup_dir"/* "$api_dir"/ 2>/dev/null || true
+    echo "Plugin configurations restored."
+  fi
+  
+  # Remove the temporary ZIP file
+  rm -f "$api_tmp"
+  
+  # Save the new version
+  echo "$latest_version" > "$api_version_file"
+  
+  # Set correct permissions
+  chmod -R 755 "$bin_dir/ArkApi"
+  
+  echo "ArkServerAPI $latest_version installed successfully."
+  return 0
+}

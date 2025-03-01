@@ -312,6 +312,7 @@ When creating a new server instance using POK-manager.sh, a Docker Compose confi
 | `TZ`                          | `America/Los_Angeles`| Timezone setting: Change this to your local timezone.                                  |
 | `RANDOM_STARTUP_DELAY`        | `TRUE`            | Add a random delay (0-30s) during startup to prevent update conflicts when multiple instances start simultaneously |
 | `BATTLEEYE`                   | `TRUE`            | Set to TRUE to use BattleEye, FALSE to not use BattleEye                                  |
+| `API`                         | `FALSE`           | Set to TRUE to install and use ArkServerAPI, FALSE to disable ArkServerAPI                |
 | `RCON_ENABLED`                | `TRUE`            | Needed for Graceful Shutdown                                                              |
 | `DISPLAY_POK_MONITOR_MESSAGE` | `FALSE`           | TRUE to Show the Server Monitor Messages / Update Monitor Shutdown                        |
 | `UPDATE_SERVER`               | `TRUE`            | Enable or disable update checks                                                           |
@@ -357,6 +358,7 @@ services:
       - TZ=America/Los_Angeles               # Timezone setting: Change this to your local timezone. Ex.America/New_York, Europe/Berlin, Asia/Tokyo
       - RANDOM_STARTUP_DELAY=TRUE            # Add a random delay (0-30s) during startup to prevent update conflicts when multiple instances start simultaneously
       - BATTLEEYE=FALSE                      # Set to TRUE to use BattleEye, FALSE to not use BattleEye
+      - API=FALSE                            # Set to TRUE to install and use ArkServerAPI, FALSE to disable ArkServerAPI
       - RCON_ENABLED=TRUE                    # Needed for Graceful Shutdown / Updates / Server Notifications
       - DISPLAY_POK_MONITOR_MESSAGE=FALSE    # Or TRUE to Show the Server Monitor Messages / Update Monitor 
       - UPDATE_SERVER=TRUE                   # Enable or disable update checks
@@ -389,6 +391,96 @@ services:
       - "./Cluster:/home/pok/arkserver/ShooterGame/Saved/clusters"
     mem_limit: 16G
 ```
+
+## Using ArkServerAPI
+
+POK-manager now supports [ArkServerAPI](https://github.com/ServersHub/Framework-ArkServerApi), a powerful framework that enables server plugins to enhance and extend your ARK server's functionality.
+
+### Enabling ArkServerAPI
+
+To enable ArkServerAPI on your server:
+
+1. Set the `API` environment variable to `TRUE` in your docker-compose file:
+   ```yaml
+   - API=TRUE    # Enable ArkServerAPI
+   ```
+
+2. If you're creating a new instance, you can enable it during the configuration process.
+
+3. For existing instances, you can modify the docker-compose file and restart the server:
+   ```bash
+   ./POK-manager.sh -edit         # Select your instance to edit the config
+   ./POK-manager.sh -stop my_instance
+   ./POK-manager.sh -start my_instance
+   ```
+
+### How ArkServerAPI Installation Works
+
+When you enable the API feature:
+
+1. The container will automatically download the latest version of ArkServerAPI from the official GitHub repository
+2. The API will be installed to the correct location in your server files
+3. The server will start with the API enabled
+4. On subsequent starts, the container will check for API updates and install them if available
+
+### Installing Plugins
+
+ArkServerAPI plugins can be installed manually. Here's how:
+
+1. Download the plugin ZIP file from a trusted source
+2. Extract the contents to your server's plugins directory:
+   ```
+   ./ServerFiles/arkserver/ShooterGame/Binaries/Win64/ArkApi/Plugins/
+   ```
+3. The plugin directory structure should look like:
+   ```
+   ArkApi/
+   └── Plugins/
+       └── PluginName/
+           ├── PluginName.dll
+           └── config.json
+   ```
+4. Restart your server for the changes to take effect:
+   ```bash
+   ./POK-manager.sh -restart 5 my_instance   # Restart with 5-minute countdown
+   ```
+
+### Managing Plugin Configurations
+
+Plugin configurations are stored in JSON files in each plugin's directory. When the ArkServerAPI is updated, these configuration files are automatically preserved.
+
+To edit a plugin's configuration:
+
+1. Navigate to the plugin's directory
+2. Edit the appropriate .json configuration file
+3. Save your changes and restart the server
+
+### Persistent Plugins
+
+Plugin installations and configurations persist across server updates and container restarts, as they are stored in the volume-mounted server directory.
+
+### Troubleshooting
+
+If you encounter issues with ArkServerAPI or plugins:
+
+1. Check the server logs for any error messages:
+   ```bash
+   ./POK-manager.sh -logs -live my_instance
+   ```
+
+2. Verify that the API is correctly installed:
+   ```bash
+   ls -la ./ServerFiles/arkserver/ShooterGame/Binaries/Win64/ArkApi
+   ```
+
+3. Ensure plugin files are in the correct location and have the right permissions
+   ```bash
+   ls -la ./ServerFiles/arkserver/ShooterGame/Binaries/Win64/ArkApi/Plugins
+   ```
+
+4. Some plugins may not be compatible with the latest version of ARK or ArkServerAPI. Check the plugin documentation for compatibility information.
+
+**Note:** Using plugins can affect server performance and stability. It's recommended to thoroughly test plugins before using them on a production server.
 
 ## Safe Update Mechanism
 

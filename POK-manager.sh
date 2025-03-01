@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.31"
+POK_MANAGER_VERSION="2.1.32"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -44,6 +44,7 @@ fi
 declare -a config_order=(
     "Memory Limit" 
     "BattleEye"
+    "API"
     "RCON Enabled"
     "POK Monitor Message"
     "Random Startup Delay"
@@ -73,6 +74,7 @@ declare -A default_config_values=(
     ["TZ"]="America/New_York, America/Los_Angeles"
     ["Memory Limit"]="16G" 
     ["BattleEye"]="FALSE"
+    ["API"]="FALSE"
     ["RCON Enabled"]="TRUE"
     ["POK Monitor Message"]="FALSE"
     ["Random Startup Delay"]="TRUE"
@@ -885,6 +887,7 @@ read_docker_compose_config() {
     case "$key" in
     "TZ") config_key="TZ" ;;
     "BATTLEEYE") config_key="BattleEye" ;;  
+    "API") config_key="API" ;;
     "RCON_ENABLED") config_key="RCON Enabled" ;;
     "DISPLAY_POK_MONITOR_MESSAGE") config_key="POK Monitor Message" ;;
     "RANDOM_STARTUP_DELAY") config_key="Random Startup Delay" ;;
@@ -956,6 +959,7 @@ EOF
     # Convert the friendly name to the actual environment variable key
     case "$key" in
       "BattleEye") env_key="BATTLEEYE" ;;
+      "API") env_key="API" ;;
       "RCON Enabled") env_key="RCON_ENABLED" ;;
       "POK Monitor Message") env_key="DISPLAY_POK_MONITOR_MESSAGE" ;;
       "Random Startup Delay") env_key="RANDOM_STARTUP_DELAY" ;;

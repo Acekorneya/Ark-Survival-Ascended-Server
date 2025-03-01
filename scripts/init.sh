@@ -50,6 +50,12 @@ else
   fi
 fi
 
+# Install/Update ArkServerAPI if API=TRUE
+if [ "${API}" = "TRUE" ]; then
+  echo "----Installing/Updating ArkServerAPI (Framework-ArkServerApi)----"
+  install_ark_server_api
+fi
+
 # Start the main application
 echo "----Starting Ark Server----"
 exec /home/pok/scripts/launch_ASA.sh

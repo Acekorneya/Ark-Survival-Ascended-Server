@@ -16,6 +16,7 @@ services:
       # Use 'sudo chown -R 7777:7777 /path/to/your/POK-manager/directory' to set permissions
       - RANDOM_STARTUP_DELAY=TRUE            # Add a random delay (0-30s) during startup to prevent update conflicts
       - BATTLEEYE=FALSE                      # Set to TRUE to use BattleEye, FALSE to not use BattleEye
+      - API=FALSE                            # Set to TRUE to install and use ArkServerAPI, FALSE to disable ArkServerAPI
       - RCON_ENABLED=TRUE                    # Needed for Graceful Shutdown / Updates / Server Notifications
       - DISPLAY_POK_MONITOR_MESSAGE=FALSE    # Or TRUE to Show the Server Monitor Messages / Update Monitor 
       - UPDATE_SERVER=TRUE                   # Enable or disable update checks
