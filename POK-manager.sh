@@ -1976,6 +1976,13 @@ check_for_POK_updates() {
     # Remove the flag file
     rm -f "$just_upgraded"
     
+    # Extract version information from the current script
+    local current_script_version=$(grep -m 1 "POK_MANAGER_VERSION=" "$0" | cut -d'"' -f2)
+    if [ -n "$current_script_version" ]; then
+      # Update the POK_MANAGER_VERSION variable with the actual current version
+      POK_MANAGER_VERSION="$current_script_version"
+    fi
+    
     # Skip update check since we just upgraded
     echo " GitHub version: $POK_MANAGER_VERSION, Local version: $POK_MANAGER_VERSION"
     echo "----- POK-manager.sh is already up to date (version $POK_MANAGER_VERSION) -----"
@@ -2744,6 +2751,13 @@ display_usage() {
 
 # Display version information
 display_version() {
+  # Extract version information directly from the script file to ensure accuracy
+  local script_version=$(grep -m 1 "POK_MANAGER_VERSION=" "$0" | cut -d'"' -f2)
+  if [ -n "$script_version" ]; then
+    # Update the global variable to ensure consistency
+    POK_MANAGER_VERSION="$script_version"
+  fi
+  
   echo "POK-manager.sh version ${POK_MANAGER_VERSION} (${POK_MANAGER_BRANCH})"
   echo "Default PUID: ${PUID}, PGID: ${PGID}"
   local image_tag=$(get_docker_image_tag)
@@ -3009,7 +3023,15 @@ upgrade_pok_manager() {
     echo "Validating the updated script..."
     if "$original_script" -validate_update >/dev/null 2>&1; then
       echo "✅ Validation successful. The updated script is functioning properly."
-      echo "Update successful. POK-manager.sh has been updated to the latest version."
+      
+      # Extract and display the actual new version from the updated script
+      local new_script_version=$(grep -m 1 "POK_MANAGER_VERSION=" "$original_script" | cut -d'"' -f2)
+      if [ -n "$new_script_version" ]; then
+        echo "Update successful. POK-manager.sh has been updated to version $new_script_version"
+      else
+        echo "Update successful. POK-manager.sh has been updated to the latest version."
+      fi
+      
       # Remove the rollback source file since the script is working
       rm -f "${BASE_DIR%/}/config/POK-manager/rollback_source"
       
@@ -3822,6 +3844,14 @@ main() {
   
   # Remove leading space
   command_args="${command_args# }"
+  
+  # Ensure we're always using the correct version number from the script file itself
+  # This ensures consistency even after upgrades
+  local script_version=$(grep -m 1 "POK_MANAGER_VERSION=" "$0" | cut -d'"' -f2)
+  if [ -n "$script_version" ]; then
+    # Update the global variable to ensure consistency
+    POK_MANAGER_VERSION="$script_version"
+  fi
   
   # First, check if we need to perform an emergency rollback
   # This needs to be done before any other operations
