@@ -2956,9 +2956,29 @@ migrate_file_ownership() {
     fi
     
     echo "Stopping all running instances..."
+    # Use the same approach as perform_action_on_all_instances for stopping
     for instance in "${running_instances[@]}"; do
       echo "Stopping instance: $instance"
-      stop_instance "$instance"
+      # Get the docker compose file path
+      local docker_compose_file="./Instance_${instance}/docker-compose-${instance}.yaml"
+      
+      # If the compose file exists, use docker-compose down
+      if [ -f "$docker_compose_file" ]; then
+        get_docker_compose_cmd
+        if is_sudo; then
+          $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down
+        else
+          sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down
+        fi
+      else
+        # Otherwise use docker stop
+        if is_sudo; then
+          docker stop -t 30 "asa_${instance}"
+        else
+          sudo docker stop -t 30 "asa_${instance}"
+        fi
+      fi
+      echo "Instance ${instance} stopped successfully."
     done
     
     echo "✅ All instances have been stopped successfully."
