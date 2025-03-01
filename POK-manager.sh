@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.26"
+POK_MANAGER_VERSION="2.1.27"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -496,6 +496,7 @@ check_puid_pgid_user() {
   local original_command="$3"  # This contains the original command (e.g., "-stop -all")
   local legacy_puid=1000
   local legacy_pgid=1000
+  local user_info_flag_file="${BASE_DIR}/config/POK-manager/user_info_shown"
 
   # Check if the script is run with sudo (EUID is 0)
   if is_sudo; then
@@ -507,11 +508,25 @@ check_puid_pgid_user() {
   local current_gid=$(id -g)
   local current_user=$(id -un)
 
-  # Display important information about container permissions
-  echo "ℹ️ INFORMATION: The default container user changed from 1000:1000 to 7777:7777 in version 2.1+"
-  echo "This change improves compatibility with most Linux distributions that use 1000:1000 for the first user."
-  echo "For best results, server files should be owned by user with UID:GID matching the container settings."
-  echo ""
+  # Check if user is already using 7777:7777 and has seen the info message
+  local show_info=true
+  if [ -f "$user_info_flag_file" ] && [ "$puid" = "7777" ] && [ "$current_uid" = "7777" ]; then
+    show_info=false
+  fi
+  
+  # Display important information about container permissions only if needed
+  if [ "$show_info" = "true" ]; then
+    echo "ℹ️ INFORMATION: The default container user changed from 1000:1000 to 7777:7777 in version 2.1+"
+    echo "This change improves compatibility with most Linux distributions that use 1000:1000 for the first user."
+    echo "For best results, server files should be owned by user with UID:GID matching the container settings."
+    echo ""
+    
+    # If user is running with correct 7777:7777 UID/GID, create the flag file
+    if [ "$puid" = "7777" ] && [ "$current_uid" = "7777" ]; then
+      mkdir -p "${BASE_DIR}/config/POK-manager"
+      touch "$user_info_flag_file"
+    fi
+  fi
   
   # Check for existing directories that might be owned by legacy PUID:PGID
   if [ -d "${BASE_DIR}/ServerFiles/arkserver" ]; then
