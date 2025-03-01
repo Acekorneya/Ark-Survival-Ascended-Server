@@ -23,7 +23,9 @@ RUN set -ex; \
     lib32gcc-s1 libglib2.0-0 libglib2.0-0:i386 libvulkan1 libvulkan1:i386 \
     libnss3 libnss3:i386 libgconf-2-4 libgconf-2-4:i386 \
     libfontconfig1 libfontconfig1:i386 libfreetype6 libfreetype6:i386 \
-    libcups2 libcups2:i386; \
+    libcups2 libcups2:i386 \
+    # Add wine dependencies for VC++ installer
+    wine wine64 winbind; \
     # Cleanup to keep the image lean
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*

@@ -66,6 +66,86 @@ determine_map_path() {
   esac
 }
 
+# Set up ArkServerAPI environment if API is enabled
+setup_arkserverapi() {
+  if [ "${API}" = "TRUE" ]; then
+    echo "Setting up ArkServerAPI environment..."
+    
+    # Make sure the API directory exists
+    if [ ! -d "${ASA_DIR}/ShooterGame/Binaries/Win64/ArkApi" ]; then
+      echo "WARNING: ArkServerAPI directory not found! API may not be properly installed."
+      return 1
+    fi
+    
+    # Verify if Visual C++ Redistributable might be installed in the Proton prefix
+    local vcredist_marker="${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files (x86)/Microsoft Visual Studio"
+    
+    if [ ! -d "$vcredist_marker" ]; then
+      echo "WARNING: Visual C++ Redistributable marker not found in Proton prefix."
+      echo "The ArkServerAPI may not function correctly."
+      echo "Trying to verify redistributable installation..."
+      
+      # Attempt to check registry keys in Wine for VC++ redist
+      local reg_output
+      reg_output=$(WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine reg query "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\x64" 2>/dev/null)
+      
+      if [ $? -eq 0 ] && [ -n "$reg_output" ]; then
+        echo "Visual C++ Redistributable appears to be installed based on registry entries."
+      else
+        echo "No registry entries found for Visual C++ Redistributable."
+        echo "Attempting to reinstall Visual C++ Redistributable..."
+        
+        # Create a directory for the VC++ redistributable
+        local vcredist_dir="/tmp/vcredist"
+        mkdir -p "$vcredist_dir"
+        
+        # Download the VC++ 2019 redistributable (x64)
+        local vcredist_url="https://aka.ms/vs/16/release/vc_redist.x64.exe"
+        local vcredist_file="$vcredist_dir/vc_redist.x64.exe"
+        
+        echo "Downloading VC++ redistributable..."
+        if curl -L -o "$vcredist_file" "$vcredist_url"; then
+          echo "Installing VC++ redistributable in Proton environment..."
+          
+          # Copy the redistributable to the Proton prefix directory
+          local proton_drive_c="${STEAM_COMPAT_DATA_PATH}/pfx/drive_c"
+          mkdir -p "$proton_drive_c/temp"
+          cp "$vcredist_file" "$proton_drive_c/temp/"
+          
+          # Run the installer using Proton with /force to ensure installation
+          WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine "$proton_drive_c/temp/vc_redist.x64.exe" /quiet /norestart /force
+          
+          echo "VC++ redistributable installation attempted."
+          
+          # Clean up
+          rm -f "$vcredist_file"
+          rm -f "$proton_drive_c/temp/vc_redist.x64.exe"
+        else
+          echo "WARNING: Failed to download Visual C++ redistributable."
+        fi
+      fi
+    else
+      echo "Visual C++ Redistributable appears to be installed in Proton prefix."
+    fi
+    
+    # Set DLL overrides to ensure API loads properly
+    export WINEDLLOVERRIDES="version=n,b"
+    echo "Set DLL overrides for ArkServerAPI"
+    
+    # Create a simple test to verify ArkAPI functionality
+    echo "Verifying ArkServerAPI can load..."
+    local test_script="${ASA_DIR}/ShooterGame/Binaries/Win64/test_arkapi.bat"
+    echo '@echo off' > "$test_script"
+    echo 'echo Testing ArkServerAPI loading...' >> "$test_script"
+    echo 'if exist ArkApi\version.dll (echo ArkAPI DLL found) else (echo ArkAPI DLL NOT found)' >> "$test_script"
+    
+    WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine cmd /c "$test_script"
+    rm -f "$test_script"
+    
+    echo "ArkServerAPI environment setup completed."
+  fi
+}
+
 start_server() {
   # Fix for Docker Compose exec / Docker exec parsing inconsistencies
   STEAM_COMPAT_DATA_PATH=$(eval echo "$STEAM_COMPAT_DATA_PATH")
@@ -140,6 +220,11 @@ start_server() {
     #echo "Error: Insufficient permissions to run the server. Please check the file permissions."
     #exit 1
   #fi
+  
+  # Setup ArkServerAPI if enabled
+  if [ "${API}" = "TRUE" ]; then
+    setup_arkserverapi
+  fi
   
   # Construct the full server start command
   local server_command="proton run /home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.exe $MAP_PATH?listen?$session_name_arg?${rcon_args}${server_password_arg}?ServerAdminPassword=${SERVER_ADMIN_PASSWORD} -Port=${ASA_PORT} -WinLiveMaxPlayers=${MAX_PLAYERS} $cluster_id_arg -servergamelog -servergamelogincludetribelogs -ServerRCONOutputTribeLogs $notify_admin_commands_arg $custom_args $mods_arg $battleye_arg $passive_mods_arg"

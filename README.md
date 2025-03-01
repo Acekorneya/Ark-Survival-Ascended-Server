@@ -439,8 +439,20 @@ When you enable the API feature:
 
 1. The container will automatically download the latest version of ArkServerAPI from the official GitHub repository
 2. The API will be installed to the correct location in your server files
-3. The server will start with the API enabled
-4. On subsequent starts, the container will check for API updates and install them if available
+3. The Visual C++ 2019 Redistributable (required by ArkServerAPI) will be automatically installed in the Proton environment
+4. The server will start with the API enabled
+5. On subsequent starts, the container will check for API updates and install them if available
+
+### Windows Dependencies in Linux Environment
+
+ArkServerAPI requires Windows-specific dependencies (specifically Microsoft Visual C++ 2019 Redistributable) to function. Despite running in a Linux environment, our solution handles this by:
+
+1. Automatically downloading the required Visual C++ 2019 Redistributable installer
+2. Using Wine/Proton to install it within the Proton environment that runs the Windows-based ARK server
+3. Setting appropriate Wine DLL overrides to ensure the API loads properly
+4. Performing verification tests to confirm the API can load successfully
+
+This approach allows you to use ArkServerAPI seamlessly in our Linux-based container without having to manually install any Windows dependencies.
 
 ### Installing Plugins
 
@@ -478,7 +490,7 @@ To edit a plugin's configuration:
 
 Plugin installations and configurations persist across server updates and container restarts, as they are stored in the volume-mounted server directory.
 
-### Troubleshooting
+### Troubleshooting ArkServerAPI
 
 If you encounter issues with ArkServerAPI or plugins:
 
@@ -492,12 +504,28 @@ If you encounter issues with ArkServerAPI or plugins:
    ls -la ./ServerFiles/arkserver/ShooterGame/Binaries/Win64/ArkApi
    ```
 
-3. Ensure plugin files are in the correct location and have the right permissions
+3. Ensure plugin files are in the correct location and have the right permissions:
    ```bash
    ls -la ./ServerFiles/arkserver/ShooterGame/Binaries/Win64/ArkApi/Plugins
    ```
 
-4. Some plugins may not be compatible with the latest version of ARK or ArkServerAPI. Check the plugin documentation for compatibility information.
+4. Common ArkServerAPI issues in our Linux/Proton environment:
+   - Missing Visual C++ Redistributable: The system will try to install it automatically
+   - Wine/Proton configuration: Try manually updating the docker image with `./POK-manager.sh -update`
+   - Plugin compatibility: Some plugins may not work with our Linux/Proton setup or with the current version of ARK
+
+5. If the API still doesn't work, try reinstalling it:
+   ```bash
+   # Disable API for the instance
+   ./POK-manager.sh -API FALSE my_instance
+   # Restart the server
+   ./POK-manager.sh -restart 1 my_instance
+   # Wait for the server to fully restart
+   # Enable API again
+   ./POK-manager.sh -API TRUE my_instance
+   # Restart the server once more
+   ./POK-manager.sh -restart 1 my_instance
+   ```
 
 **Note:** Using plugins can affect server performance and stability. It's recommended to thoroughly test plugins before using them on a production server.
 

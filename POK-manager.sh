@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.35"
+POK_MANAGER_VERSION="2.1.36"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -4078,25 +4078,19 @@ configure_api_for_instance() {
     return 1
   fi
   
-  # Check if API line already exists in the file
-  if grep -q "- API=" "$docker_compose_file"; then
-    # API line exists, update it
-    if sed -i "s/- API=.*/- API=$api_state/" "$docker_compose_file"; then
-      echo "  ✅ Updated API setting to $api_state for instance: $instance_name"
-      return 0
-    else
-      echo "  ❌ Failed to update API setting for instance: $instance_name"
-      return 1
-    fi
+  # Remove any existing API lines first to prevent duplicates
+  # Use a temporary file to ensure sed works across different systems
+  local temp_file="${docker_compose_file}.tmp"
+  grep -v "^ *- API=" "$docker_compose_file" > "$temp_file"
+  mv "$temp_file" "$docker_compose_file"
+  
+  # Now add the API line after INSTANCE_NAME
+  if sed -i "/- INSTANCE_NAME/a \ \ \ \ \ \ - API=$api_state" "$docker_compose_file"; then
+    echo "  ✅ Updated API setting to $api_state for instance: $instance_name"
+    return 0
   else
-    # API line doesn't exist, add it after INSTANCE_NAME line
-    if sed -i "/- INSTANCE_NAME/a \ \ \ \ \ \ - API=$api_state" "$docker_compose_file"; then
-      echo "  ✅ Added API=$api_state setting for instance: $instance_name"
-      return 0
-    else
-      echo "  ❌ Failed to add API setting for instance: $instance_name"
-      return 1
-    fi
+    echo "  ❌ Failed to update API setting for instance: $instance_name"
+    return 1
   fi
 }
 

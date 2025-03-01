@@ -247,6 +247,38 @@ install_ark_server_api() {
   # Remove the temporary ZIP file
   rm -f "$api_tmp"
   
+  # Install Microsoft Visual C++ 2019 Redistributable
+  echo "Installing Microsoft Visual C++ 2019 Redistributable..."
+  
+  # Create a directory for the VC++ redistributable
+  local vcredist_dir="/tmp/vcredist"
+  mkdir -p "$vcredist_dir"
+  
+  # Download the VC++ 2019 redistributable (x64)
+  local vcredist_url="https://aka.ms/vs/16/release/vc_redist.x64.exe"
+  local vcredist_file="$vcredist_dir/vc_redist.x64.exe"
+  
+  echo "Downloading VC++ redistributable..."
+  if ! curl -L -o "$vcredist_file" "$vcredist_url"; then
+    echo "WARNING: Failed to download Visual C++ redistributable. ArkServerAPI may not function correctly."
+  else
+    echo "Installing VC++ redistributable in Proton environment..."
+    
+    # Copy the redistributable to the Proton prefix directory
+    local proton_drive_c="${STEAM_COMPAT_DATA_PATH}/pfx/drive_c"
+    mkdir -p "$proton_drive_c/temp"
+    cp "$vcredist_file" "$proton_drive_c/temp/"
+    
+    # Run the installer using Proton
+    WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" proton run "$proton_drive_c/temp/vc_redist.x64.exe" /quiet /norestart
+    
+    echo "VC++ redistributable installation completed."
+    
+    # Clean up
+    rm -f "$vcredist_file"
+    rm -f "$proton_drive_c/temp/vc_redist.x64.exe"
+  fi
+  
   # Save the new version
   echo "$latest_version" > "$api_version_file"
   

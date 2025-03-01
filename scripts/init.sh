@@ -50,10 +50,46 @@ else
   fi
 fi
 
+# Function to verify Proton environment is properly set up
+verify_proton_environment() {
+  echo "----Verifying Proton environment for ArkServerAPI----"
+  
+  # Check if Proton prefix exists
+  if [ ! -d "${STEAM_COMPAT_DATA_PATH}/pfx" ]; then
+    echo "WARNING: Proton prefix directory not found. Creating it..."
+    mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx"
+  fi
+  
+  # Check if Wine is functional in the Proton environment
+  echo "Testing Wine/Proton functionality..."
+  if ! WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine --version >/dev/null 2>&1; then
+    echo "WARNING: Wine does not appear to be functioning correctly in the Proton environment."
+    echo "This may affect ArkServerAPI functionality."
+  else
+    echo "Wine/Proton environment is functional."
+  fi
+}
+
 # Install/Update ArkServerAPI if API=TRUE
 if [ "${API}" = "TRUE" ]; then
   echo "----Installing/Updating ArkServerAPI (Framework-ArkServerApi)----"
+  # Verify Proton environment first
+  verify_proton_environment
+  # Install the API
   install_ark_server_api
+  
+  # Verify the installation
+  if [ -d "${ASA_DIR}/ShooterGame/Binaries/Win64/ArkApi" ]; then
+    echo "ArkServerAPI installation confirmed."
+    # Check if the API directory has the expected files
+    if [ -f "${ASA_DIR}/ShooterGame/Binaries/Win64/ArkApi/version.dll" ]; then
+      echo "API core files verified."
+    else
+      echo "WARNING: API core files missing. Installation may not be complete."
+    fi
+  else
+    echo "WARNING: ArkServerAPI directory not found after installation attempt."
+  fi
 fi
 
 # Start the main application
