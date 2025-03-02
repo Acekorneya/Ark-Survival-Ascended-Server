@@ -519,7 +519,7 @@ start_server() {
   echo "This may take a few minutes. Please be patient..."
   echo ""
   
-  # Improved logs display function for better readability
+  # Modified display_server_logs function to avoid duplication
   display_server_logs() {
     echo "📊 MONITORING SERVER LOGS"
     echo "---------------------------------------------"
@@ -534,6 +534,7 @@ start_server() {
     unset API_TAIL_PID
     unset GAME_TAIL_PID
     local server_id_seen=false
+    local shooter_log_displayed=false
     
     # Branch logic based on API setting
     if [ "${API}" = "TRUE" ]; then
@@ -576,6 +577,21 @@ start_server() {
         tail -f "$found_api_log" &
         API_TAIL_PID=$!
         
+        # Also check for ShooterGame logs in parallel
+        {
+          local shooter_elapsed=0
+          while [ $shooter_elapsed -lt $max_wait ] && [ "$shooter_log_displayed" = "false" ]; do
+            if [ -f "$game_log" ]; then
+              echo "🔍 Looking for ShooterGame logs..."
+              echo "✅ Found ShooterGame logs: $game_log"
+              shooter_log_displayed=true
+              break
+            fi
+            sleep $check_interval
+            shooter_elapsed=$((shooter_elapsed + check_interval))
+          done
+        } &
+        
         # Set up monitoring for the SERVER ID message
         {
           local server_id_wait=180  # Wait up to 3 minutes for server ID
@@ -607,17 +623,24 @@ start_server() {
                 kill $API_TAIL_PID 2>/dev/null || true
                 
                 echo ""
-                echo "✅ Found ShooterGame logs: $game_log"
-                echo "---------------------------------------------"
-                echo "📋 ARK SERVER LOG OUTPUT (FULL LOG):"
-                echo "---------------------------------------------"
-                
-                # Instead of just tailing the file, display the entire contents first
-                # then tail it to catch new entries
-                if [ -s "$game_log" ]; then
-                  cat "$game_log"
+                # Only display ShooterGame logs if they haven't been displayed yet
+                if [ "$shooter_log_displayed" = "false" ]; then
+                  echo "✅ Found ShooterGame logs: $game_log"
                   echo "---------------------------------------------"
-                  echo "📋 CONTINUING LIVE LOGS:"
+                  echo "📋 ARK SERVER LOG OUTPUT (FULL LOG):"
+                  echo "---------------------------------------------"
+                  
+                  # Instead of just tailing the file, display the entire contents first
+                  # then tail it to catch new entries
+                  if [ -s "$game_log" ]; then
+                    cat "$game_log"
+                    echo "---------------------------------------------"
+                    echo "📋 CONTINUING LIVE LOGS:"
+                    echo "---------------------------------------------"
+                  fi
+                else
+                  # If logs were already displayed, just continue tailing
+                  echo "📋 CONTINUING LIVE LOGS FROM SHOOTER GAME:"
                   echo "---------------------------------------------"
                 fi
                 
@@ -625,6 +648,7 @@ start_server() {
                 tail -f "$game_log" &
                 GAME_TAIL_PID=$!
                 found_shooter_log=true
+                shooter_log_displayed=true
                 break
               fi
               
@@ -645,21 +669,29 @@ start_server() {
               kill $API_TAIL_PID 2>/dev/null || true
               
               echo ""
-              echo "✅ Found ShooterGame logs despite missing SERVER ID:"
-              echo "---------------------------------------------"
-              echo "📋 ARK SERVER LOG OUTPUT (FULL LOG):"
-              echo "---------------------------------------------"
-              
-              # Display full log content and then tail
-              if [ -s "$game_log" ]; then
-                cat "$game_log"
+              # Only display ShooterGame logs if they haven't been displayed yet
+              if [ "$shooter_log_displayed" = "false" ]; then
+                echo "✅ Found ShooterGame logs despite missing SERVER ID:"
                 echo "---------------------------------------------"
-                echo "📋 CONTINUING LIVE LOGS:"
+                echo "📋 ARK SERVER LOG OUTPUT (FULL LOG):"
+                echo "---------------------------------------------"
+                
+                # Display full log content and then tail
+                if [ -s "$game_log" ]; then
+                  cat "$game_log"
+                  echo "---------------------------------------------"
+                  echo "📋 CONTINUING LIVE LOGS:"
+                  echo "---------------------------------------------"
+                fi
+              else
+                # If logs were already displayed, just continue tailing
+                echo "📋 CONTINUING LIVE LOGS FROM SHOOTER GAME:"
                 echo "---------------------------------------------"
               fi
               
               tail -f "$game_log" &
               GAME_TAIL_PID=$!
+              shooter_log_displayed=true
             fi
           fi
         } &
@@ -681,7 +713,7 @@ start_server() {
     
     # Always check for ShooterGame logs (whether API is enabled or not, or if API logs weren't found)
     # This ensures we always show game logs, which is what we want
-    if [ -z "$GAME_TAIL_PID" ]; then  # Only if we haven't already started tailing game logs
+    if [ -z "$GAME_TAIL_PID" ] && [ "$shooter_log_displayed" = "false" ]; then  # Only if we haven't already started tailing game logs
       echo "🔍 Looking for ShooterGame logs..."
       elapsed=0
       
@@ -703,6 +735,7 @@ start_server() {
           # Then start tailing for updates
           tail -f "$game_log" &
           GAME_TAIL_PID=$!
+          shooter_log_displayed=true
           break
         fi
         
