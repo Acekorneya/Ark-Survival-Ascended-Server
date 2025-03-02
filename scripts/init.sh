@@ -71,49 +71,54 @@ fi
 # Enable container-aware Proton environment initialization
 export CONTAINER_MODE="TRUE"
 
-# Setup X virtual framebuffer for headless operation
+# Robust virtual display setup for headless operation
 setup_virtual_display() {
   echo "🖥️ Setting up virtual display for headless operation..."
   export DISPLAY=:0.0
   
+  # Kill any existing Xvfb processes to ensure clean state
+  pkill -9 -f "Xvfb" >/dev/null 2>&1 || true
+  
+  # Clean up X11 sockets
+  if [ -d "/tmp/.X11-unix" ]; then
+    rm -rf /tmp/.X11-unix/* 2>/dev/null || true
+  fi
+  
+  # Create .X11-unix directory with proper permissions
+  mkdir -p /tmp/.X11-unix 2>/dev/null || true
+  chmod 1777 /tmp/.X11-unix 2>/dev/null || true
+  
   # Check if Xvfb is installed
-  if command -v Xvfb >/dev/null 2>&1; then
-    # Kill any existing Xvfb processes
-    pkill Xvfb >/dev/null 2>&1 || true
-    
-    # Create .X11-unix directory first to avoid errors
-    if [ ! -d "/tmp/.X11-unix" ]; then
-      mkdir -p /tmp/.X11-unix 2>/dev/null || true
-      chmod 1777 /tmp/.X11-unix 2>/dev/null || true
-    fi
-    
-    # Start Xvfb with error output suppressed
-    Xvfb :0 -screen 0 1024x768x16 2>/dev/null &
-    XVFB_PID=$!
-    echo "  → Started Xvfb (virtual display)"
-    
-    # Give Xvfb time to start
-    sleep 2
-    
-    # Verify Xvfb is running
-    if kill -0 $XVFB_PID 2>/dev/null; then
-      echo "  ✅ Virtual display is running"
-    else
-      echo "  ⚠️ Virtual display failed to start (non-critical)"
-    fi
-  else
+  if ! command -v Xvfb >/dev/null 2>&1; then
     echo "  ⚠️ Xvfb not found. Will attempt to install..."
     apt-get update -qq && apt-get install -y --no-install-recommends xvfb x11-xserver-utils xauth >/dev/null 2>&1
+  fi
+  
+  # Start Xvfb with error output suppressed
+  Xvfb :0 -screen 0 1024x768x16 2>/dev/null &
+  XVFB_PID=$!
+  echo "  → Started Xvfb (virtual display) with PID: $XVFB_PID"
+  
+  # Give Xvfb time to start and verify it's running
+  sleep 2
+  
+  # Verify Xvfb is running
+  if kill -0 $XVFB_PID 2>/dev/null; then
+    echo "  ✅ Virtual display is running"
+  else
+    echo "  ⚠️ Virtual display failed to start. Trying again..."
     
-    # Create .X11-unix directory
-    mkdir -p /tmp/.X11-unix 2>/dev/null || true
-    chmod 1777 /tmp/.X11-unix 2>/dev/null || true
-    
-    # Try again after installation, with error output suppressed
-    Xvfb :0 -screen 0 1024x768x16 2>/dev/null &
+    # Try again with a different display number
+    export DISPLAY=:1.0
+    Xvfb :1 -screen 0 1024x768x16 2>/dev/null &
     XVFB_PID=$!
-    echo "  → Started Xvfb after installation"
     sleep 2
+    
+    if kill -0 $XVFB_PID 2>/dev/null; then
+      echo "  ✅ Virtual display is running on secondary display"
+    else
+      echo "  ⚠️ Virtual display setup failed (non-critical)"
+    fi
   fi
   
   # Export essential display environment variables
@@ -316,8 +321,89 @@ fi
 echo ""
 echo "🚀 LAUNCHING ARK SERVER..."
 echo ""
-# Start the main application
-exec /home/pok/scripts/launch_ASA.sh
 
-# Keep the script running to catch the signal
+# Attempt to use screen if available, otherwise fall back to basic method
+SCREEN_AVAILABLE=false
+if command -v screen >/dev/null 2>&1; then
+  SCREEN_AVAILABLE=true
+else
+  # Try to install screen but don't fail if it doesn't work
+  echo "Attempting to install screen for better log visibility (optional)..."
+  apt-get update -qq && apt-get install -y screen >/dev/null 2>&1
+  # Check if installation succeeded
+  if command -v screen >/dev/null 2>&1; then
+    SCREEN_AVAILABLE=true
+    echo "✅ Screen installed successfully!"
+  else
+    echo "⚠️ Screen installation failed. Will use fallback method instead."
+  fi
+fi
+
+# Launch the server differently based on whether screen is available
+if [ "$SCREEN_AVAILABLE" = true ]; then
+  # Use screen for better log management and visibility
+  echo "Starting server in screen session..."
+  screen -dmS ark_server bash -c "/home/pok/scripts/launch_ASA.sh 2>&1 | tee -a /home/pok/launch_output.log; exec bash"
+  echo "ARK server launched in screen session. View logs with: screen -r ark_server"
+else
+  # Fallback method - use nohup to run in background while still capturing logs
+  echo "Starting server with fallback method (nohup)..."
+  mkdir -p /home/pok/logs
+  nohup /home/pok/scripts/launch_ASA.sh > /home/pok/logs/server_console.log 2>&1 &
+  SERVER_PID=$!
+  echo "ARK server launched with PID: $SERVER_PID"
+  echo "View logs with: tail -f /home/pok/logs/server_console.log"
+  
+  # Start a background process to tail the log file to console
+  # This will show logs in the container's output while allowing the server to run in background
+  (tail -f /home/pok/logs/server_console.log 2>/dev/null &)
+fi
+
+# Wait for server to start up and become responsive
+# Monitor in background to check for server startup
+{
+  # Wait for server to be responsive or exit if launch fails
+  timeout=300  # 5 minutes timeout
+  elapsed=0
+  while [ $elapsed -lt $timeout ]; do
+    # Check if server process is running
+    server_pid=$(ps aux | grep -v grep | grep -E "AsaApiLoader.exe|ArkAscendedServer.exe" | awk '{print $2}' | head -1)
+    if [ -n "$server_pid" ]; then
+      echo "✅ Server is starting with PID: $server_pid"
+      # If using screen, try to check for startup complete message
+      if [ "$SCREEN_AVAILABLE" = true ]; then
+        if screen -S ark_server -X hardcopy /tmp/ark_screen.log 2>/dev/null && grep -q "SERVER FULLY STARTED\|Server started successfully" /tmp/ark_screen.log; then
+          echo "🎮 Server reported as fully started!"
+          break
+        fi
+      else
+        # For fallback method, check log file
+        if grep -q "SERVER FULLY STARTED\|Server started successfully" /home/pok/logs/server_console.log 2>/dev/null; then
+          echo "🎮 Server reported as fully started!"
+          break
+        fi
+      fi
+    else
+      echo "⚠️ No server process detected yet. Still starting up..."
+    fi
+    
+    sleep 10
+    elapsed=$((elapsed + 10))
+    echo "Waiting for server startup... ($elapsed seconds elapsed)"
+  done
+  
+  # Final status check
+  if [ $elapsed -ge $timeout ]; then
+    echo "⚠️ Timeout reached while waiting for server startup."
+    if [ "$SCREEN_AVAILABLE" = true ]; then
+      echo "Server may still be starting. Check logs with: screen -r ark_server"
+    else
+      echo "Server may still be starting. Check logs with: tail -f /home/pok/logs/server_console.log"
+    fi
+  fi
+} &
+MONITOR_PID=$!
+
+# Keep the init.sh script running to prevent container from exiting
+# This will not block log display since logs are handled separately
 tail -f /dev/null

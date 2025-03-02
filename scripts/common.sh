@@ -138,42 +138,63 @@ initialize_proton_prefix() {
 is_process_running() {
   local display_message=${1:-false} # Default to not displaying the message
 
+  # First check PID file
   if [ -f "$PID_FILE" ]; then
     local pid=$(cat "$PID_FILE")
+    
+    # Check if the process with this PID is running
     if ps -p $pid >/dev/null 2>&1; then
-      if [ "$display_message" = "true" ] && [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
-        echo "ARK server process (PID: $pid) is running."
-      fi
-      return 0
-    else
-      # PID file exists but process not found with that PID
-      # Check if there's an ARK server process running with a different PID
-      if pgrep -f "ArkAscendedServer.exe|AsaApiLoader.exe" >/dev/null 2>&1; then
-        local actual_pid=$(pgrep -f "ArkAscendedServer.exe|AsaApiLoader.exe" | head -1)
+      # Verify that this PID is actually an ARK server process
+      if ps -p $pid -o cmd= | grep -q -E "ArkAscendedServer.exe|AsaApiLoader.exe"; then
         if [ "$display_message" = "true" ] && [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
-          echo "ARK server process found with different PID: $actual_pid. Updating PID file."
+          echo "ARK server process (PID: $pid) is running."
         fi
-        echo "$actual_pid" > "$PID_FILE"
         return 0
       else
-        echo "Server process (PID: $pid) is not running."
-        return 1
+        # PID exists but it's not an ARK server process - stale PID file
+        if [ "$display_message" = "true" ] && [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
+          echo "PID file contains process ID $pid which is not an ARK server process."
+        fi
       fi
-    fi
-  else
-    # PID file doesn't exist, but let's check if the process is running anyway
-    if pgrep -f "ArkAscendedServer.exe|AsaApiLoader.exe" >/dev/null 2>&1; then
-      local actual_pid=$(pgrep -f "ArkAscendedServer.exe|AsaApiLoader.exe" | head -1)
-      if [ "$display_message" = "true" ] && [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
-        echo "ARK server process found (PID: $actual_pid) but no PID file. Creating PID file."
-      fi
-      echo "$actual_pid" > "$PID_FILE"
-      return 0
-    else
-      echo "PID file not found and no server process detected."
-      return 1
     fi
   fi
+  
+  # If we got here, either PID file doesn't exist or PID is not valid
+  # Try to find ARK server processes directly
+  
+  # First look for AsaApiLoader.exe if API=TRUE
+  if [ "${API}" = "TRUE" ]; then
+    local api_pid=$(pgrep -f "AsaApiLoader.exe" | head -1)
+    if [ -n "$api_pid" ]; then
+      if [ "$display_message" = "true" ] && [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
+        echo "AsaApiLoader process found with PID: $api_pid. Updating PID file."
+      fi
+      echo "$api_pid" > "$PID_FILE"
+      return 0
+    fi
+  fi
+  
+  # Then look for the main server executable
+  local server_pid=$(pgrep -f "ArkAscendedServer.exe" | head -1)
+  if [ -n "$server_pid" ]; then
+    if [ "$display_message" = "true" ] && [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
+      echo "ArkAscendedServer process found with PID: $server_pid. Updating PID file."
+    fi
+    echo "$server_pid" > "$PID_FILE"
+    return 0
+  fi
+  
+  # If we get here, no server process was found
+  if [ "$display_message" = "true" ]; then
+    echo "No ARK server processes found running."
+  fi
+  
+  # Clean up stale PID file if it exists
+  if [ -f "$PID_FILE" ]; then
+    rm -f "$PID_FILE"
+  fi
+  
+  return 1
 }
 
 # Function to check if server is updating
