@@ -112,12 +112,31 @@ check_wine_environment() {
   
   local WINE_CHECK_PASSED=false
   
+  # Set up virtual display for headless operation
+  export DISPLAY=:0.0
+  echo "Setting up virtual display at :0.0"
+  if command -v Xvfb >/dev/null 2>&1; then
+    # Kill any existing Xvfb processes
+    pkill Xvfb >/dev/null 2>&1 || true
+    # Start Xvfb
+    Xvfb :0 -screen 0 1024x768x16 &
+    echo "Started Xvfb with PID: $!"
+    # Give Xvfb time to start
+    sleep 2
+  else
+    echo "WARNING: Xvfb not found. X applications might not work properly."
+  fi
+  
   # Check if Wine is available in PATH
   if command -v wine >/dev/null 2>&1; then
     echo "Wine binary found in PATH"
     
+    # Set essential Wine environment variables
+    export WINEDLLOVERRIDES="*version=n,b;vcrun2019=n,b"
+    export WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx"
+    
     # Test if Wine works
-    if wine --version >/dev/null 2>&1; then
+    if DISPLAY=:0.0 WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine --version >/dev/null 2>&1; then
       echo "Wine basic functionality check: PASSED"
       WINE_CHECK_PASSED=true
     else
@@ -126,7 +145,7 @@ check_wine_environment() {
       export LD_LIBRARY_PATH="/usr/lib/wine:/usr/lib32/wine:$LD_LIBRARY_PATH"
       
       # Test again
-      if wine --version >/dev/null 2>&1; then
+      if DISPLAY=:0.0 WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine --version >/dev/null 2>&1; then
         echo "Wine basic functionality check after library path fix: PASSED"
         WINE_CHECK_PASSED=true
       else

@@ -64,6 +64,51 @@ fi
 # Enable container-aware Proton environment initialization
 export CONTAINER_MODE="TRUE"
 
+# Setup X virtual framebuffer for headless operation
+setup_virtual_display() {
+  echo "Setting up virtual display for headless operation..."
+  export DISPLAY=:0.0
+  
+  # Check if Xvfb is installed
+  if command -v Xvfb >/dev/null 2>&1; then
+    # Kill any existing Xvfb processes
+    pkill Xvfb >/dev/null 2>&1 || true
+    
+    # Start Xvfb
+    Xvfb :0 -screen 0 1024x768x16 &
+    XVFB_PID=$!
+    echo "Started Xvfb with PID: $XVFB_PID"
+    
+    # Give Xvfb time to start
+    sleep 2
+    
+    # Verify Xvfb is running
+    if kill -0 $XVFB_PID 2>/dev/null; then
+      echo "Xvfb is running successfully."
+    else
+      echo "WARNING: Xvfb failed to start. X applications might not work properly."
+    fi
+  else
+    echo "WARNING: Xvfb not found. Installing minimal X server support..."
+    apt-get update && apt-get install -y --no-install-recommends xvfb x11-xserver-utils xauth
+    
+    # Try again after installation
+    Xvfb :0 -screen 0 1024x768x16 &
+    XVFB_PID=$!
+    echo "Started Xvfb with PID: $XVFB_PID"
+    sleep 2
+  fi
+  
+  # Export essential display environment variables
+  export WINEDLLOVERRIDES="*version=n,b;vcrun2019=n,b"
+  export WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx"
+  
+  echo "Virtual display setup complete."
+}
+
+# Set up virtual display
+setup_virtual_display
+
 # Run comprehensive pre-launch environment check
 echo "----Running pre-launch environment check----"
 chmod +x /home/pok/scripts/prelaunch_check.sh

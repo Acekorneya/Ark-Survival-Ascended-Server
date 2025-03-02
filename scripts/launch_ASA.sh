@@ -337,6 +337,8 @@ start_server() {
       case "$method" in
         "proton_direct")
           if [ -f "$PROTON_EXECUTABLE" ]; then
+            # Set DISPLAY variable to prevent X server errors
+            export DISPLAY=:0.0
             # Method 1: Direct Proton launch using found executable
             "$PROTON_EXECUTABLE" run "$binary" $params &
           else
@@ -346,13 +348,23 @@ start_server() {
           ;;
         "proton_fallback")
           # Method 2: Fallback to fixed path
+          export DISPLAY=:0.0
           if [ -f "${STEAM_COMPAT_DIR}/GE-Proton8-21/proton" ]; then
+            echo "Using GE-Proton8-21 for fallback launch"
             "${STEAM_COMPAT_DIR}/GE-Proton8-21/proton" run "$binary" $params &
           elif [ -f "${STEAM_COMPAT_DIR}/GE-Proton9-25/proton" ]; then
+            echo "Using GE-Proton9-25 for fallback launch"
             "${STEAM_COMPAT_DIR}/GE-Proton9-25/proton" run "$binary" $params &
           else
-            echo "Fallback Proton paths not found, skipping this method."
-            return 1
+            # Last resort: check for any available GE-Proton directory
+            local ANY_PROTON=$(find "${STEAM_COMPAT_DIR}" -name "GE-Proton*" -type d | head -1)
+            if [ -n "$ANY_PROTON" ] && [ -f "$ANY_PROTON/proton" ]; then
+              echo "Using $ANY_PROTON for fallback launch"
+              "$ANY_PROTON/proton" run "$binary" $params &
+            else
+              echo "Fallback Proton paths not found, skipping this method."
+              return 1
+            fi
           fi
           ;;
         "proton_command")
@@ -362,7 +374,17 @@ start_server() {
           proton run "$binary" $params &
           ;;
         "wine_direct")
-          # Method 4: Direct Wine launch
+          # Method 4: Direct Wine launch with virtual display
+          export DISPLAY=:0.0
+          # Create virtual display with Xvfb if available
+          if command -v Xvfb >/dev/null 2>&1; then
+            Xvfb :0 -screen 0 1024x768x16 &
+            XVFB_PID=$!
+            sleep 2  # Give Xvfb time to start
+          fi
+          # Add environment variables to help wine find libraries
+          export WINEDLLOVERRIDES="*version=n,b;vcrun2019=n,b"
+          export WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx"
           WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine "$binary" $params &
           ;;
       esac

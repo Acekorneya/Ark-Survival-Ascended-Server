@@ -24,6 +24,8 @@ RUN set -ex; \
     libnss3 libnss3:i386 libgconf-2-4 libgconf-2-4:i386 \
     libfontconfig1 libfontconfig1:i386 libfreetype6 libfreetype6:i386 \
     libcups2 libcups2:i386 \
+    # Add X server packages for headless operation
+    xvfb x11-xserver-utils xauth libgl1-mesa-dri libgl1-mesa-glx \
     # Add wine dependencies for VC++ installer - add wine32 which is critical for AsaApi
     wine wine64 wine32 winbind cabextract; \
     # Cleanup to keep the image lean
