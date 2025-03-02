@@ -533,8 +533,6 @@ start_server() {
     # Clear variables to prevent any accidental reuse
     unset API_TAIL_PID
     unset GAME_TAIL_PID
-    local server_id_seen=false
-    local shooter_log_displayed=false
     
     # Branch logic based on API setting
     if [ "${API}" = "TRUE" ]; then
@@ -573,183 +571,126 @@ start_server() {
         echo "📋 ASAAPI LOG OUTPUT:"
         echo "---------------------------------------------"
         
-        # Start tailing in a background process that we can control
-        tail -f "$found_api_log" &
+        # Use a named pipe for the API logs to enable monitoring for SERVER ID
+        local api_pipe="/tmp/asaapi_logs_pipe_$$"
+        mkfifo "$api_pipe"
+        
+        # Start tailing in the background and direct to both output and named pipe
+        tail -f "$found_api_log" | tee "$api_pipe" &
         API_TAIL_PID=$!
         
-        # Also check for ShooterGame logs in parallel
-        {
-          local shooter_elapsed=0
-          while [ $shooter_elapsed -lt $max_wait ] && [ "$shooter_log_displayed" = "false" ]; do
-            if [ -f "$game_log" ]; then
-              echo "🔍 Looking for ShooterGame logs..."
-              echo "✅ Found ShooterGame logs: $game_log"
-              shooter_log_displayed=true
+        # Monitor the pipe for SERVER ID
+        (
+          local server_id_wait=180  # Wait up to 3 minutes for server ID
+          local server_id_detected=false
+          
+          while IFS= read -r line; do
+            if echo "$line" | grep -q "SERVER ID:"; then
+              server_id_detected=true
+              # Wait a bit more for subsequent logs after SERVER ID
+              sleep 2
+              # Kill the API log tail
+              kill $API_TAIL_PID 2>/dev/null || true
               break
             fi
+          done < "$api_pipe"
+          
+          # Clean up pipe
+          rm -f "$api_pipe"
+          
+          # Switch to game logs after finding SERVER ID or timeout
+          echo ""
+          if [ "$server_id_detected" = "true" ]; then
+            echo "✅ AsaApi SERVER ID detected, switching to ShooterGame logs..."
+          else
+            echo "⚠️ SERVER ID not detected in AsaApi logs, switching to ShooterGame logs anyway..."
+          fi
+          
+          # Wait for ShooterGame log file to appear
+          local shooter_wait=60
+          local shooter_elapsed=0
+          
+          while [ $shooter_elapsed -lt $shooter_wait ]; do
+            if [ -f "$game_log" ]; then
+              echo ""
+              echo "✅ Found ShooterGame logs: $game_log"
+              echo "---------------------------------------------"
+              echo "📋 ARK SERVER LOG OUTPUT (FULL LOG):"
+              echo "---------------------------------------------"
+              
+              # Display entire log once
+              if [ -s "$game_log" ]; then
+                cat "$game_log"
+                echo "---------------------------------------------"
+                echo "📋 CONTINUING LIVE LOGS:"
+                echo "---------------------------------------------"
+              fi
+              
+              # Then tail for new entries
+              tail -f "$game_log"
+              break
+            fi
+            
             sleep $check_interval
             shooter_elapsed=$((shooter_elapsed + check_interval))
           done
-        } &
-        
-        # Set up monitoring for the SERVER ID message
-        {
-          local server_id_wait=180  # Wait up to 3 minutes for server ID
-          local server_id_elapsed=0
           
-          while [ $server_id_elapsed -lt $server_id_wait ]; do
-            if grep -q "SERVER ID:" "$found_api_log"; then
-              # Give extra time to display the full ID line and any immediate logs after it
-              sleep 5
-              server_id_seen=true
-              break
-            fi
-            sleep 2
-            server_id_elapsed=$((server_id_elapsed + 2))
-          done
-          
-          # Now check for ShooterGame logs if server ID is seen
-          if [ "$server_id_seen" = "true" ]; then
-            echo ""
-            echo "✅ AsaApi SERVER ID detected, switching to ShooterGame logs..."
-            
-            # Check for ShooterGame logs
-            local shooter_elapsed=0
-            local found_shooter_log=false
-            
-            while [ $shooter_elapsed -lt $max_wait ] && [ "$found_shooter_log" = "false" ]; do
-              if [ -f "$game_log" ]; then
-                # Kill the API log tail first
-                kill $API_TAIL_PID 2>/dev/null || true
-                
-                echo ""
-                # Only display ShooterGame logs if they haven't been displayed yet
-                if [ "$shooter_log_displayed" = "false" ]; then
-                  echo "✅ Found ShooterGame logs: $game_log"
-                  echo "---------------------------------------------"
-                  echo "📋 ARK SERVER LOG OUTPUT (FULL LOG):"
-                  echo "---------------------------------------------"
-                  
-                  # Instead of just tailing the file, display the entire contents first
-                  # then tail it to catch new entries
-                  if [ -s "$game_log" ]; then
-                    cat "$game_log"
-                    echo "---------------------------------------------"
-                    echo "📋 CONTINUING LIVE LOGS:"
-                    echo "---------------------------------------------"
-                  fi
-                else
-                  # If logs were already displayed, just continue tailing
-                  echo "📋 CONTINUING LIVE LOGS FROM SHOOTER GAME:"
-                  echo "---------------------------------------------"
-                fi
-                
-                # Now start tailing to keep showing new entries
-                tail -f "$game_log" &
-                GAME_TAIL_PID=$!
-                found_shooter_log=true
-                shooter_log_displayed=true
-                break
-              fi
-              
-              sleep $check_interval
-              shooter_elapsed=$((shooter_elapsed + check_interval))
-            done
-            
-            if [ "$found_shooter_log" = "false" ]; then
-              echo "⚠️ No ShooterGame logs found after SERVER ID was detected"
-            fi
-          else
-            echo "⚠️ SERVER ID not detected in AsaApi logs within timeout period"
-            
-            # Even if server ID wasn't detected, still try to show ShooterGame logs
-            # if they become available
-            if [ -f "$game_log" ]; then
-              # Kill the API log tail
-              kill $API_TAIL_PID 2>/dev/null || true
-              
-              echo ""
-              # Only display ShooterGame logs if they haven't been displayed yet
-              if [ "$shooter_log_displayed" = "false" ]; then
-                echo "✅ Found ShooterGame logs despite missing SERVER ID:"
-                echo "---------------------------------------------"
-                echo "📋 ARK SERVER LOG OUTPUT (FULL LOG):"
-                echo "---------------------------------------------"
-                
-                # Display full log content and then tail
-                if [ -s "$game_log" ]; then
-                  cat "$game_log"
-                  echo "---------------------------------------------"
-                  echo "📋 CONTINUING LIVE LOGS:"
-                  echo "---------------------------------------------"
-                fi
-              else
-                # If logs were already displayed, just continue tailing
-                echo "📋 CONTINUING LIVE LOGS FROM SHOOTER GAME:"
-                echo "---------------------------------------------"
-              fi
-              
-              tail -f "$game_log" &
-              GAME_TAIL_PID=$!
-              shooter_log_displayed=true
-            fi
+          if [ $shooter_elapsed -ge $shooter_wait ] && [ ! -f "$game_log" ]; then
+            echo "⚠️ No ShooterGame logs found after waiting. Server might still be starting up."
           fi
-        } &
-        SERVER_ID_MONITOR_PID=$!
-      else
-        # If no API logs found but API=TRUE, look for ShooterGame logs
-        echo "⚠️ No AsaApi logs found after $max_wait seconds despite API being enabled"
-        echo "  → Check if AsaApi is running correctly or look in: $api_folder"
+        ) &
         
-        # Fall through to ShooterGame logs check
-        elapsed=0  # Reset elapsed time for ShooterGame logs search
+      else
+        # If no API logs found, just wait for game logs
+        echo "⚠️ No AsaApi logs found after $max_wait seconds despite API being enabled"
+        fallback_to_game_logs
       fi
     else
-      # When API is not enabled, make it absolutely clear we're ONLY checking for game logs
-      echo "ℹ️ AsaApi is disabled (API=FALSE) - AsaApi logs will be ignored."
-      echo "ℹ️ Only displaying ShooterGame logs for cleaner output."
-      echo ""
+      # When API is disabled, just display game logs
+      echo "ℹ️ AsaApi is disabled (API=FALSE) - Only displaying ShooterGame logs"
+      fallback_to_game_logs
     fi
+  }
+  
+  # Helper function to fall back to game logs when API logs aren't available
+  fallback_to_game_logs() {
+    local game_log="${ASA_DIR}/ShooterGame/Saved/Logs/ShooterGame.log"
+    local max_wait=60
+    local check_interval=2
+    local elapsed=0
     
-    # Always check for ShooterGame logs (whether API is enabled or not, or if API logs weren't found)
-    # This ensures we always show game logs, which is what we want
-    if [ -z "$GAME_TAIL_PID" ] && [ "$shooter_log_displayed" = "false" ]; then  # Only if we haven't already started tailing game logs
-      echo "🔍 Looking for ShooterGame logs..."
-      elapsed=0
-      
-      while [ $elapsed -lt $max_wait ]; do
-        if [ -f "$game_log" ]; then
-          echo "✅ Found ShooterGame logs: $game_log"
+    echo "🔍 Looking for ShooterGame logs..."
+    
+    while [ $elapsed -lt $max_wait ]; do
+      if [ -f "$game_log" ]; then
+        echo "✅ Found ShooterGame logs: $game_log"
+        echo "---------------------------------------------"
+        echo "📋 ARK SERVER LOG OUTPUT (FULL LOG):"
+        echo "---------------------------------------------"
+        
+        # Display entire log once
+        if [ -s "$game_log" ]; then
+          cat "$game_log"
           echo "---------------------------------------------"
-          echo "📋 ARK SERVER LOG OUTPUT (FULL LOG):"
+          echo "📋 CONTINUING LIVE LOGS:"
           echo "---------------------------------------------"
-          
-          # Display entire log first
-          if [ -s "$game_log" ]; then
-            cat "$game_log"
-            echo "---------------------------------------------"
-            echo "📋 CONTINUING LIVE LOGS:"
-            echo "---------------------------------------------"
-          fi
-          
-          # Then start tailing for updates
-          tail -f "$game_log" &
-          GAME_TAIL_PID=$!
-          shooter_log_displayed=true
-          break
         fi
         
-        sleep $check_interval
-        elapsed=$((elapsed + check_interval))
-        if [ $((elapsed % 10)) -eq 0 ]; then
-          echo "⏳ Still waiting for ShooterGame logs... ($elapsed seconds elapsed)"
-        fi
-      done
-      
-      if [ $elapsed -ge $max_wait ] && [ ! -f "$game_log" ]; then
-        echo "⚠️ No ShooterGame logs found after $max_wait seconds. Server might still be starting up."
-        echo "  → Once available, logs will be located at: $game_log"
+        # Then tail for new entries
+        tail -f "$game_log"
+        break
       fi
+      
+      sleep $check_interval
+      elapsed=$((elapsed + check_interval))
+      if [ $((elapsed % 10)) -eq 0 ]; then
+        echo "⏳ Still waiting for ShooterGame logs... ($elapsed seconds elapsed)"
+      fi
+    done
+    
+    if [ $elapsed -ge $max_wait ] && [ ! -f "$game_log" ]; then
+      echo "⚠️ No ShooterGame logs found after $max_wait seconds. Server might still be starting up."
+      echo "  → Once available, logs will be located at: $game_log"
     fi
   }
   
