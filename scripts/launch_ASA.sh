@@ -39,6 +39,36 @@ update_game_user_settings() {
   fi
 }
 
+# Function to find and update the server process ID
+get_server_process_id() {
+  # Get the current PID if available
+  if [ -n "$SERVER_PID" ] && ps -p "$SERVER_PID" > /dev/null 2>&1; then
+    # Current PID is valid, just return it
+    return 0
+  fi
+  
+  # Try to find the server process
+  local detected_pid=""
+  
+  # First check if AsaApiLoader is running (when API=TRUE)
+  if [ "${API}" = "TRUE" ]; then
+    detected_pid=$(ps aux | grep -v grep | grep "AsaApiLoader.exe" | awk '{print $2}' | head -1)
+  fi
+  
+  # If not found, try the main server executable
+  if [ -z "$detected_pid" ]; then
+    detected_pid=$(ps aux | grep -v grep | grep "ArkAscendedServer.exe" | awk '{print $2}' | head -1)
+  fi
+  
+  # Update SERVER_PID if a process was found
+  if [ -n "$detected_pid" ]; then
+    SERVER_PID="$detected_pid"
+    echo "Updated SERVER_PID to: $SERVER_PID"
+  else
+    echo "WARNING: Could not find running server process"
+  fi
+}
+
 # Determine the map path based on environment variable
 determine_map_path() {
   case "$MAP_NAME" in
@@ -534,6 +564,8 @@ start_server() {
     unset API_TAIL_PID
     unset GAME_TAIL_PID
     
+    # Run all log display operations in the background to ensure script continues
+    (
     # Branch logic based on API setting
     if [ "${API}" = "TRUE" ]; then
       # Define API log paths only when API is enabled
@@ -626,7 +658,7 @@ start_server() {
                 echo "---------------------------------------------"
               fi
               
-              # Then tail for new entries - RUN IN BACKGROUND so script continues
+              # Then tail for new entries
               tail -f "$game_log" &
               GAME_TAIL_PID=$!
               # Store PID for cleanup later
@@ -653,6 +685,10 @@ start_server() {
       echo "ℹ️ AsaApi is disabled (API=FALSE) - Only displaying ShooterGame logs"
       fallback_to_game_logs
     fi
+    ) &
+    LOGS_DISPLAY_PID=$!
+    # Important: Add brief pause to allow log processes to start
+    sleep 2
   }
   
   # Helper function to fall back to game logs when API logs aren't available
@@ -679,7 +715,7 @@ start_server() {
           echo "---------------------------------------------"
         fi
         
-        # Then tail for new entries - RUN IN BACKGROUND so script continues
+        # Then tail for new entries - RUN IN BACKGROUND
         tail -f "$game_log" &
         GAME_TAIL_PID=$!
         # Store PID for cleanup later
@@ -725,61 +761,79 @@ start_server() {
   local max_wait_time=300  # 5 minutes maximum wait time
   local wait_time=0
   
+  # Initial delay to give the server time to start creating logs
+  sleep 10
+  
+  # Retry loop for server verification
   while [ $wait_time -lt $max_wait_time ]; do
-    if [ -f "$LOG_FILE" ] && (grep -q "Server started" "$LOG_FILE" || grep -q "Server has completed startup and is now advertising for join" "$LOG_FILE"); then
-      echo ""
-      echo "🎮 ====== SERVER FULLY STARTED ====== 🎮"
-      echo "Server started successfully. PID: $SERVER_PID"
-      echo "Server is now advertising for join and ready to accept connections!"
+    # Check if server process is running
+    if ! ps -p $SERVER_PID > /dev/null; then
+      echo "ERROR: Server process ($SERVER_PID) is no longer running!"
+      echo "Server failed to start properly. Check logs for errors."
       
-      # Verify and update PID file to ensure monitor knows the server is running
-      if [ -f "$PID_FILE" ]; then
-        local current_pid=$(cat "$PID_FILE")
-        if [ "$current_pid" != "$SERVER_PID" ]; then
-          echo "Updating PID file with correct server PID: $SERVER_PID"
-          echo "$SERVER_PID" > "$PID_FILE"
-        fi
-      else
-        echo "Creating PID file with server PID: $SERVER_PID"
-        echo "$SERVER_PID" > "$PID_FILE"
-      fi
-      break
-    fi
-    sleep 10
-    wait_time=$((wait_time + 10))
-    
-    # Check if process is still running
-    if ! kill -0 $SERVER_PID 2>/dev/null; then
-      echo "WARNING: Server process appears to have stopped. PID: $SERVER_PID"
-      # Check the log file for errors if it exists
+      # If log file exists, show the last 20 lines
       if [ -f "$LOG_FILE" ]; then
         echo "Last 20 lines of log file:"
         tail -n 20 "$LOG_FILE"
       fi
-      break
+      exit 1
     fi
+    
+    # Check for successful server startup in logs
+    if [ -f "$LOG_FILE" ]; then
+      if grep -q "Server started" "$LOG_FILE" || grep -q "Server has completed startup and is now advertising for join" "$LOG_FILE"; then
+        echo ""
+        echo "🎮 ====== SERVER FULLY STARTED ====== 🎮"
+        echo "Server started successfully. PID: $SERVER_PID"
+        echo "Server is now advertising for join and ready to accept connections!"
+        
+        # Double verify correct PID file
+        get_server_process_id
+        
+        # Update PID file with proper value
+        echo "Ensuring PID file is up-to-date with server PID: $SERVER_PID"
+        echo "$SERVER_PID" > "$PID_FILE"
+        
+        echo "Server monitoring is now active."
+        break
+      else
+        echo "Server still starting up... (waited ${wait_time}s)"
+      fi
+    else
+      echo "Waiting for server log file to be created... (waited ${wait_time}s)"
+    fi
+    
+    sleep 10
+    wait_time=$((wait_time + 10))
   done
   
   if [ $wait_time -ge $max_wait_time ]; then
-    echo "WARNING: Server did not start within the expected time, but process is still running."
-    echo "Check logs for potential issues."
+    echo "WARNING: Server verification timed out after ${max_wait_time}s, but process with PID $SERVER_PID is still running."
+    echo "Considering server as started, but it may not be fully operational yet."
+    echo "Updating PID file anyway to prevent unnecessary restart attempts."
+    echo "$SERVER_PID" > "$PID_FILE"
   fi
 
   # Wait for the server process to exit
   wait $SERVER_PID
   echo "Server stopped."
   
-  # Kill the tail process when the server stops
-  kill $TAIL_PID 2>/dev/null || true
-  echo "Stopped tailing ShooterGame.log."
+  # Clean up all background processes
+  if [ -n "$TAIL_PID" ]; then
+    kill $TAIL_PID 2>/dev/null || true
+    echo "Stopped tailing ShooterGame.log."
+  fi
   
-  # Kill the API tail process if it exists
+  if [ -n "$LOGS_DISPLAY_PID" ]; then
+    kill -TERM $LOGS_DISPLAY_PID 2>/dev/null || true
+    echo "Stopped logs display process."
+  fi
+  
   if [ -n "$API_TAIL_PID" ]; then
     kill $API_TAIL_PID 2>/dev/null || true
     echo "Stopped tailing AsaApi log."
   fi
   
-  # Kill the API check process if it exists
   if [ -n "$API_CHECK_PID" ]; then
     kill $API_CHECK_PID 2>/dev/null || true
     echo "Stopped API log check process."
