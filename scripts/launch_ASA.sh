@@ -744,7 +744,7 @@ start_server() {
   local wait_time=0
   
   while [ $wait_time -lt $max_wait_time ]; do
-    if [ -f "$LOG_FILE" ] && grep -q "Server started" "$LOG_FILE"; then
+    if [ -f "$LOG_FILE" ] && (grep -q "Server started" "$LOG_FILE" || grep -q "Server has completed startup and is now advertising for join" "$LOG_FILE"); then
       echo "Server started successfully. PID: $SERVER_PID"
       break
     fi

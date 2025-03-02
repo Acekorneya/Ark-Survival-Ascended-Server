@@ -73,8 +73,20 @@ while true; do
 
   # Restart the server if it's not running and not currently updating
   if ! is_process_running && ! is_server_updating; then
-    echo "Detected server is not running, attempting immediate restart..."
-    /home/pok/scripts/restart_server.sh immediate
+    # Double-check by looking for the server process with ps before restarting
+    local server_process_count=$(ps aux | grep -v grep | grep -c "ArkAscendedServer.exe\|AsaApiLoader.exe")
+    if [ "$server_process_count" -eq 0 ]; then
+      echo "Detected server is not running (confirmed via process check), attempting immediate restart..."
+      /home/pok/scripts/restart_server.sh immediate
+    else
+      echo "Process check suggests server is running but PID file may be missing. Skipping restart."
+      # Try to recover the PID
+      local detected_pid=$(ps aux | grep -v grep | grep "ArkAscendedServer.exe\|AsaApiLoader.exe" | awk '{print $2}' | head -1)
+      if [ -n "$detected_pid" ]; then
+        echo "Found server process with PID: $detected_pid. Updating PID file."
+        echo "$detected_pid" > "$PID_FILE"
+      fi
+    fi
   fi
 
   sleep 30 # Short sleep to prevent high CPU usage

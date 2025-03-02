@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.39"
+POK_MANAGER_VERSION="2.1.40"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -1600,6 +1600,43 @@ start_instance() {
         sudo chown 1000:1000 "$docker_compose_file"
       else
         sudo chown 7777:7777 "$docker_compose_file"
+      fi
+    fi
+  fi
+  
+  # Fix any relative paths in the API_Logs volume mapping
+  if grep -q "API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs" "$docker_compose_file"; then
+    # Check if the path is relative (starts with ./)
+    if grep -q "^ *- \"\./Instance_" "$docker_compose_file"; then
+      echo "Converting relative API_Logs path to absolute path"
+      
+      # Create a temporary file
+      local tmp_file="${docker_compose_file}.tmp"
+      
+      # Get absolute path for consistency with other volume paths
+      local abs_instance_dir=$(realpath "$instance_dir")
+      
+      # Use sed to replace the relative path with absolute path
+      sed -e "s|^ *- \"\./Instance_${instance_name}/API_Logs|      - \"$abs_instance_dir/API_Logs|g" "$docker_compose_file" > "$tmp_file"
+      
+      # Replace the original file with the updated one
+      mv -f "$tmp_file" "$docker_compose_file"
+      
+      # Set proper permissions on the file
+      if is_sudo; then
+        # Match file ownership with the API_Logs directory
+        if [[ "$image_tag" == 2_0* ]]; then
+          chown 1000:1000 "$docker_compose_file"
+        else
+          chown 7777:7777 "$docker_compose_file"
+        fi
+      else
+        # Use sudo as needed
+        if [[ "$image_tag" == 2_0* ]]; then
+          sudo chown 1000:1000 "$docker_compose_file"
+        else
+          sudo chown 7777:7777 "$docker_compose_file"
+        fi
       fi
     fi
   fi
@@ -4726,6 +4763,24 @@ configure_api_for_instance() {
         # Replace the original file with the updated one
         mv -f "$tmp_file" "$docker_compose_file"
         echo "  ✅ Added API_Logs volume mapping for instance: $instance_name"
+      else
+        # Check if the path is relative (starts with ./) and convert to absolute
+        if grep -q "^ *- \"\./Instance_" "$docker_compose_file"; then
+          echo "  ⚠️ Found relative API_Logs path, converting to absolute path"
+          
+          # Create a temporary file
+          local tmp_file="${docker_compose_file}.tmp"
+          
+          # Get absolute path for consistency with other volume paths
+          local abs_instance_dir=$(realpath "$instance_dir")
+          
+          # Use sed to replace the relative path with absolute path
+          sed -e "s|^ *- \"\./Instance_${instance_name}/API_Logs|      - \"$abs_instance_dir/API_Logs|g" "$docker_compose_file" > "$tmp_file"
+          
+          # Replace the original file with the updated one
+          mv -f "$tmp_file" "$docker_compose_file"
+          echo "  ✅ Converted API_Logs path to absolute for instance: $instance_name"
+        fi
       fi
     else
       # If API is now disabled, remove the API_Logs volume mapping
