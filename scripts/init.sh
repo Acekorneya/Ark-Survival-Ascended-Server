@@ -121,15 +121,6 @@ setup_virtual_display() {
   export WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx"
 }
 
-# Set up virtual display
-setup_virtual_display
-
-echo ""
-echo "🔍 Running environment checks..."
-# Run comprehensive pre-launch environment check
-chmod +x /home/pok/scripts/prelaunch_check.sh
-/home/pok/scripts/prelaunch_check.sh
-
 # Robust AsaApi initialization for container environment
 verify_proton_environment() {
   echo "----Robust Proton Environment Verification for AsaApi----"
@@ -277,19 +268,29 @@ create_minimal_registry() {
   echo "Minimal registry and directory structure created."
 }
 
+# Set up virtual display
+setup_virtual_display
+
+echo ""
+echo "🔍 Running environment checks..."
+# Run comprehensive pre-launch environment check
+chmod +x /home/pok/scripts/prelaunch_check.sh
+/home/pok/scripts/prelaunch_check.sh
+
+# Set essential Proton/Wine environment variables regardless of API setting
+# These need to be set for both API=TRUE and API=FALSE cases
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+export STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam"
+export STEAM_COMPAT_DATA_PATH="/home/pok/.steam/steam/steamapps/compatdata/2430930"
+export WINEDLLOVERRIDES="version=n,b"
+
+# Initialize Proton environment regardless of API setting
+verify_proton_environment
+
 # Install/Update AsaApi if API=TRUE
 if [ "${API}" = "TRUE" ]; then
   echo ""
   echo "🔌 Initializing AsaApi plugin system..."
-  
-  # Set extra environment variables for Proton/Wine in container
-  export XDG_RUNTIME_DIR=/run/user/$(id -u)
-  export STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam"
-  export STEAM_COMPAT_DATA_PATH="/home/pok/.steam/steam/steamapps/compatdata/2430930"
-  export WINEDLLOVERRIDES="version=n,b"
-  
-  # In container, do a full verification of the Proton environment
-  verify_proton_environment
   
   # Install the API with extra verification for container mode
   install_ark_server_api

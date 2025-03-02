@@ -35,6 +35,14 @@ initialize_proton_prefix() {
   mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files (x86)"
   mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/users/steamuser"
   
+  # Create dosdevices directory and symlinks - missing in original code
+  mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/dosdevices"
+  # The error was specifically about this symlink
+  ln -sf "../drive_c" "${STEAM_COMPAT_DATA_PATH}/pfx/dosdevices/c:"
+  ln -sf "/dev/null" "${STEAM_COMPAT_DATA_PATH}/pfx/dosdevices/d::"
+  ln -sf "/dev/null" "${STEAM_COMPAT_DATA_PATH}/pfx/dosdevices/e::"
+  ln -sf "/dev/null" "${STEAM_COMPAT_DATA_PATH}/pfx/dosdevices/f::"
+  
   # Ensure consistent proton path detection by checking multiple common locations
   PROTON_PATHS=(
     "/home/pok/.steam/steam/compatibilitytools.d/GE-Proton-Current"
@@ -150,8 +158,14 @@ is_process_running() {
 # Function to check if server is updating
 is_server_updating() {
   if [ -f "$ASA_DIR/updating.flag" ]; then
+    if [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
+      echo "Server is currently updating."
+    fi
     return 0
   else
+    if [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
+      echo "Server is not updating."
+    fi
     return 1
   fi
 }
@@ -477,4 +491,40 @@ install_ark_server_api() {
     echo "Unable to complete AsaApi installation. Please check the logs for errors."
     return 1
   fi
+}
+
+# Function to ensure dosdevices are properly set up
+ensure_dosdevices_setup() {
+  local pfx_dir="${STEAM_COMPAT_DATA_PATH}/pfx"
+  
+  # Check if dosdevices directory exists
+  if [ ! -d "${pfx_dir}/dosdevices" ]; then
+    echo "Creating missing dosdevices directory..."
+    mkdir -p "${pfx_dir}/dosdevices"
+  fi
+  
+  # Check if required symlinks exist and fix if needed
+  if [ ! -L "${pfx_dir}/dosdevices/c:" ] || [ ! -e "${pfx_dir}/dosdevices/c:" ]; then
+    echo "Fixing missing c: drive symlink..."
+    ln -sf "../drive_c" "${pfx_dir}/dosdevices/c:"
+  fi
+  
+  # Add other common drive symlinks
+  if [ ! -e "${pfx_dir}/dosdevices/d::" ]; then
+    ln -sf "/dev/null" "${pfx_dir}/dosdevices/d::"
+  fi
+  
+  if [ ! -e "${pfx_dir}/dosdevices/e::" ]; then
+    ln -sf "/dev/null" "${pfx_dir}/dosdevices/e::"
+  fi
+  
+  if [ ! -e "${pfx_dir}/dosdevices/f::" ]; then
+    ln -sf "/dev/null" "${pfx_dir}/dosdevices/f::"
+  fi
+  
+  # Ensure proper permissions
+  chmod -R 755 "${pfx_dir}/dosdevices"
+  
+  # Sync to ensure changes are written
+  sync
 }
