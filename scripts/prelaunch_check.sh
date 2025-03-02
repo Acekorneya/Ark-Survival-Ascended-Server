@@ -118,8 +118,13 @@ check_wine_environment() {
   if command -v Xvfb >/dev/null 2>&1; then
     # Kill any existing Xvfb processes
     pkill Xvfb >/dev/null 2>&1 || true
-    # Start Xvfb
-    Xvfb :0 -screen 0 1024x768x16 &
+    
+    # Create .X11-unix directory first to avoid errors
+    mkdir -p /tmp/.X11-unix 2>/dev/null || true
+    chmod 1777 /tmp/.X11-unix 2>/dev/null || true
+    
+    # Start Xvfb with error output suppressed
+    Xvfb :0 -screen 0 1024x768x16 2>/dev/null &
     echo "Started Xvfb with PID: $!"
     # Give Xvfb time to start
     sleep 2

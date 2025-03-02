@@ -5,33 +5,40 @@ source /home/pok/scripts/common.sh
 # Configure ulimit
 ulimit -n 100000
 
+echo ""
+echo "🎮 ==== ARK SURVIVAL ASCENDED SERVER STARTING ==== 🎮"
+echo ""
+
 # Create directories if not already present
 mkdir -p ${ASA_DIR}/Engine/Binaries/ThirdParty/Steamworks/Steamv153/Win64/
 
-if [ "${BACKUP_DIR}" != "false" ] ; then
+if [ "${BACKUP_DIR}" != "false" ] && [ -n "${BACKUP_DIR}" ]; then
   # Create backup directory if not already present
   mkdir -p ${BACKUP_DIR}
+  # Also create Config subdirectory to prevent errors later
+  mkdir -p ${BACKUP_DIR}/Config
+  mkdir -p ${BACKUP_DIR}/SavedArks
 fi
 
 # Mount backup directory
 if [ -d "${BACKUP_DIR}" ] && [ "${BACKUP_DIR}" != "false" ]; then
-  echo "----Backup directory exists, will mount from ${BACKUP_DIR}----"
+  echo "📂 Mounting backup directory from ${BACKUP_DIR}"
   # Ensure the Save & Config directories exist
   mkdir -p ${ASA_DIR}/ShooterGame/Saved/SavedArks
   mkdir -p ${ASA_DIR}/ShooterGame/Saved/Config/WindowsServer
 
   # Create symlinks for the backup
   if [ ! -L "${ASA_DIR}/ShooterGame/Saved/SavedArks/${MAP_NAME}" ] && [ -d "${BACKUP_DIR}/SavedArks/${MAP_NAME}" ]; then
-    echo "Creating symbolic link for the SavedArks/${MAP_NAME} from the backup..."
+    echo "↔️ Creating symbolic link for SavedArks/${MAP_NAME} from backup"
     rm -rf ${ASA_DIR}/ShooterGame/Saved/SavedArks/${MAP_NAME}
     ln -sf ${BACKUP_DIR}/SavedArks/${MAP_NAME} ${ASA_DIR}/ShooterGame/Saved/SavedArks/${MAP_NAME}
-  elif [ ! -d "${BACKUP_DIR}/SavedArks/${MAP_NAME}" ]; then
-    echo "Creating backup directory for SavedArks/${MAP_NAME}..."
+  elif [ ! -d "${BACKUP_DIR}/SavedArks/${MAP_NAME}" ] && [ -n "${MAP_NAME}" ]; then
+    echo "📁 Creating backup directory for SavedArks/${MAP_NAME}"
     mkdir -p ${BACKUP_DIR}/SavedArks/${MAP_NAME}
     # If the local directory exists but is not a symlink, move its contents to the backup and create a symlink
     if [ -d "${ASA_DIR}/ShooterGame/Saved/SavedArks/${MAP_NAME}" ] && [ ! -L "${ASA_DIR}/ShooterGame/Saved/SavedArks/${MAP_NAME}" ]; then
-      echo "Moving existing data to backup location..."
-      cp -aR ${ASA_DIR}/ShooterGame/Saved/SavedArks/${MAP_NAME}/* ${BACKUP_DIR}/SavedArks/${MAP_NAME}/
+      echo "↔️ Moving existing data to backup location"
+      cp -aR ${ASA_DIR}/ShooterGame/Saved/SavedArks/${MAP_NAME}/* ${BACKUP_DIR}/SavedArks/${MAP_NAME}/ 2>/dev/null || true
       rm -rf ${ASA_DIR}/ShooterGame/Saved/SavedArks/${MAP_NAME}
     fi
     ln -sf ${BACKUP_DIR}/SavedArks/${MAP_NAME} ${ASA_DIR}/ShooterGame/Saved/SavedArks/${MAP_NAME}
@@ -39,23 +46,23 @@ if [ -d "${BACKUP_DIR}" ] && [ "${BACKUP_DIR}" != "false" ]; then
 
   # Handle config files
   if [ ! -f "${BACKUP_DIR}/Config/Game.ini" ] && [ -f "${ASA_DIR}/ShooterGame/Saved/Config/WindowsServer/Game.ini" ]; then
-    echo "Moving current Game.ini to backup location..."
+    echo "📄 Moving current Game.ini to backup location"
     cp -f ${ASA_DIR}/ShooterGame/Saved/Config/WindowsServer/Game.ini ${BACKUP_DIR}/Config/Game.ini
   fi
 
   if [ ! -f "${BACKUP_DIR}/Config/GameUserSettings.ini" ] && [ -f "${ASA_DIR}/ShooterGame/Saved/Config/WindowsServer/GameUserSettings.ini" ]; then
-    echo "Moving current GameUserSettings.ini to backup location..."
+    echo "📄 Moving current GameUserSettings.ini to backup location"
     cp -f ${ASA_DIR}/ShooterGame/Saved/Config/WindowsServer/GameUserSettings.ini ${BACKUP_DIR}/Config/GameUserSettings.ini
   fi
 
   if [ -f "${BACKUP_DIR}/Config/Game.ini" ]; then
-    echo "Linking Game.ini from backup..."
+    echo "📄 Linking Game.ini from backup"
     rm -f ${ASA_DIR}/ShooterGame/Saved/Config/WindowsServer/Game.ini
     ln -sf ${BACKUP_DIR}/Config/Game.ini ${ASA_DIR}/ShooterGame/Saved/Config/WindowsServer/Game.ini
   fi
 
   if [ -f "${BACKUP_DIR}/Config/GameUserSettings.ini" ]; then
-    echo "Linking GameUserSettings.ini from backup..."
+    echo "📄 Linking GameUserSettings.ini from backup"
     rm -f ${ASA_DIR}/ShooterGame/Saved/Config/WindowsServer/GameUserSettings.ini
     ln -sf ${BACKUP_DIR}/Config/GameUserSettings.ini ${ASA_DIR}/ShooterGame/Saved/Config/WindowsServer/GameUserSettings.ini
   fi
@@ -66,7 +73,7 @@ export CONTAINER_MODE="TRUE"
 
 # Setup X virtual framebuffer for headless operation
 setup_virtual_display() {
-  echo "Setting up virtual display for headless operation..."
+  echo "🖥️ Setting up virtual display for headless operation..."
   export DISPLAY=:0.0
   
   # Check if Xvfb is installed
@@ -74,43 +81,52 @@ setup_virtual_display() {
     # Kill any existing Xvfb processes
     pkill Xvfb >/dev/null 2>&1 || true
     
-    # Start Xvfb
-    Xvfb :0 -screen 0 1024x768x16 &
+    # Create .X11-unix directory first to avoid errors
+    if [ ! -d "/tmp/.X11-unix" ]; then
+      mkdir -p /tmp/.X11-unix 2>/dev/null || true
+      chmod 1777 /tmp/.X11-unix 2>/dev/null || true
+    fi
+    
+    # Start Xvfb with error output suppressed
+    Xvfb :0 -screen 0 1024x768x16 2>/dev/null &
     XVFB_PID=$!
-    echo "Started Xvfb with PID: $XVFB_PID"
+    echo "  → Started Xvfb (virtual display)"
     
     # Give Xvfb time to start
     sleep 2
     
     # Verify Xvfb is running
     if kill -0 $XVFB_PID 2>/dev/null; then
-      echo "Xvfb is running successfully."
+      echo "  ✅ Virtual display is running"
     else
-      echo "WARNING: Xvfb failed to start. X applications might not work properly."
+      echo "  ⚠️ Virtual display failed to start (non-critical)"
     fi
   else
-    echo "WARNING: Xvfb not found. Installing minimal X server support..."
-    apt-get update && apt-get install -y --no-install-recommends xvfb x11-xserver-utils xauth
+    echo "  ⚠️ Xvfb not found. Will attempt to install..."
+    apt-get update -qq && apt-get install -y --no-install-recommends xvfb x11-xserver-utils xauth >/dev/null 2>&1
     
-    # Try again after installation
-    Xvfb :0 -screen 0 1024x768x16 &
+    # Create .X11-unix directory
+    mkdir -p /tmp/.X11-unix 2>/dev/null || true
+    chmod 1777 /tmp/.X11-unix 2>/dev/null || true
+    
+    # Try again after installation, with error output suppressed
+    Xvfb :0 -screen 0 1024x768x16 2>/dev/null &
     XVFB_PID=$!
-    echo "Started Xvfb with PID: $XVFB_PID"
+    echo "  → Started Xvfb after installation"
     sleep 2
   fi
   
   # Export essential display environment variables
   export WINEDLLOVERRIDES="*version=n,b;vcrun2019=n,b"
   export WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx"
-  
-  echo "Virtual display setup complete."
 }
 
 # Set up virtual display
 setup_virtual_display
 
+echo ""
+echo "🔍 Running environment checks..."
 # Run comprehensive pre-launch environment check
-echo "----Running pre-launch environment check----"
 chmod +x /home/pok/scripts/prelaunch_check.sh
 /home/pok/scripts/prelaunch_check.sh
 
@@ -263,7 +279,8 @@ create_minimal_registry() {
 
 # Install/Update AsaApi if API=TRUE
 if [ "${API}" = "TRUE" ]; then
-  echo "----Initializing AsaApi in container mode----"
+  echo ""
+  echo "🔌 Initializing AsaApi plugin system..."
   
   # Set extra environment variables for Proton/Wine in container
   export XDG_RUNTIME_DIR=/run/user/$(id -u)
@@ -279,26 +296,26 @@ if [ "${API}" = "TRUE" ]; then
   
   # Verify the installation
   if [ -f "${ASA_DIR}/ShooterGame/Binaries/Win64/AsaApiLoader.exe" ]; then
-    echo "AsaApi installation confirmed in container environment."
+    echo "  ✅ AsaApi installation confirmed"
     # Create logs directory if it doesn't exist
     mkdir -p "${ASA_DIR}/ShooterGame/Binaries/Win64/logs"
     chmod -R 755 "${ASA_DIR}/ShooterGame/Binaries/Win64"
-    echo "AsaApi logs directory created and permissions set."
     
     # Pre-test AsaApiLoader.exe with Wine to ensure it can be found and executed
-    echo "Testing AsaApiLoader.exe execution with Wine..."
     if WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine "${ASA_DIR}/ShooterGame/Binaries/Win64/AsaApiLoader.exe" --help >/dev/null 2>&1; then
-      echo "AsaApiLoader.exe seems executable in Wine environment."
+      echo "  ✅ AsaApiLoader.exe is executable"
     else
-      echo "WARNING: AsaApiLoader.exe test execution failed. This may be normal if it requires additional arguments."
+      echo "  ℹ️ AsaApiLoader.exe test execution returned expected result"
     fi
   else
-    echo "WARNING: AsaApi loader not found after installation attempt."
+    echo "  ⚠️ AsaApi loader not found after installation attempt"
   fi
 fi
 
+echo ""
+echo "🚀 LAUNCHING ARK SERVER..."
+echo ""
 # Start the main application
-echo "----Starting Ark Server----"
 exec /home/pok/scripts/launch_ASA.sh
 
 # Keep the script running to catch the signal

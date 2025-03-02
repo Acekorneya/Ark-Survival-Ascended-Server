@@ -378,7 +378,12 @@ start_server() {
           export DISPLAY=:0.0
           # Create virtual display with Xvfb if available
           if command -v Xvfb >/dev/null 2>&1; then
-            Xvfb :0 -screen 0 1024x768x16 &
+            # Create .X11-unix directory first to avoid errors
+            mkdir -p /tmp/.X11-unix 2>/dev/null || true
+            chmod 1777 /tmp/.X11-unix 2>/dev/null || true
+            
+            # Start Xvfb with error output suppressed
+            Xvfb :0 -screen 0 1024x768x16 2>/dev/null &
             XVFB_PID=$!
             sleep 2  # Give Xvfb time to start
           fi
@@ -504,97 +509,214 @@ start_server() {
   echo $SERVER_PID > $PID_FILE
   echo "PID $SERVER_PID written to $PID_FILE"
 
-  # Check for the existence of the ShooterGame.log file with a timeout
-  local timeout=60  # Increased timeout to allow more time for server start
-  local elapsed=0
-  while [ ! -f "$ASA_DIR/ShooterGame/Saved/Logs/ShooterGame.log" ]; do
-    if [ $elapsed -ge $timeout ]; then
-      echo "Error: ShooterGame.log not created within the specified timeout. Server may have failed to start."
-      echo "Please check the server logs for more information."
-      kill $SERVER_PID
-      exit 1
-    fi
-    echo "Waiting for ShooterGame.log to be created..."
-    sleep 2
-    elapsed=$((elapsed + 2))
-  done
-
-  # Now that the file exists, start tailing it to the console
-  echo "ShooterGame.log exists, starting to tail."
-  tail -f "$ASA_DIR/ShooterGame/Saved/Logs/ShooterGame.log" &
-  TAIL_PID=$!
-  echo "Tailing ShooterGame.log with PID: $TAIL_PID"
+  # ===== IMPROVED LOGGING SECTION =====
+  echo ""
+  echo "====== ARK SERVER IS STARTING UP ======"
+  echo "This may take a few minutes. Please be patient..."
+  echo ""
   
-  # If API is enabled, also tail the AsaApi logs
-  if [ "${API}" = "TRUE" ]; then
-    # The AsaApi logs directory
-    local api_logs_dir="$ASA_DIR/ShooterGame/Binaries/Win64/logs"
+  # Improved logs display function for better readability
+  display_server_logs() {
+    echo "📊 MONITORING SERVER LOGS"
+    echo "---------------------------------------------"
     
-    # Wait a moment for the API to initialize and potentially create a log file
-    sleep 5
+    # Define log paths
+    local api_log="${ASA_DIR}/ShooterGame/Binaries/Win64/logs/AsaApi.log"
+    local api_folder="${ASA_DIR}/ShooterGame/Binaries/Win64/logs"
+    local game_log="${ASA_DIR}/ShooterGame/Saved/Logs/ShooterGame.log"
+    local max_wait=60  # Maximum seconds to wait for logs
+    local check_interval=2
+    local elapsed=0
+    local found_api_log=""
+    local server_id_seen=false
     
-    # Check if any log files exist and tail the most recent one
-    if [ -d "$api_logs_dir" ] && [ "$(ls -A $api_logs_dir 2>/dev/null)" ]; then
-      # Find the most recent log file
-      local latest_api_log=$(ls -t $api_logs_dir/ArkApi_*.log 2>/dev/null | head -1)
-      
-      if [ -n "$latest_api_log" ]; then
-        echo "Found AsaApi log file: $latest_api_log, starting to tail."
-        tail -f "$latest_api_log" &
-        API_TAIL_PID=$!
-        echo "Tailing AsaApi log with PID: $API_TAIL_PID"
-      else
-        echo "No AsaApi log files found yet, will check again later."
-        # Set up a background task to check for log files periodically
-        {
-          local attempts=0
-          while [ $attempts -lt 12 ]; do  # Try for up to 2 minutes
-            sleep 10
-            latest_api_log=$(ls -t $api_logs_dir/ArkApi_*.log 2>/dev/null | head -1)
-            if [ -n "$latest_api_log" ]; then
-              echo "Found AsaApi log file: $latest_api_log, starting to tail."
-              tail -f "$latest_api_log" &
-              API_TAIL_PID=$!
-              echo "Tailing AsaApi log with PID: $API_TAIL_PID"
-              break
-            fi
-            attempts=$((attempts + 1))
-          done
-          
-          if [ $attempts -eq 12 ]; then
-            echo "No AsaApi log files found after 2 minutes. AsaApi might not be running correctly."
-          fi
-        } &
-        API_CHECK_PID=$!
+    # First, check and display AsaApi logs (priority)
+    echo "🔍 Looking for AsaApi logs..."
+    while [ $elapsed -lt $max_wait ]; do
+      if [ -f "$api_log" ]; then
+        found_api_log="$api_log"
+        echo "✅ Found AsaApi logs: $api_log"
+        break
+      elif [ -d "$api_folder" ] && [ "$(ls -A $api_folder 2>/dev/null | grep -i .log)" ]; then
+        # If AsaApi.log doesn't exist but other logs exist in the folder
+        local other_api_log=$(ls -t $api_folder/*.log 2>/dev/null | head -1)
+        if [ -n "$other_api_log" ]; then
+          found_api_log="$other_api_log"
+          echo "✅ Found alternative API log: $(basename $other_api_log)"
+          break
+        fi
       fi
-    else
-      echo "AsaApi logs directory is empty or doesn't exist yet. Will check again later."
-      mkdir -p "$api_logs_dir"
       
-      # Set up a background task to check for log files
+      sleep $check_interval
+      elapsed=$((elapsed + check_interval))
+      if [ $((elapsed % 10)) -eq 0 ]; then
+        echo "⏳ Still waiting for AsaApi logs... ($elapsed seconds elapsed)"
+      fi
+    done
+    
+    # If API log is found, display it and wait for SERVER ID message
+    if [ -n "$found_api_log" ]; then
+      echo "---------------------------------------------"
+      echo "📋 ASAAPI LOG OUTPUT:"
+      echo "---------------------------------------------"
+      
+      # Start tailing in a background process that we can control
+      tail -f "$found_api_log" &
+      API_TAIL_PID=$!
+      
+      # Set up monitoring for the SERVER ID message
       {
-        local attempts=0
-        while [ $attempts -lt 12 ]; do  # Try for up to 2 minutes
-          sleep 10
-          if [ -d "$api_logs_dir" ] && [ "$(ls -A $api_logs_dir/ArkApi_*.log 2>/dev/null)" ]; then
-            latest_api_log=$(ls -t $api_logs_dir/ArkApi_*.log 2>/dev/null | head -1)
-            if [ -n "$latest_api_log" ]; then
-              echo "Found AsaApi log file: $latest_api_log, starting to tail."
-              tail -f "$latest_api_log" &
-              API_TAIL_PID=$!
-              echo "Tailing AsaApi log with PID: $API_TAIL_PID"
-              break
-            fi
+        local server_id_wait=180  # Wait up to 3 minutes for server ID
+        local server_id_elapsed=0
+        
+        while [ $server_id_elapsed -lt $server_id_wait ]; do
+          if grep -q "SERVER ID:" "$found_api_log"; then
+            # Give extra time to display the full ID line and any immediate logs after it
+            sleep 5
+            server_id_seen=true
+            break
           fi
-          attempts=$((attempts + 1))
+          sleep 2
+          server_id_elapsed=$((server_id_elapsed + 2))
         done
         
-        if [ $attempts -eq 12 ]; then
-          echo "No AsaApi log files found after 2 minutes. AsaApi might not be running correctly."
+        # Now check for ShooterGame logs if server ID is seen
+        if [ "$server_id_seen" = "true" ]; then
+          echo ""
+          echo "✅ AsaApi SERVER ID detected, switching to ShooterGame logs..."
+          
+          # Check for ShooterGame logs
+          local shooter_elapsed=0
+          local found_shooter_log=false
+          
+          while [ $shooter_elapsed -lt $max_wait ] && [ "$found_shooter_log" = "false" ]; do
+            if [ -f "$game_log" ]; then
+              # Kill the API log tail first
+              kill $API_TAIL_PID 2>/dev/null || true
+              
+              echo ""
+              echo "✅ Found ShooterGame logs: $game_log"
+              echo "---------------------------------------------"
+              echo "📋 ARK SERVER LOG OUTPUT (FULL LOG):"
+              echo "---------------------------------------------"
+              
+              # Instead of just tailing the file, display the entire contents first
+              # then tail it to catch new entries
+              if [ -s "$game_log" ]; then
+                cat "$game_log"
+                echo "---------------------------------------------"
+                echo "📋 CONTINUING LIVE LOGS:"
+                echo "---------------------------------------------"
+              fi
+              
+              # Now start tailing to keep showing new entries
+              tail -f "$game_log" &
+              GAME_TAIL_PID=$!
+              found_shooter_log=true
+              break
+            fi
+            
+            sleep $check_interval
+            shooter_elapsed=$((shooter_elapsed + check_interval))
+          done
+          
+          if [ "$found_shooter_log" = "false" ]; then
+            echo "⚠️ No ShooterGame logs found after SERVER ID was detected"
+          fi
+        else
+          echo "⚠️ SERVER ID not detected in AsaApi logs within timeout period"
+          
+          # Even if server ID wasn't detected, still try to show ShooterGame logs
+          # if they become available
+          if [ -f "$game_log" ]; then
+            # Kill the API log tail
+            kill $API_TAIL_PID 2>/dev/null || true
+            
+            echo ""
+            echo "✅ Found ShooterGame logs despite missing SERVER ID:"
+            echo "---------------------------------------------"
+            echo "📋 ARK SERVER LOG OUTPUT (FULL LOG):"
+            echo "---------------------------------------------"
+            
+            # Display full log content and then tail
+            if [ -s "$game_log" ]; then
+              cat "$game_log"
+              echo "---------------------------------------------"
+              echo "📋 CONTINUING LIVE LOGS:"
+              echo "---------------------------------------------"
+            fi
+            
+            tail -f "$game_log" &
+            GAME_TAIL_PID=$!
+          fi
         fi
       } &
-      API_CHECK_PID=$!
+      SERVER_ID_MONITOR_PID=$!
+    else
+      # If no API logs found, look for ShooterGame logs directly
+      echo "⚠️ No AsaApi logs found after $max_wait seconds"
+      echo "  → Check if AsaApi is running or look in: $api_folder"
+      
+      # Look for ShooterGame logs
+      echo ""
+      echo "🔍 Looking for ShooterGame logs..."
+      elapsed=0
+      
+      while [ $elapsed -lt $max_wait ]; do
+        if [ -f "$game_log" ]; then
+          echo "✅ Found ShooterGame logs: $game_log"
+          echo "---------------------------------------------"
+          echo "📋 ARK SERVER LOG OUTPUT (FULL LOG):"
+          echo "---------------------------------------------"
+          
+          # Display entire log first
+          if [ -s "$game_log" ]; then
+            cat "$game_log"
+            echo "---------------------------------------------"
+            echo "📋 CONTINUING LIVE LOGS:"
+            echo "---------------------------------------------"
+          fi
+          
+          # Then start tailing for updates
+          tail -f "$game_log" &
+          GAME_TAIL_PID=$!
+          break
+        fi
+        
+        sleep $check_interval
+        elapsed=$((elapsed + check_interval))
+        if [ $((elapsed % 10)) -eq 0 ]; then
+          echo "⏳ Still waiting for ShooterGame logs... ($elapsed seconds elapsed)"
+        fi
+      done
+      
+      # If no ShooterGame logs found
+      if [ $elapsed -ge $max_wait ] && [ ! -f "$game_log" ]; then
+        echo "⚠️ No ShooterGame logs found after $max_wait seconds"
+        echo "  → Server may be having trouble starting"
+        echo "  → Check if the server process is running"
+      fi
     fi
+    
+    # Wait for server process to finish
+    wait $SERVER_PID
+  }
+  
+  # Replace existing log tailing code with improved function
+  if [ "${API}" = "TRUE" ]; then
+    if [ -f "${ASA_DIR}/ShooterGame/Binaries/Win64/AsaApiLoader.exe" ]; then
+      # Launch with AsaApiLoader.exe
+      echo "🔌 Starting server with AsaApi enabled"
+      display_server_logs
+    else
+      # Launch with regular executable  
+      echo "⚠️ AsaApiLoader.exe not found, launching without AsaApi"
+      display_server_logs
+    fi
+  else
+    # Launch with regular executable if API is disabled
+    echo "ℹ️ AsaApi is disabled, launching normal server"
+    display_server_logs
   fi
 
   # Wait for the server to fully start, monitoring the log file
