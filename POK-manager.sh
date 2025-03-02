@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.38"
+POK_MANAGER_VERSION="2.1.39"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -938,6 +938,22 @@ write_docker_compose_file() {
 
   # Ensure the instance directory exists
   mkdir -p "${instance_dir}"
+  
+  # Create API_Logs directory for this instance
+  mkdir -p "${instance_dir}/API_Logs"
+  
+  # Set appropriate permissions based on the image tag
+  if [[ "$image_tag" == 2_0* ]]; then
+    # For 2_0 image, use 1000:1000
+    chmod 755 "${instance_dir}/API_Logs"
+    chown 1000:1000 "${instance_dir}/API_Logs"
+    echo "Setting 1000:1000 ownership on API_Logs directory for 2_0_latest image compatibility"
+  else
+    # For 2_1 image, use 7777:7777
+    chmod 755 "${instance_dir}/API_Logs"
+    chown 7777:7777 "${instance_dir}/API_Logs"
+    echo "Setting 7777:7777 ownership on API_Logs directory for 2_1_latest image compatibility"
+  fi
 
   # Start writing the Docker Compose configuration
   cat > "$docker_compose_file" <<-EOF
@@ -1001,6 +1017,17 @@ cat >> "$docker_compose_file" <<-EOF
     volumes:
       - "${base_dir}/ServerFiles/arkserver:/home/pok/arkserver"
       - "${instance_dir}/Saved:/home/pok/arkserver/ShooterGame/Saved"
+EOF
+
+  # Check if API is enabled and only add API_Logs volume if it is
+  if grep -q "^ *- API=TRUE" "$docker_compose_file" || grep -q "^ *- API:TRUE" "$docker_compose_file"; then
+    # Get absolute path for the instance directory to ensure we use absolute paths
+    local abs_instance_dir=$(realpath "$instance_dir")
+    echo "      - \"${abs_instance_dir}/API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs\"" >> "$docker_compose_file"
+  fi
+
+  # Add the Cluster volume
+  cat >> "$docker_compose_file" <<-EOF
       - "${base_dir}/Cluster:/home/pok/arkserver/ShooterGame/Saved/clusters"
     mem_limit: ${config_values[Memory Limit]}
 EOF
@@ -1179,10 +1206,11 @@ prompt_for_instance_name() {
 # Function to perform an action on all instances
 perform_action_on_all_instances() {
   local action=$1
+  local base_dir=$(dirname "$(realpath "$0")")
   echo "Performing '${action}' on all instances..."
 
   # Find all instance directories
-  local instance_dirs=($(find ./Instance_* -maxdepth 0 -type d))
+  local instance_dirs=($(find "${base_dir}/Instance_"* -maxdepth 0 -type d 2>/dev/null || true))
 
   for instance_dir in "${instance_dirs[@]}"; do
     # Extract instance name from directory
@@ -1201,6 +1229,49 @@ perform_action_on_all_instances() {
       ;;
     esac
   done
+}
+
+# Function to stop all instances
+stop_all_instances() {
+  local base_dir=$(dirname "$(realpath "$0")")
+  
+  echo "Stopping all running instances..."
+  # Find all docker-compose files for instances
+  local compose_files=($(find "${base_dir}/Instance_"* -name 'docker-compose-*.yaml'))
+  
+  for compose_file in "${compose_files[@]}"; do
+    local instance=$(basename "$compose_file" | sed -E 's/docker-compose-(.*)\.yaml/\1/')
+    echo "Stopping instance: $instance"
+    stop_instance "$instance"
+  done
+}
+
+# Function to inject shutdown flag and perform shutdown
+inject_shutdown_flag_and_shutdown() {
+  local instance="$1"
+  local message="$2"
+  local container_name="asa_${instance}" # Assuming container naming convention
+  local base_dir=$(dirname "$(realpath "$0")")
+  local instance_dir="${base_dir}/Instance_${instance}"
+  local docker_compose_file="${instance_dir}/docker-compose-${instance}.yaml"
+
+  # Check if the container exists and is running
+  if docker ps -q -f name=^/${container_name}$ > /dev/null; then
+    # Inject shutdown.flag into the container
+    docker exec "$container_name" touch /home/pok/shutdown.flag
+
+    # Send the shutdown command to rcon_interface
+    run_in_container "$instance" "-shutdown" "$message" >/dev/null 2>&1
+
+    # Wait for shutdown completion
+    wait_for_shutdown "$instance" "$wait_time"
+
+    # Shutdown the container using docker-compose
+    $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down
+    echo "----- Shutdown Complete for instance: $instance-----"
+  else
+    echo "Instance ${instance} is not running or does not exist."
+  fi
 }
 
 # Helper function to prompt for instance copy
@@ -1331,7 +1402,8 @@ prompt_for_final_edit() {
 
 
 list_instances() {
-  local compose_files=($(find ./Instance_* -name 'docker-compose-*.yaml'))
+  local base_dir=$(dirname "$(realpath "$0")")
+  local compose_files=($(find "${base_dir}/Instance_"* -name 'docker-compose-*.yaml' 2>/dev/null || true))
   local instances=()
   for file in "${compose_files[@]}"; do
     local instance_name=$(echo "$file" | sed -E 's|.*/Instance_([^/]+)/docker-compose-.*\.yaml|\1|')
@@ -1383,14 +1455,178 @@ start_instance() {
     echo "Make sure the instance ${instance_name} exists and is properly configured."
     exit 1
   fi
+
+  # Check for root-owned files that might cause permission issues
+  if detect_root_owned_files; then
+    echo ""
+    echo "⚠️ Found root-owned files that will cause permission issues with the container."
+    
+    # Check if we're already running with sudo
+    if is_sudo; then
+      echo "Since we're already running with sudo, we'll fix these permissions automatically."
+      fix_root_owned_files
+    else
+      echo "Attempting to fix permission issues automatically using sudo..."
+      echo "You may be prompted for your password."
+      echo ""
+      
+      # Try to run the fix command with sudo
+      if sudo "$0" -fix; then
+        echo "✅ Permission issues fixed successfully."
+      else
+        echo "❌ Failed to automatically fix permissions."
+        echo ""
+        echo "This is likely because sudo requires a password, or you're not authorized to use sudo."
+        echo "Please run the fix command manually: sudo ./POK-manager.sh -fix"
+        echo ""
+        echo "Would you like to continue starting the server anyway? (This might cause container errors)"
+        read -p "Continue despite permission issues? (y/N): " continue_start
+        if [[ ! "$continue_start" =~ ^[Yy]$ ]]; then
+          echo "Server start cancelled. Please run 'sudo ./POK-manager.sh -fix' to fix permissions."
+          exit 1
+        fi
+        echo "Continuing with server start despite permission issues..."
+      fi
+    fi
+  fi
+  
+  # Ensure the API_Logs directory exists for this instance
+  local base_dir=$(dirname "$(realpath "$0")")
+  local instance_dir="${base_dir}/Instance_${instance_name}"
+  local api_logs_dir="${instance_dir}/API_Logs"
+  local api_logs_created=false
+  
+  # Create API_Logs directory if it doesn't exist
+  if [ ! -d "$api_logs_dir" ]; then
+    echo "Creating API_Logs directory for instance: $instance_name"
+    mkdir -p "$api_logs_dir"
+    api_logs_created=true
+  else
+    # Check if permissions need to be updated on existing directory
+    local current_owner=$(stat -c "%u:%g" "$api_logs_dir")
+    local target_owner=""
+    
+    if [[ "$image_tag" == 2_0* ]]; then
+      target_owner="1000:1000"
+    else
+      target_owner="7777:7777"
+    fi
+    
+    if [ "$current_owner" != "$target_owner" ]; then
+      echo "Updating API_Logs directory ownership to match container ($target_owner)"
+      api_logs_created=true
+    fi
+  fi
+  
+  # Set proper permissions on the directory based on image tag
+  if [ "$api_logs_created" = true ]; then
+    if [[ "$image_tag" == 2_0* ]]; then
+      echo "Setting 1000:1000 ownership on API_Logs directory for 2_0_latest image compatibility"
+      if is_sudo; then
+        chown 1000:1000 "$api_logs_dir"
+      else
+        sudo chown 1000:1000 "$api_logs_dir"
+      fi
+    else
+      echo "Setting 7777:7777 ownership on API_Logs directory for 2_1_latest image compatibility"
+      if is_sudo; then
+        chown 7777:7777 "$api_logs_dir"
+      else
+        sudo chown 7777:7777 "$api_logs_dir"
+      fi
+    fi
+    chmod 755 "$api_logs_dir"
+  fi
+  
+  # Check if the docker-compose file needs to be updated to include the API_Logs volume
+  if ! grep -q "API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs" "$docker_compose_file"; then
+    # Only add API_Logs volume if API=TRUE
+    if grep -q "^ *- API=TRUE" "$docker_compose_file" || grep -q "^ *- API:TRUE" "$docker_compose_file"; then
+      echo "Adding API_Logs volume mapping to docker-compose file"
+      
+      # Create a temporary file
+      local tmp_file="${docker_compose_file}.tmp"
+      
+      # Get absolute path for consistency with other volume paths
+      local abs_instance_dir=$(realpath "$instance_dir")
+      
+      # Use sed to add the API_Logs volume after the Saved volume with absolute path
+      sed -e "/Saved:.*ShooterGame\/Saved/ a\\      - \"$abs_instance_dir/API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs\"" "$docker_compose_file" > "$tmp_file"
+      
+      # Replace the original file with the updated one
+      mv -f "$tmp_file" "$docker_compose_file"
+      
+      # Set proper permissions on the file
+      if is_sudo; then
+        # Match file ownership with the API_Logs directory
+        if [[ "$image_tag" == 2_0* ]]; then
+          chown 1000:1000 "$docker_compose_file"
+        else
+          chown 7777:7777 "$docker_compose_file"
+        fi
+      else
+        # Use sudo as needed
+        if [[ "$image_tag" == 2_0* ]]; then
+          sudo chown 1000:1000 "$docker_compose_file"
+        else
+          sudo chown 7777:7777 "$docker_compose_file"
+        fi
+      fi
+    fi
+  elif ! (grep -q "^ *- API=TRUE" "$docker_compose_file" || grep -q "^ *- API:TRUE" "$docker_compose_file") && grep -q "API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs" "$docker_compose_file"; then
+    # If API=FALSE, blank, or not present but API_Logs volume exists, remove it
+    echo "Removing API_Logs volume mapping from docker-compose file since API is disabled or not set"
+    
+    # Create a temporary file
+    local tmp_file="${docker_compose_file}.tmp"
+    
+    # Remove the API_Logs line
+    grep -v "API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs" "$docker_compose_file" > "$tmp_file"
+    
+    # Replace the original file with the updated one
+    mv -f "$tmp_file" "$docker_compose_file"
+    
+    # Set proper permissions on the file
+    if is_sudo; then
+      # Match file ownership with the instance directory
+      if [[ "$image_tag" == 2_0* ]]; then
+        chown 1000:1000 "$docker_compose_file"
+      else
+        chown 7777:7777 "$docker_compose_file"
+      fi
+    else
+      # Use sudo as needed
+      if [[ "$image_tag" == 2_0* ]]; then
+        sudo chown 1000:1000 "$docker_compose_file"
+      else
+        sudo chown 7777:7777 "$docker_compose_file"
+      fi
+    fi
+  fi
   
   # Check if API is enabled but file ownership is 1000:1000
   local api_enabled=false
   local file_ownership_legacy=false
   
   # Check if API is enabled in the docker-compose file
-  if grep -q "^ *- API=TRUE" "$docker_compose_file"; then
+  if grep -q "^ *- API=TRUE" "$docker_compose_file" || grep -q "^ *- API:TRUE" "$docker_compose_file"; then
     api_enabled=true
+  else
+    # API is either FALSE, blank, or not present - treat as disabled
+    api_enabled=false
+    
+    # If API is not explicitly defined, add it as FALSE for clarity
+    if ! grep -q "^ *- API=" "$docker_compose_file" && ! grep -q "^ *- API:" "$docker_compose_file"; then
+      echo "API setting not found, adding API=FALSE to docker-compose file for clarity"
+      sed -i "/- INSTANCE_NAME/a \ \ \ \ \ \ - API=FALSE" "$docker_compose_file"
+    # Check for blank API setting (e.g., "- API=" or "- API:")
+    elif grep -q "^ *- API=$" "$docker_compose_file" || grep -q "^ *- API:$" "$docker_compose_file"; then
+      echo "Blank API setting found, setting to FALSE for clarity"
+      local tmp_file="${docker_compose_file}.tmp"
+      grep -v "^ *- API=$\|^ *- API:$" "$docker_compose_file" > "$tmp_file"
+      mv "$tmp_file" "$docker_compose_file"
+      sed -i "/- INSTANCE_NAME/a \ \ \ \ \ \ - API=FALSE" "$docker_compose_file"
+    fi
   fi
   
   # Check server files ownership
@@ -1685,7 +1921,8 @@ start_instance() {
 # Function to stop an instance
 stop_instance() {
   local instance_name=$1
-  local docker_compose_file="./Instance_${instance_name}/docker-compose-${instance_name}.yaml"
+  local base_dir=$(dirname "$(realpath "$0")")
+  local docker_compose_file="${base_dir}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
 
   echo "-----Stopping ${instance_name} Server-----"
 
@@ -2426,16 +2663,17 @@ backup_instance() {
   fi
 
   # Adjust ownership and permissions for the backup directory
-  local main_dir="${MAIN_DIR%/}"
-  local backup_dir="${main_dir}/backups"
+  local base_dir=$(dirname "$(realpath "$0")")
+  local backup_dir="${base_dir}/backups"
   adjust_ownership_and_permissions "$backup_dir"
 }
 
 backup_single_instance() {
   local instance_name="$1"
   # Remove the trailing slash from $MAIN_DIR if it exists
+  local base_dir=$(dirname "$(realpath "$0")")
   local main_dir="${MAIN_DIR%/}"
-  local backup_dir="${main_dir}/backups/${instance_name}"
+  local backup_dir="${base_dir}/backups/${instance_name}"
   
   # Get the current timezone using timedatectl
   local timezone="${USER_TIMEZONE:-$(timedatectl show -p Timezone --value)}"
@@ -2448,7 +2686,7 @@ backup_single_instance() {
   
   mkdir -p "$backup_dir"
 
-  local instance_dir="${main_dir}/Instance_${instance_name}"
+  local instance_dir="${base_dir}/Instance_${instance_name}"
   local saved_arks_dir="${instance_dir}/Saved/SavedArks"
   if [ -d "$saved_arks_dir" ]; then
     echo "Creating backup for instance $instance_name..."
@@ -2461,8 +2699,8 @@ backup_single_instance() {
 restore_instance() {
   local instance_name="$1"
   # Remove the trailing slash from $MAIN_DIR if it exists
-  local main_dir="${MAIN_DIR%/}"
-  local backup_dir="${main_dir}/backups"
+  local base_dir=$(dirname "$(realpath "$0")")
+  local backup_dir="${base_dir}/backups"
 
   if [ -z "$instance_name" ]; then
     echo "No instance name specified. Please select an instance to restore from the list below."
@@ -2507,7 +2745,7 @@ restore_instance() {
     read -p "Please input the number of the archive you want to restore: " choice
     if [[ $choice =~ ^[0-9]+$ ]] && [ $choice -ge 1 ] && [ $choice -le ${#backup_files[@]} ]; then
       local selected_backup="${backup_files[$((choice-1))]}"
-      local instance_dir="${main_dir}/Instance_${instance_name}"
+      local instance_dir="${base_dir}/Instance_${instance_name}"
       local saved_arks_dir="${instance_dir}/Saved/SavedArks"
 
       echo "$(basename "$selected_backup") is getting restored ..."
@@ -2591,7 +2829,7 @@ manage_service() {
 
   # Adjust Docker permissions only for actions that explicitly require Docker interaction
   case $action in
-  -start | -stop | -update | -create | -edit | -restore | -logs | -backup | -restart | -shutdown | -status | -chat | -saveworld)
+  -start | -stop | -update | -create | -edit | -restore | -logs | -backup | -restart | -shutdown | -status | -chat | -saveworld | -fix)
     adjust_docker_permissions
     ;;
   esac
@@ -2645,6 +2883,11 @@ manage_service() {
   -update)
     update_server_files_and_docker
     exit 0
+    ;;
+  -fix)
+    # Check for root-owned files and fix permissions
+    echo "Checking for root-owned files that could cause container permission issues..."
+    fix_root_owned_files
     ;;
   -restart | -shutdown)
     execute_rcon_command "$action" "$instance_name" "${additional_args[@]}"
@@ -2736,7 +2979,7 @@ manage_service() {
 }
 # Define valid actions
 declare -a valid_actions
-valid_actions=("-create" "-start" "-stop" "-saveworld" "-shutdown" "-restart" "-status" "-update" "-list" "-beta" "-stable" "-version" "-upgrade" "-logs" "-backup" "-restore" "-migrate" "-setup" "-edit" "-custom" "-chat" "-clearupdateflag" "-API" "-validate_update" "-force-restore" "-emergency-restore")
+valid_actions=("-create" "-start" "-stop" "-saveworld" "-shutdown" "-restart" "-status" "-update" "-list" "-beta" "-stable" "-version" "-upgrade" "-logs" "-backup" "-restore" "-migrate" "-setup" "-edit" "-custom" "-chat" "-clearupdateflag" "-API" "-validate_update" "-force-restore" "-emergency-restore" "-fix")
 
 display_usage() {
   echo "Usage: $0 {action} [instance_name|-all] [additional_args...]"
@@ -2765,6 +3008,7 @@ display_usage() {
   echo "  -migrate                                  Migrate file ownership from 1000:1000 to 7777:7777 for compatibility with 2_1 images"
   echo "  -clearupdateflag <instance_name|-all>     Clear a stale updating.flag file if an update was interrupted"
   echo "  -API <TRUE|FALSE> <instance_name|-all>    Enable or disable ArkServerAPI for specified instance(s)"
+  echo "  -fix                                      Fix permissions on files owned by root (0:0) that could cause container issues"
   echo "  -version                                  Display the current version of POK-manager"
 }
 
@@ -3343,6 +3587,7 @@ update_docker_compose_image_tag() {
   # Record the original ownership
   local file_owner=$(stat -c '%u' "$compose_file")
   local file_group=$(stat -c '%g' "$compose_file")
+  local file_perms=$(stat -c '%a' "$compose_file")
   
   # Read the file line by line and update the image tag
   while IFS= read -r line; do
@@ -3356,8 +3601,11 @@ update_docker_compose_image_tag() {
     fi
   done < "$compose_file"
   
-  # Replace the original file with the updated one
-  mv "$tmp_file" "$compose_file"
+  # Set the same permissions on the temporary file
+  chmod "$file_perms" "$tmp_file"
+  
+  # Replace the original file with the updated one - using -f to force without prompting
+  mv -f "$tmp_file" "$compose_file"
   
   # Restore the original ownership if running as sudo
   if is_sudo && [ -n "$file_owner" ] && [ -n "$file_group" ]; then
@@ -3457,6 +3705,13 @@ migrate_file_ownership() {
   for instance_dir in "${BASE_DIR}"/Instance_*/; do
     if [ -d "$instance_dir" ]; then
       dirs_to_change+=("$instance_dir")
+      
+      # Create API_Logs directory for each instance if it doesn't exist
+      local api_logs_dir="${instance_dir}/API_Logs"
+      if [ ! -d "$api_logs_dir" ]; then
+        echo "Creating API_Logs directory for instance: $(basename "$instance_dir")"
+        mkdir -p "$api_logs_dir"
+      fi
     fi
   done
   
@@ -3514,6 +3769,48 @@ migrate_file_ownership() {
   echo "Setting correct permissions for POK-manager.sh"
   chown 7777:7777 "${BASE_DIR}/POK-manager.sh"
   chmod 755 "${BASE_DIR}/POK-manager.sh"
+  
+  # Update docker-compose files to include API_Logs volume
+  echo "Updating docker-compose files to include API_Logs volume..."
+  for instance_dir in "${BASE_DIR}"/Instance_*/; do
+    if [ -d "$instance_dir" ]; then
+      local instance_name=$(basename "$instance_dir" | sed 's/Instance_//')
+      local docker_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
+      local api_logs_dir="${instance_dir}/API_Logs"
+      
+      # Ensure API_Logs directory exists and has proper ownership
+      if [ ! -d "$api_logs_dir" ]; then
+        echo "Creating API_Logs directory for instance: $instance_name"
+        mkdir -p "$api_logs_dir"
+      fi
+      
+      # Set proper ownership on the API_Logs directory (7777:7777 during migration)
+      echo "Setting proper ownership on API_Logs directory"
+      chown -R 7777:7777 "$api_logs_dir"
+      chmod 755 "$api_logs_dir"
+      
+      if [ -f "$docker_compose_file" ]; then
+        # Check if the API_Logs volume is already in the docker-compose file
+        if ! grep -q "API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs" "$docker_compose_file"; then
+          echo "Adding API_Logs volume mapping to docker-compose file for instance: $instance_name"
+          
+          # Create a temporary file
+          local tmp_file="${docker_compose_file}.tmp"
+          
+          # Get absolute path for the instance directory
+          local abs_instance_dir=$(realpath "$instance_dir")
+          
+          # Use sed instead of awk to avoid escaping issues
+          # Find the line with Saved: mapping and add the API_Logs line after it with absolute path
+          sed -e '/Saved:.*ShooterGame\/Saved/ a\      - "'$abs_instance_dir'/API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs"' "$docker_compose_file" > "$tmp_file"
+          
+          # Replace the original file with the updated one
+          mv -f "$tmp_file" "$docker_compose_file"
+          chown 7777:7777 "$docker_compose_file"
+        fi
+      fi
+    fi
+  done
   
   # Create a flag file to indicate migration has completed successfully
   touch "${BASE_DIR}/config/POK-manager/migration_complete"
@@ -4387,6 +4684,7 @@ configure_api_for_instance() {
   local instance_name="$2"
   local base_dir=$(dirname "$(realpath "$0")")
   local docker_compose_file="${base_dir}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
+  local instance_dir="${base_dir}/Instance_${instance_name}"
   
   # Check if instance exists
   if [ ! -f "$docker_compose_file" ]; then
@@ -4394,20 +4692,249 @@ configure_api_for_instance() {
     return 1
   fi
   
+  # Check if the docker-compose file has the INSTANCE_NAME line, which we'll use as anchor
+  if ! grep -q "INSTANCE_NAME" "$docker_compose_file"; then
+    echo "  ❌ Docker compose file appears to be invalid (missing INSTANCE_NAME)"
+    return 1
+  fi
+  
   # Remove any existing API lines first to prevent duplicates
   # Use a temporary file to ensure sed works across different systems
   local temp_file="${docker_compose_file}.tmp"
-  grep -v "^ *- API=" "$docker_compose_file" > "$temp_file"
+  
+  # Remove both standard API lines and blank API lines, including both = and : syntax
+  grep -v "^ *- API=\|^ *- API:" "$docker_compose_file" > "$temp_file"
   mv "$temp_file" "$docker_compose_file"
   
   # Now add the API line after INSTANCE_NAME
   if sed -i "/- INSTANCE_NAME/a \ \ \ \ \ \ - API=$api_state" "$docker_compose_file"; then
     echo "  ✅ Updated API setting to $api_state for instance: $instance_name"
+    
+    # Now handle the API_Logs volume mapping based on the API setting
+    if [ "$api_state" = "TRUE" ]; then
+      # Check if the API_Logs volume mapping is missing and API is now enabled
+      if ! grep -q "API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs" "$docker_compose_file"; then
+        # Create a temporary file
+        local tmp_file="${docker_compose_file}.tmp"
+        
+        # Get absolute path for consistency with other volume paths
+        local abs_instance_dir=$(realpath "$instance_dir")
+        
+        # Use sed to add the API_Logs volume after the Saved volume with absolute path
+        sed -e "/Saved:.*ShooterGame\/Saved/ a\\      - \"$abs_instance_dir/API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs\"" "$docker_compose_file" > "$tmp_file"
+        
+        # Replace the original file with the updated one
+        mv -f "$tmp_file" "$docker_compose_file"
+        echo "  ✅ Added API_Logs volume mapping for instance: $instance_name"
+      fi
+    else
+      # If API is now disabled, remove the API_Logs volume mapping
+      if grep -q "API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs" "$docker_compose_file"; then
+        # Create a temporary file
+        local tmp_file="${docker_compose_file}.tmp"
+        
+        # Remove the API_Logs line
+        grep -v "API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs" "$docker_compose_file" > "$tmp_file"
+        
+        # Replace the original file with the updated one
+        mv -f "$tmp_file" "$docker_compose_file"
+        echo "  ✅ Removed API_Logs volume mapping for instance: $instance_name"
+      fi
+    fi
+    
     return 0
   else
     echo "  ❌ Failed to update API setting for instance: $instance_name"
     return 1
   fi
+}
+
+# Function to detect files owned by root (0:0)
+detect_root_owned_files() {
+  local base_dir="${BASE_DIR}"
+  local dirs_to_check=()
+  local found_root_files=false
+  
+  # Check if ServerFiles exists
+  if [ -d "${base_dir}/ServerFiles" ]; then
+    dirs_to_check+=("${base_dir}/ServerFiles")
+  fi
+  
+  # Check for instance directories
+  for instance_dir in "${base_dir}"/Instance_*/; do
+    if [ -d "$instance_dir" ]; then
+      dirs_to_check+=("$instance_dir")
+    fi
+  done
+  
+  # Check for Cluster directory
+  if [ -d "${base_dir}/Cluster" ]; then
+    dirs_to_check+=("${base_dir}/Cluster")
+  fi
+  
+  # Ensure config/POK-manager directory is included
+  if [ -d "${base_dir}/config/POK-manager" ]; then
+    dirs_to_check+=("${base_dir}/config/POK-manager")
+  fi
+  
+  echo "Checking for files owned by root (0:0) that could cause container issues..."
+  
+  # Check each directory for root-owned files
+  for dir in "${dirs_to_check[@]}"; do
+    # Use find to identify files owned by root:root (0:0)
+    local root_files=($(find "$dir" -user 0 -group 0 -type f -o -user 0 -group 0 -type d 2>/dev/null))
+    
+    if [ ${#root_files[@]} -gt 0 ]; then
+      if [ "$found_root_files" = "false" ]; then
+        echo "⚠️ WARNING: Found files/directories owned by root (0:0) that could cause permission issues:"
+        found_root_files=true
+      fi
+      
+      echo "  Directory: $dir"
+      echo "  Found ${#root_files[@]} files/directories owned by root"
+      
+      # List the first 5 files for reference (to avoid overwhelming output)
+      local count=0
+      for file in "${root_files[@]}"; do
+        if [ $count -lt 5 ]; then
+          echo "    - $file"
+          ((count++))
+        else
+          echo "    - ... and $((${#root_files[@]} - 5)) more"
+          break
+        fi
+      done
+    fi
+  done
+  
+  if [ "$found_root_files" = "true" ]; then
+    echo ""
+    echo "These root-owned files can cause permission issues with your container."
+    echo "We'll attempt to automatically fix these issues using sudo."
+    echo ""
+    echo "If the automatic fix fails, you can manually run:"
+    echo "  sudo ./POK-manager.sh -fix"
+    echo ""
+    return 0
+  else
+    echo "No root-owned files found that would cause container issues. 👍"
+    return 1
+  fi
+}
+
+# Function to fix root-owned files
+fix_root_owned_files() {
+  # Check if running with sudo
+  if ! is_sudo; then
+    echo "❌ ERROR: This command requires sudo privileges to fix root-owned files."
+    echo "Please run: sudo ./POK-manager.sh -fix"
+    return 1
+  fi
+  
+  local base_dir="${BASE_DIR}"
+  local dirs_to_fix=()
+  local found_root_files=false
+  local fixed_count=0
+  
+  echo "🔍 Scanning for files owned by root (0:0)..."
+  
+  # Check if ServerFiles exists
+  if [ -d "${base_dir}/ServerFiles" ]; then
+    dirs_to_fix+=("${base_dir}/ServerFiles")
+  fi
+  
+  # Check for instance directories
+  for instance_dir in "${base_dir}"/Instance_*/; do
+    if [ -d "$instance_dir" ]; then
+      dirs_to_fix+=("$instance_dir")
+    fi
+  done
+  
+  # Check for Cluster directory
+  if [ -d "${base_dir}/Cluster" ]; then
+    dirs_to_fix+=("${base_dir}/Cluster")
+  fi
+  
+  # Ensure config/POK-manager directory is included
+  if [ -d "${base_dir}/config/POK-manager" ]; then
+    dirs_to_fix+=("${base_dir}/config/POK-manager")
+  fi
+  
+  # Fix permissions in each directory
+  for dir in "${dirs_to_fix[@]}"; do
+    echo "Checking directory: $dir"
+    
+    # Find root-owned files and directories
+    local root_files=($(find "$dir" -user 0 -group 0 -type f -o -user 0 -group 0 -type d 2>/dev/null))
+    
+    if [ ${#root_files[@]} -gt 0 ]; then
+      found_root_files=true
+      echo "  Found ${#root_files[@]} files/directories owned by root in $dir"
+      echo "  Changing ownership to $PUID:$PGID..."
+      
+      # Change ownership of all files found
+      for file in "${root_files[@]}"; do
+        chown $PUID:$PGID "$file"
+        ((fixed_count++))
+        
+        # For large numbers of files, don't output each one
+        if [ $fixed_count -le 20 ]; then
+          echo "  ✓ Fixed: $file"
+        elif [ $fixed_count -eq 21 ]; then
+          echo "  ✓ Fixed additional files (not showing all for brevity)..."
+        fi
+      done
+    fi
+  done
+  
+  if [ "$found_root_files" = "true" ]; then
+    echo "✅ Successfully fixed $fixed_count root-owned files. Your container should now work correctly."
+    # Verify fix was successful by checking if any root-owned files remain
+    if detect_remaining_root_files; then
+      echo "⚠️ Warning: Some root-owned files could not be fixed. The container may still have permission issues."
+      return 2  # Partial success
+    else
+      echo "All permission issues have been resolved!"
+      return 0  # Complete success
+    fi
+  else
+    echo "No root-owned files found. No changes were made."
+    return 0  # No action needed
+  fi
+}
+
+# Helper function to check if any root-owned files remain
+detect_remaining_root_files() {
+  local base_dir="${BASE_DIR}"
+  local dirs_to_check=()
+  
+  # Check the same directories as in fix_root_owned_files
+  if [ -d "${base_dir}/ServerFiles" ]; then
+    dirs_to_check+=("${base_dir}/ServerFiles")
+  fi
+  
+  for instance_dir in "${base_dir}"/Instance_*/; do
+    if [ -d "$instance_dir" ]; then
+      dirs_to_check+=("$instance_dir")
+    fi
+  done
+  
+  if [ -d "${base_dir}/Cluster" ]; then
+    dirs_to_check+=("${base_dir}/Cluster")
+  fi
+  
+  if [ -d "${base_dir}/config/POK-manager" ]; then
+    dirs_to_check+=("${base_dir}/config/POK-manager")
+  fi
+  
+  # Quick check for any remaining root-owned files
+  for dir in "${dirs_to_check[@]}"; do
+    if find "$dir" -user 0 -group 0 -type f -o -user 0 -group 0 -type d 2>/dev/null | grep -q .; then
+      return 0  # Found remaining root-owned files
+    fi
+  done
+  
+  return 1  # No remaining root-owned files
 }
 
 # Invoke the main function with all passed arguments
