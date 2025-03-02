@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.37"
+POK_MANAGER_VERSION="2.1.38"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -4092,6 +4092,137 @@ configure_api() {
         echo "Detected file ownership: 1000:1000 (using 2_0_latest image)"
         echo "Recommended for API:    7777:7777 (using 2_1_latest image)"
         echo ""
+        
+        # Check if they're trying to enable it on just a specific instance (not -all)
+        # while potentially having multiple instances with different image versions
+        if [ "$instance_name" != "-all" ]; then
+          local all_instances=($(list_instances))
+          
+          if [ ${#all_instances[@]} -gt 1 ]; then
+            # We have multiple instances, check if any are currently running with 2_0_latest
+            local has_legacy_instances=false
+            local running_instances=()
+            
+            for instance in "${all_instances[@]}"; do
+              # Skip the current instance being configured
+              if [ "$instance" = "$instance_name" ]; then
+                continue
+              fi
+              
+              # Check if this instance is using the 2_0_latest image
+              local instance_compose_file="./Instance_${instance}/docker-compose-${instance}.yaml"
+              if [ -f "$instance_compose_file" ] && grep -q "image:.*2_0_latest" "$instance_compose_file"; then
+                has_legacy_instances=true
+                running_instances+=("$instance")
+              fi
+            done
+            
+            if [ "$has_legacy_instances" = "true" ]; then
+              echo "⚠️ IMPORTANT: You have multiple server instances sharing the same server files:"
+              echo ""
+              echo "Instance you're enabling API on: $instance_name"
+              echo "Other instances that use 2_0_latest image:"
+              for instance in "${running_instances[@]}"; do
+                echo "  - $instance"
+              done
+              echo ""
+              echo "Since all instances share the same server files, you cannot have different"
+              echo "permission structures for different instances. If you enable AsaApi"
+              echo "on $instance_name and migrate to 7777:7777 permissions, ALL your other"
+              echo "instances will also need to be updated to use the 2_1_latest image."
+              echo ""
+              echo "To solve this, you have two options:"
+              echo ""
+              echo "1. Migrate ALL instances to 7777:7777 permissions (recommended):"
+              echo "   This upgrades all your servers to use the 2_1_latest image"
+              echo "   with the optimal 7777:7777 permission structure."
+              echo ""
+              echo "2. Do not use AsaApi on any instance:"
+              echo "   Keep all your servers using the 2_0_latest image with 1000:1000 permissions."
+              echo ""
+              
+              # Only offer interactive migration if appropriate
+              if [ -t 0 ]; then
+                echo "Would you like to migrate ALL instances to the recommended 7777:7777"
+                echo "ownership structure? This is required for AsaApi to work properly."
+                echo ""
+                read -p "Perform migration for ALL instances? (Strongly Recommended) [Y/n]: " perform_migration
+                
+                # Default to yes if nothing entered
+                if [[ -z "$perform_migration" || "$perform_migration" =~ ^[Yy]$ ]]; then
+                  echo ""
+                  echo "🔄 Starting migration to 7777:7777 ownership for ALL instances..."
+                  
+                  # We need to run migration with sudo
+                  if ! is_sudo; then
+                    echo "Migration requires sudo privileges. Please enter your password when prompted."
+                    
+                    # Execute the migration command with sudo
+                    if sudo "$0" -migrate; then
+                      echo "✅ Migration completed successfully."
+                      echo ""
+                      echo "Now continuing with API configuration for ALL instances..."
+                      
+                      # Ask if they want to enable API for all instances now
+                      echo "Since all instances now use the same permission structure,"
+                      echo "would you like to enable API on ALL instances instead of just $instance_name?"
+                      read -p "Enable API on all instances? [y/N]: " enable_all
+                      
+                      if [[ "$enable_all" =~ ^[Yy]$ ]]; then
+                        # Use sudo to enable API on all instances
+                        sudo "$0" -API TRUE -all
+                        exit 0
+                      else
+                        # Continue with just the original instance
+                        sudo "$0" -API TRUE "$instance_name"
+                        exit 0
+                      fi
+                    else
+                      echo "❌ Migration failed. API cannot be safely enabled."
+                      echo "Consider running the migration manually with sudo ./POK-manager.sh -migrate"
+                      return 1
+                    fi
+                  else
+                    # Already running with sudo, so directly call migrate_file_ownership
+                    if migrate_file_ownership; then
+                      echo "✅ Migration completed successfully."
+                      echo ""
+                      
+                      # Ask if they want to enable API for all instances now
+                      echo "Since all instances now use the same permission structure,"
+                      echo "would you like to enable API on ALL instances instead of just $instance_name?"
+                      read -p "Enable API on all instances? [y/N]: " enable_all
+                      
+                      if [[ "$enable_all" =~ ^[Yy]$ ]]; then
+                        # Change the instance_name to -all to process all instances
+                        instance_name="-all"
+                      fi
+                      # Continue with normal flow - the rest of the function will handle it
+                    else
+                      echo "❌ Migration failed. API cannot be safely enabled."
+                      echo "Please try again or check for any errors in the migration process."
+                      return 1
+                    fi
+                  fi
+                else
+                  echo ""
+                  echo "❌ Migration cancelled. AsaApi cannot be safely enabled without migration."
+                  echo "Consider migrating ALL instances if you wish to use AsaApi in the future."
+                  return 1
+                fi
+              else
+                # Non-interactive mode - we can't proceed safely
+                echo "When running in non-interactive mode, we cannot safely enable AsaApi"
+                echo "on just one instance when multiple instances with different permission"
+                echo "structures exist."
+                echo ""
+                echo "Please first run: sudo ./POK-manager.sh -migrate"
+                echo "Then retry enabling AsaApi after all instances are migrated."
+                return 1
+              fi
+            fi
+          fi
+        fi
         
         # Only ask for migration if running interactively
         if [ -t 0 ]; then
