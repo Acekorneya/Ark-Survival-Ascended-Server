@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.36"
+POK_MANAGER_VERSION="2.1.37"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -1382,6 +1382,101 @@ start_instance() {
     echo "❌ ERROR: Docker Compose file not found at $docker_compose_file"
     echo "Make sure the instance ${instance_name} exists and is properly configured."
     exit 1
+  fi
+  
+  # Check if API is enabled but file ownership is 1000:1000
+  local api_enabled=false
+  local file_ownership_legacy=false
+  
+  # Check if API is enabled in the docker-compose file
+  if grep -q "^ *- API=TRUE" "$docker_compose_file"; then
+    api_enabled=true
+  fi
+  
+  # Check server files ownership
+  local server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
+  if [ -d "$server_files_dir" ]; then
+    local file_ownership=$(stat -c '%u:%g' "$server_files_dir")
+    if [ "$file_ownership" = "1000:1000" ]; then
+      file_ownership_legacy=true
+    fi
+  fi
+  
+  # If API is enabled but using legacy ownership, recommend migration
+  if [ "$api_enabled" = "true" ] && [ "$file_ownership_legacy" = "true" ]; then
+    echo ""
+    echo "⚠️ IMPORTANT API COMPATIBILITY WARNING ⚠️"
+    echo "You're trying to start instance '$instance_name' with AsaApi enabled, but using legacy"
+    echo "1000:1000 file ownership (image tag: $image_tag)."
+    echo ""
+    echo "For optimal API compatibility, it's strongly recommended to migrate to the newer"
+    echo "7777:7777 ownership structure which works better with AsaApi."
+    echo ""
+    
+    # Only prompt for migration if running interactively
+    if [ -t 0 ]; then
+      echo "Would you like to migrate to the recommended 7777:7777 ownership now?"
+      echo "This process will:"
+      echo "  1. Stop all running server instances"
+      echo "  2. Change file ownership from 1000:1000 to 7777:7777"
+      echo "  3. Update to use the 2_1_latest image which is optimized for AsaApi"
+      echo "  4. Restart your servers with API enabled"
+      echo ""
+      read -p "Perform migration now? (Strongly Recommended) [Y/n]: " perform_migration
+      
+      # Default to yes if nothing entered
+      if [[ -z "$perform_migration" || "$perform_migration" =~ ^[Yy]$ ]]; then
+        echo ""
+        echo "🔄 Starting migration to 7777:7777 ownership..."
+        
+        # We need to run migration with sudo
+        if ! is_sudo; then
+          echo "Migration requires sudo privileges. Please enter your password when prompted."
+          
+          # Store all arguments to pass to sudo
+          local all_args="-migrate"
+          
+          # Execute the same script with sudo and the migrate option
+          if sudo "$0" $all_args; then
+            echo "✅ Migration completed successfully."
+            
+            # After migration completed, start the server fresh
+            echo ""
+            echo "Starting server with new 7777:7777 ownership..."
+            sudo "$0" -start "$instance_name"
+            
+            # Exit because the above command will handle the start
+            exit 0
+          else
+            echo "❌ Migration failed. The server will still be started but AsaApi may not work correctly."
+          fi
+        else
+          # Already running with sudo, so directly call migrate_file_ownership
+          if migrate_file_ownership; then
+            echo "✅ Migration completed successfully."
+            echo ""
+            echo "Continuing with server start using new ownership..."
+            
+            # Server will be started below with the normal flow
+            # The image tag should automatically update to 2_1_latest
+            image_tag="2_1_latest"
+          else
+            echo "❌ Migration failed. The server will still be started but AsaApi may not work correctly."
+          fi
+        fi
+      else
+        echo ""
+        echo "⚠️ Migration skipped. The server will be started but AsaApi may not work correctly."
+        echo "Consider running the migration later with sudo ./POK-manager.sh -migrate"
+        echo ""
+      fi
+    else
+      # Non-interactive mode, just warn and continue
+      echo "When running in non-interactive mode, migration is not performed automatically."
+      echo "Consider running './POK-manager.sh -migrate' manually for proper API compatibility."
+      echo "Proceeding with server start as requested..."
+      echo ""
+    fi
   fi
   
   # Check for permission mismatches between files and container before starting
@@ -3978,6 +4073,96 @@ configure_api() {
     action_description="Enabling"
   else
     action_description="Disabling"
+  fi
+
+  # Check if the user is trying to ENABLE API with 1000:1000 permissions
+  if [ "$api_state" = "TRUE" ]; then
+    # Check ServerFiles ownership to determine if they are using 1000:1000
+    local server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
+    if [ -d "$server_files_dir" ]; then
+      local file_ownership=$(stat -c '%u:%g' "$server_files_dir")
+      
+      # If files are owned by 1000:1000 and they're trying to enable API
+      if [ "$file_ownership" = "1000:1000" ]; then
+        echo ""
+        echo "⚠️ IMPORTANT API COMPATIBILITY NOTICE ⚠️"
+        echo "You're trying to enable AsaApi with the legacy 1000:1000 file ownership."
+        echo "For optimal compatibility, AsaApi works best with the newer 7777:7777 permissions."
+        echo ""
+        echo "Detected file ownership: 1000:1000 (using 2_0_latest image)"
+        echo "Recommended for API:    7777:7777 (using 2_1_latest image)"
+        echo ""
+        
+        # Only ask for migration if running interactively
+        if [ -t 0 ]; then
+          echo "Would you like to migrate to the recommended 7777:7777 ownership now?"
+          echo "This process will:"
+          echo "  1. Stop all running server instances"
+          echo "  2. Change file ownership from 1000:1000 to 7777:7777"
+          echo "  3. Update to use the 2_1_latest image which is optimized for AsaApi"
+          echo "  4. Restart your servers with API enabled"
+          echo ""
+          read -p "Perform migration before enabling API? (Strongly Recommended) [Y/n]: " perform_migration
+          
+          # Default to yes if nothing entered
+          if [[ -z "$perform_migration" || "$perform_migration" =~ ^[Yy]$ ]]; then
+            echo ""
+            echo "🔄 Starting migration to 7777:7777 ownership..."
+            
+            # We need to run migration with sudo
+            if ! is_sudo; then
+              echo "Migration requires sudo privileges. Please enter your password when prompted."
+              
+              # Store all arguments to pass to sudo
+              local all_args="-migrate"
+              
+              # Execute the same script with sudo and the migrate option
+              if sudo "$0" $all_args; then
+                echo "✅ Migration completed successfully."
+                echo ""
+                echo "Now continuing with API configuration..."
+                
+                # Migration successful, now we need to run the API configuration again
+                # Use sudo in case permissions are not properly applied yet
+                sudo "$0" -API "$api_state" "$instance_name"
+                
+                # Exit because the above command will handle everything from here
+                exit 0
+              else
+                echo "❌ Migration failed. API will still be enabled but may not work correctly."
+                echo "Consider running the migration manually later with sudo ./POK-manager.sh -migrate"
+                echo ""
+              fi
+            else
+              # Already running with sudo, so directly call migrate_file_ownership
+              if migrate_file_ownership; then
+                echo "✅ Migration completed successfully."
+                echo ""
+                echo "Now continuing with API configuration..."
+                
+                # Take no special action here, continue with the normal flow
+                # but recognize that file ownership should now be 7777:7777
+              else
+                echo "❌ Migration failed. API will still be enabled but may not work correctly."
+                echo "Consider troubleshooting the migration issues before proceeding."
+                echo ""
+              fi
+            fi
+          else
+            echo ""
+            echo "⚠️ Migration skipped. API will still be enabled but may not work correctly."
+            echo "Consider running the migration later with sudo ./POK-manager.sh -migrate"
+            echo ""
+          fi
+        else
+          # Running non-interactively, just warn but proceed
+          echo "When running in non-interactive mode, migration is not performed automatically."
+          echo "Consider running './POK-manager.sh -migrate' manually before enabling API."
+          echo "Proceeding with API configuration as requested..."
+          echo ""
+        fi
+      fi
+    fi
   fi
   
   # Handle all instances if specified
