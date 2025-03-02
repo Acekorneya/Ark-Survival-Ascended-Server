@@ -626,8 +626,11 @@ start_server() {
                 echo "---------------------------------------------"
               fi
               
-              # Then tail for new entries
-              tail -f "$game_log"
+              # Then tail for new entries - RUN IN BACKGROUND so script continues
+              tail -f "$game_log" &
+              GAME_TAIL_PID=$!
+              # Store PID for cleanup later
+              export TAIL_PID=$GAME_TAIL_PID
               break
             fi
             
@@ -676,8 +679,11 @@ start_server() {
           echo "---------------------------------------------"
         fi
         
-        # Then tail for new entries
-        tail -f "$game_log"
+        # Then tail for new entries - RUN IN BACKGROUND so script continues
+        tail -f "$game_log" &
+        GAME_TAIL_PID=$!
+        # Store PID for cleanup later
+        export TAIL_PID=$GAME_TAIL_PID
         break
       fi
       
@@ -712,14 +718,31 @@ start_server() {
   fi
 
   # Wait for the server to fully start, monitoring the log file
-  echo "Waiting for server to start..."
+  echo ""
+  echo "====== VERIFYING SERVER STARTUP ======"
+  echo "Waiting for server to become fully operational..."
   local LOG_FILE="$ASA_DIR/ShooterGame/Saved/Logs/ShooterGame.log"
   local max_wait_time=300  # 5 minutes maximum wait time
   local wait_time=0
   
   while [ $wait_time -lt $max_wait_time ]; do
     if [ -f "$LOG_FILE" ] && (grep -q "Server started" "$LOG_FILE" || grep -q "Server has completed startup and is now advertising for join" "$LOG_FILE"); then
+      echo ""
+      echo "🎮 ====== SERVER FULLY STARTED ====== 🎮"
       echo "Server started successfully. PID: $SERVER_PID"
+      echo "Server is now advertising for join and ready to accept connections!"
+      
+      # Verify and update PID file to ensure monitor knows the server is running
+      if [ -f "$PID_FILE" ]; then
+        local current_pid=$(cat "$PID_FILE")
+        if [ "$current_pid" != "$SERVER_PID" ]; then
+          echo "Updating PID file with correct server PID: $SERVER_PID"
+          echo "$SERVER_PID" > "$PID_FILE"
+        fi
+      else
+        echo "Creating PID file with server PID: $SERVER_PID"
+        echo "$SERVER_PID" > "$PID_FILE"
+      fi
       break
     fi
     sleep 10
