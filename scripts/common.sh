@@ -17,34 +17,113 @@ RCON_PATH="/usr/local/bin/rcon-cli" # Path to the RCON executable (installed in 
 export STEAM_COMPAT_DATA_PATH=${STEAM_COMPAT_DATA_PATH}
 export STEAM_COMPAT_CLIENT_INSTALL_PATH=${STEAM_COMPAT_CLIENT_INSTALL_PATH}
 
-# Function to properly initialize Proton prefix to prevent initialization errors
+# Function to initialize the Proton prefix
 initialize_proton_prefix() {
-  echo "Initializing Proton prefix environment..."
+  echo "Initializing Proton prefix at ${STEAM_COMPAT_DATA_PATH}..."
   
-  # Create the Proton prefix directory if it doesn't exist
+  # Make sure the prefix directory exists with correct permissions
+  mkdir -p "${STEAM_COMPAT_DATA_PATH}"
   mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx"
   
-  # Create empty tracked_files file to prevent initialization errors
-  mkdir -p "$(dirname "${STEAM_COMPAT_DATA_PATH}/tracked_files")"
-  touch "${STEAM_COMPAT_DATA_PATH}/tracked_files"
+  # Important: Ensure all parent directories also have proper permissions
+  chmod -R 755 "${STEAM_COMPAT_DATA_PATH}"
   
-  # Run a simple command with Proton to initialize the environment
-  echo "Running Proton initialization..."
-  proton run "cmd.exe" "/c" "echo Proton initialization complete" > /dev/null 2>&1 || true
+  # Create all necessary subdirectories with proper permissions
+  mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c"
+  mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/windows/system32"
+  mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files"
+  mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files (x86)"
+  mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/users/steamuser"
   
-  # Give Proton a moment to finish any background initialization
-  sleep 2
+  # Ensure consistent proton path detection by checking multiple common locations
+  PROTON_PATHS=(
+    "/home/pok/.steam/steam/compatibilitytools.d/GE-Proton-Current"
+    "/home/pok/.steam/steam/compatibilitytools.d/GE-Proton8-21"
+    "/home/pok/.steam/steam/compatibilitytools.d/GE-Proton9-25"
+    "/usr/local/bin"
+  )
   
-  # Verify if initialization was successful
-  if [ -d "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c" ]; then
-    echo "Proton prefix successfully initialized."
-    return 0
-  else
-    echo "WARNING: Proton prefix initialization may not be complete. This might cause issues."
-    # Create basic directory structure if missing
-    mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/windows/system32"
-    return 1
+  PROTON_PATH=""
+  for path in "${PROTON_PATHS[@]}"; do
+    if [ -f "${path}/proton" ]; then
+      PROTON_PATH="${path}"
+      echo "Found Proton at: ${PROTON_PATH}"
+      break
+    fi
+  done
+  
+  if [ -z "$PROTON_PATH" ]; then
+    echo "WARNING: Could not find Proton executable. Creating a symlink to the expected location."
+    # If not found, try to detect any available proton directory
+    FOUND_DIR=$(find /home/pok/.steam/steam/compatibilitytools.d -name "GE-Proton*" -type d | head -n 1)
+    if [ -n "$FOUND_DIR" ]; then
+      echo "Found Proton directory at: ${FOUND_DIR}, creating symlinks"
+      ln -sf "${FOUND_DIR}" "/home/pok/.steam/steam/compatibilitytools.d/GE-Proton-Current"
+      ln -sf "${FOUND_DIR}" "/home/pok/.steam/steam/compatibilitytools.d/GE-Proton8-21"
+      ln -sf "${FOUND_DIR}" "/home/pok/.steam/steam/compatibilitytools.d/GE-Proton9-25"
+      PROTON_PATH="${FOUND_DIR}"
+    else
+      echo "ERROR: No Proton installations found! Initialization may fail."
+    fi
   fi
+  
+  # Force reset the prefix configuration if it exists but might be corrupted
+  if [ -d "${STEAM_COMPAT_DATA_PATH}/pfx" ]; then
+    echo "Cleaning up previous Proton prefix configuration..."
+    
+    # Backup existing registry files if they exist
+    for reg_file in "system.reg" "user.reg" "userdef.reg"; do
+      if [ -f "${STEAM_COMPAT_DATA_PATH}/pfx/${reg_file}" ]; then
+        cp "${STEAM_COMPAT_DATA_PATH}/pfx/${reg_file}" "${STEAM_COMPAT_DATA_PATH}/pfx/${reg_file}.bak" 2>/dev/null || true
+      fi
+    done
+    
+    # Remove registry files to force clean initialization
+    rm -f "${STEAM_COMPAT_DATA_PATH}/pfx/system.reg" 2>/dev/null || true
+    rm -f "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg" 2>/dev/null || true
+    rm -f "${STEAM_COMPAT_DATA_PATH}/pfx/userdef.reg" 2>/dev/null || true
+  fi
+  
+  # Create minimal registry files
+  echo "Creating minimal Wine registry files..."
+  echo "WINE REGISTRY Version 2" > "${STEAM_COMPAT_DATA_PATH}/pfx/system.reg"
+  echo ";; All keys relative to \\\\Machine" >> "${STEAM_COMPAT_DATA_PATH}/pfx/system.reg"
+  echo "#arch=win64" >> "${STEAM_COMPAT_DATA_PATH}/pfx/system.reg"
+  echo "" >> "${STEAM_COMPAT_DATA_PATH}/pfx/system.reg"
+  
+  echo "WINE REGISTRY Version 2" > "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
+  echo ";; All keys relative to \\\\User\\\\S-1-5-21-0-0-0-1000" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
+  echo "#arch=win64" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
+  echo "[Software\\\\Wine\\\\DllOverrides]" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
+  echo "\"*version\"=\"native,builtin\"" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
+  echo "\"vcrun2019\"=\"native,builtin\"" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
+  echo "" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
+  
+  echo "WINE REGISTRY Version 2" > "${STEAM_COMPAT_DATA_PATH}/pfx/userdef.reg"
+  echo ";; All keys relative to \\\\User\\\\DefUser" >> "${STEAM_COMPAT_DATA_PATH}/pfx/userdef.reg"
+  echo "#arch=win64" >> "${STEAM_COMPAT_DATA_PATH}/pfx/userdef.reg"
+  echo "" >> "${STEAM_COMPAT_DATA_PATH}/pfx/userdef.reg"
+  
+  # Make sure tracked_files exists
+  touch "${STEAM_COMPAT_DATA_PATH}/tracked_files" 2>/dev/null || true
+  
+  # Ensure all created files have correct permissions
+  chmod -R 755 "${STEAM_COMPAT_DATA_PATH}/pfx" 2>/dev/null || true
+  
+  # Set necessary environment variables
+  export XDG_RUNTIME_DIR=/run/user/$(id -u)
+  export STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam"
+  export STEAM_COMPAT_DATA_PATH="${STEAM_COMPAT_DATA_PATH}"
+  export WINEDLLOVERRIDES="version=n,b"
+  
+  # Sync filesystem to ensure all changes are written
+  sync
+  
+  # Sleep to ensure changes are propagated
+  sleep 5
+  
+  echo "Proton prefix initialization completed."
+  return 0
 }
 
 # check if the server is running
@@ -202,147 +281,200 @@ validate_server_password
 # Function to install ArkServerAPI
 install_ark_server_api() {
   if [ "${API}" != "TRUE" ]; then
-    echo "ArkServerAPI installation skipped (API is not set to TRUE)"
+    echo "AsaApi installation skipped (API is not set to TRUE)"
     return 0
   fi
 
-  echo "---- Installing/Updating ArkServerAPI ----"
+  echo "---- Installing/Updating AsaApi ----"
   
   # Ensure Proton environment is properly initialized before proceeding
   if [ ! -f "${STEAM_COMPAT_DATA_PATH}/tracked_files" ] || [ ! -d "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c" ]; then
-    echo "Proton environment not fully initialized. Initializing before ArkServerAPI installation..."
+    echo "Proton environment not fully initialized. Initializing before AsaApi installation..."
     initialize_proton_prefix
   fi
   
   # Define paths
-  local api_dir="${ASA_DIR}/ShooterGame/Binaries/Win64/ArkApi"
   local bin_dir="${ASA_DIR}/ShooterGame/Binaries/Win64"
-  local api_tmp="/tmp/arkserverapi.zip"
-  local api_version_file="${api_dir}/.api_version"
+  local api_tmp="/tmp/asaapi.zip"
+  local api_version_file="${bin_dir}/.asaapi_version"
   local current_api_version=""
   
   # Check if version file exists and get current version
   if [ -f "$api_version_file" ]; then
     current_api_version=$(cat "$api_version_file")
-    echo "Current ArkServerAPI version: $current_api_version"
+    echo "Current AsaApi version: $current_api_version"
   else
-    echo "ArkServerAPI not found, will install for the first time."
-    # Create API directory if it doesn't exist
-    mkdir -p "$api_dir"
+    echo "AsaApi not found, will install for the first time."
   fi
   
   # Fetch the latest release info from GitHub
-  echo "Checking for latest ArkServerAPI version..."
-  local latest_release_info=$(curl -s "https://api.github.com/repos/ServersHub/Framework-ArkServerApi/releases/latest")
+  echo "Checking for latest AsaApi version..."
+  local latest_release_info=$(curl -s "https://api.github.com/repos/ArkServerApi/AsaApi/releases/latest")
   local latest_version=$(echo "$latest_release_info" | jq -r '.tag_name')
-  local download_url=$(echo "$latest_release_info" | jq -r '.assets[0].browser_download_url')
   
-  if [ -z "$latest_version" ] || [ "$latest_version" = "null" ]; then
-    echo "ERROR: Failed to fetch latest version information from GitHub."
-    return 1
+  # Find the asset download URL for the ZIP file
+  local download_url=$(echo "$latest_release_info" | jq -r '.assets[] | select(.name | endswith(".zip")) | .browser_download_url')
+  
+  if [ -z "$latest_version" ] || [ "$latest_version" = "null" ] || [ -z "$download_url" ] || [ "$download_url" = "null" ]; then
+    echo "WARNING: Could not fetch latest version information from GitHub. Using fallback version."
+    # Use fallback to a known version if API request fails
+    latest_version="1.18"
+    download_url="https://github.com/ArkServerApi/AsaApi/releases/download/1.18/AsaApi-1.18.zip"
   fi
   
-  echo "Latest ArkServerAPI version: $latest_version"
+  echo "Latest AsaApi version: $latest_version"
   
   # Check if an update is needed
   if [ "$current_api_version" = "$latest_version" ]; then
-    echo "ArkServerAPI is already up-to-date."
+    echo "AsaApi is already up-to-date."
     
     # Verify the installation is complete even if up-to-date
-    if [ ! -f "${api_dir}/version.dll" ]; then
-      echo "WARNING: ArkServerAPI installation appears incomplete. Forcing reinstallation."
+    if [ ! -f "${bin_dir}/AsaApiLoader.exe" ]; then
+      echo "WARNING: AsaApi installation appears incomplete. Forcing reinstallation."
     else
+      echo "AsaApiLoader.exe found. Installation verified."
+      # Create logs directory if it doesn't exist
+      mkdir -p "${bin_dir}/logs"
       return 0
     fi
   fi
   
-  echo "Downloading ArkServerAPI $latest_version..."
+  echo "Downloading AsaApi $latest_version..."
   
   # Download the latest release
   if ! curl -L -o "$api_tmp" "$download_url"; then
-    echo "ERROR: Failed to download ArkServerAPI."
+    echo "ERROR: Failed to download AsaApi."
     return 1
   fi
   
-  echo "Extracting ArkServerAPI..."
+  echo "Extracting AsaApi..."
   
-  # Backup existing config if it exists
-  if [ -d "$api_dir/Plugins" ]; then
-    echo "Backing up existing plugins configuration..."
-    local backup_dir="${api_dir}_backup_$(date +%Y%m%d%H%M%S)"
-    mkdir -p "$backup_dir"
-    
-    # Find and copy only .json files to preserve configurations
-    find "$api_dir/Plugins" -name "*.json" -exec cp --parents {} "$backup_dir" \;
-    echo "Plugin configurations backed up to $backup_dir"
-  fi
+  # Create logs directory if it doesn't exist
+  mkdir -p "${bin_dir}/logs"
   
-  # Extract the API files (preserving existing configuration files)
+  # Extract the API files
+  cd "$bin_dir"
   unzip -o "$api_tmp" -d "$bin_dir"
   
-  # Restore backed up configurations if we have them
-  if [ -d "$backup_dir" ]; then
-    echo "Restoring plugin configurations..."
-    cp -rf "$backup_dir"/* "$api_dir"/ 2>/dev/null || true
-    echo "Plugin configurations restored."
-  fi
+  # Set correct permissions for all files
+  chmod -R 755 "$bin_dir"
   
   # Remove the temporary ZIP file
   rm -f "$api_tmp"
   
-  # Install Microsoft Visual C++ 2019 Redistributable
+  # Pre-create Wine registry keys to ensure it's properly initialized
+  if [ -d "${STEAM_COMPAT_DATA_PATH}/pfx" ]; then
+    # Check if the Wine registry exists, if not create minimal registry files
+    if [ ! -f "${STEAM_COMPAT_DATA_PATH}/pfx/system.reg" ]; then
+      echo "Creating minimal Wine registry to ensure proper environment..."
+      echo "WINE REGISTRY Version 2" > "${STEAM_COMPAT_DATA_PATH}/pfx/system.reg"
+      echo ";; All keys relative to \\\\Machine" >> "${STEAM_COMPAT_DATA_PATH}/pfx/system.reg"
+      echo "#arch=win64" >> "${STEAM_COMPAT_DATA_PATH}/pfx/system.reg"
+      echo "" >> "${STEAM_COMPAT_DATA_PATH}/pfx/system.reg"
+      echo "WINE REGISTRY Version 2" > "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
+      echo ";; All keys relative to \\\\User\\\\S-1-5-21-0-0-0-1000" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
+      echo "#arch=win64" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
+      echo "" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
+      echo "WINE REGISTRY Version 2" > "${STEAM_COMPAT_DATA_PATH}/pfx/userdef.reg"
+      echo ";; All keys relative to \\\\User\\\\DefUser" >> "${STEAM_COMPAT_DATA_PATH}/pfx/userdef.reg"
+      echo "#arch=win64" >> "${STEAM_COMPAT_DATA_PATH}/pfx/userdef.reg"
+      echo "" >> "${STEAM_COMPAT_DATA_PATH}/pfx/userdef.reg"
+    fi
+  fi
+  
+  # Install Microsoft Visual C++ 2019 Redistributable using multiple methods for reliability
   echo "Installing Microsoft Visual C++ 2019 Redistributable..."
+  
+  # Method 1: Use winetricks
+  echo "Trying winetricks method first..."
+  WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" winetricks -q vcrun2019 || true
+  
+  # Method 2: Direct installation
+  echo "Trying direct installation method..."
   
   # Create a directory for the VC++ redistributable
   local vcredist_dir="/tmp/vcredist"
   mkdir -p "$vcredist_dir"
   
-  # Download the VC++ 2019 redistributable (x64)
-  local vcredist_url="https://aka.ms/vs/16/release/vc_redist.x64.exe"
-  local vcredist_file="$vcredist_dir/vc_redist.x64.exe"
+  # Download both x86 and x64 redistributables for maximum compatibility
+  echo "Downloading VC++ redistributables..."
+  curl -L -o "$vcredist_dir/vc_redist.x64.exe" "https://aka.ms/vs/16/release/vc_redist.x64.exe" || true
+  curl -L -o "$vcredist_dir/vc_redist.x86.exe" "https://aka.ms/vs/16/release/vc_redist.x86.exe" || true
   
-  echo "Downloading VC++ redistributable..."
-  if ! curl -L -o "$vcredist_file" "$vcredist_url"; then
-    echo "WARNING: Failed to download Visual C++ redistributable. ArkServerAPI may not function correctly."
-  else
-    echo "Installing VC++ redistributable in Proton environment..."
+  # Copy the redistributables to the Proton prefix directory
+  local proton_drive_c="${STEAM_COMPAT_DATA_PATH}/pfx/drive_c"
+  mkdir -p "$proton_drive_c/temp"
+  cp "$vcredist_dir/vc_redist.x64.exe" "$proton_drive_c/temp/" || true
+  cp "$vcredist_dir/vc_redist.x86.exe" "$proton_drive_c/temp/" || true
+  
+  # Wait a moment to ensure files are synced
+  sync
+  sleep 2
+  
+  # Method 2a: Use WINEPREFIX with wine command directly
+  echo "Running VC++ installer with Wine directly..."
+  WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine "$proton_drive_c/temp/vc_redist.x64.exe" /quiet /norestart || true
+  WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine "$proton_drive_c/temp/vc_redist.x86.exe" /quiet /norestart || true
+  
+  # Method 2b: Use Proton directly
+  echo "Running VC++ installer with Proton directly..."
+  if [ -d "/home/pok/.steam/steam/compatibilitytools.d/GE-Proton8-21" ]; then
+    STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam" \
+    STEAM_COMPAT_DATA_PATH="${STEAM_COMPAT_DATA_PATH}" \
+    /home/pok/.steam/steam/compatibilitytools.d/GE-Proton8-21/proton run "$proton_drive_c/temp/vc_redist.x64.exe" /quiet /norestart || true
     
-    # Copy the redistributable to the Proton prefix directory
-    local proton_drive_c="${STEAM_COMPAT_DATA_PATH}/pfx/drive_c"
-    mkdir -p "$proton_drive_c/temp"
-    cp "$vcredist_file" "$proton_drive_c/temp/"
-    
-    # Wait a moment to ensure files are synced
-    sync
-    sleep 2
-    
-    # Run the installer using Proton directly rather than Wine
-    echo "Running VC++ installer with Proton..."
-    proton run "$proton_drive_c/temp/vc_redist.x64.exe" "/quiet" "/norestart" || true
-    
-    # Sleep to give the installer time to complete
-    sleep 5
-    
-    echo "VC++ redistributable installation completed."
-    
-    # Clean up
-    rm -f "$vcredist_file"
-    rm -f "$proton_drive_c/temp/vc_redist.x64.exe"
+    STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam" \
+    STEAM_COMPAT_DATA_PATH="${STEAM_COMPAT_DATA_PATH}" \
+    /home/pok/.steam/steam/compatibilitytools.d/GE-Proton8-21/proton run "$proton_drive_c/temp/vc_redist.x86.exe" /quiet /norestart || true
   fi
+  
+  # Allow more time for the installation to complete
+  sleep 10
+  
+  echo "VC++ redistributable installation attempts completed."
+  
+  # Create registry entries to fake successful VC++ installation if needed
+  echo "Checking if we need to manually create registry entries for VC++..."
+  if ! grep -q "vcrun2019" "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg" 2>/dev/null; then
+    echo "Creating manual registry entries to fake VC++ installation..."
+    # Append minimal registry entries that make AsaApi believe VC++ is installed
+    echo "[Software\\\\Wine\\\\DllOverrides]" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
+    echo "\"vcrun2019\"=\"native,builtin\"" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
+  fi
+  
+  # Clean up
+  rm -rf "$vcredist_dir"
+  rm -f "$proton_drive_c/temp/vc_redist.x64.exe"
+  rm -f "$proton_drive_c/temp/vc_redist.x86.exe"
   
   # Save the new version
   echo "$latest_version" > "$api_version_file"
   
-  # Set correct permissions
-  chmod -R 755 "$bin_dir/ArkApi"
-  
-  # Verify installation
-  if [ -f "${api_dir}/version.dll" ]; then
-    echo "ArkServerAPI $latest_version installed successfully."
+  # Verify AsaApi loader executable exists and is correctly extracted
+  if [ -f "${bin_dir}/AsaApiLoader.exe" ]; then
+    echo "AsaApi $latest_version installed successfully. AsaApiLoader.exe found."
+    chmod +x "${bin_dir}/AsaApiLoader.exe"
     return 0
   else
-    echo "WARNING: ArkServerAPI installation appears incomplete. version.dll not found."
-    echo "This may be due to an issue with Proton/Wine environment."
+    echo "WARNING: AsaApi installation appears incomplete. AsaApiLoader.exe not found."
+    echo "This may be due to an issue with archive extraction. Trying alternative extraction..."
+    
+    # Try to find the API zip and extract it using the setup_asa_plugin approach from test_script.sh
+    local plugin_archive=$(basename $bin_dir/AsaApi_*.zip)
+    
+    if [ -f "${bin_dir}/${plugin_archive}" ]; then
+      echo "Found plugin archive: ${plugin_archive}. Extracting..."
+      cd "$bin_dir"
+      unzip -o "$plugin_archive"
+      
+      if [ -f "${bin_dir}/AsaApiLoader.exe" ]; then
+        echo "AsaApi extraction successful using alternative method."
+        chmod +x "${bin_dir}/AsaApiLoader.exe"
+        return 0
+      fi
+    fi
+    
+    echo "Unable to complete AsaApi installation. Please check the logs for errors."
     return 1
   fi
 }

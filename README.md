@@ -117,7 +117,7 @@ Before using POK-manager.sh, ensure that you have the following prerequisites in
 - `-logs [-live] <instance_name>`: Displays logs for a specific server instance (optionally live).
 - `-beta`: Switches to beta mode, using the beta branch for updates and beta Docker images.
 - `-stable`: Switches to stable mode, using the master branch for updates and stable Docker images.
-- `-API <TRUE|FALSE> <instance_name|-all>`: Enables or disables ArkServerAPI for specified instance(s).
+- `-API <TRUE|FALSE> <instance_name|-all>`: Enables or disables AsaApi for specified instance(s).
 - `-version`: Displays the current version of POK-manager.
 
 ### Examples
@@ -313,7 +313,7 @@ When creating a new server instance using POK-manager.sh, a Docker Compose confi
 | `TZ`                          | `America/Los_Angeles`| Timezone setting: Change this to your local timezone.                                  |
 | `RANDOM_STARTUP_DELAY`        | `TRUE`            | Add a random delay (0-30s) during startup to prevent update conflicts when multiple instances start simultaneously |
 | `BATTLEEYE`                   | `TRUE`            | Set to TRUE to use BattleEye, FALSE to not use BattleEye                                  |
-| `API`                         | `FALSE`           | Set to TRUE to install and use ArkServerAPI, FALSE to disable ArkServerAPI                |
+| `API`                         | `FALSE`           | Set to TRUE to install and use AsaApi, FALSE to disable AsaApi                |
 | `RCON_ENABLED`                | `TRUE`            | Needed for Graceful Shutdown                                                              |
 | `DISPLAY_POK_MONITOR_MESSAGE` | `FALSE`           | TRUE to Show the Server Monitor Messages / Update Monitor Shutdown                        |
 | `UPDATE_SERVER`               | `TRUE`            | Enable or disable update checks                                                           |
@@ -359,7 +359,7 @@ services:
       - TZ=America/Los_Angeles               # Timezone setting: Change this to your local timezone. Ex.America/New_York, Europe/Berlin, Asia/Tokyo
       - RANDOM_STARTUP_DELAY=TRUE            # Add a random delay (0-30s) during startup to prevent update conflicts when multiple instances start simultaneously
       - BATTLEEYE=FALSE                      # Set to TRUE to use BattleEye, FALSE to not use BattleEye
-      - API=FALSE                            # Set to TRUE to install and use ArkServerAPI, FALSE to disable ArkServerAPI
+      - API=FALSE                            # Set to TRUE to install and use AsaApi, FALSE to disable AsaApi
       - RCON_ENABLED=TRUE                    # Needed for Graceful Shutdown / Updates / Server Notifications
       - DISPLAY_POK_MONITOR_MESSAGE=FALSE    # Or TRUE to Show the Server Monitor Messages / Update Monitor 
       - UPDATE_SERVER=TRUE                   # Enable or disable update checks
@@ -393,23 +393,23 @@ services:
     mem_limit: 16G
 ```
 
-## Using ArkServerAPI
+## Using AsaApi
 
-POK-manager now supports [ArkServerAPI](https://github.com/ServersHub/Framework-ArkServerApi), a powerful framework that enables server plugins to enhance and extend your ARK server's functionality.
+POK-manager now supports [AsaApi](https://github.com/ArkServerApi/AsaApi), a powerful API framework that enables server plugins to enhance and extend your ARK server's functionality.
 
-### Enabling ArkServerAPI
+### Enabling AsaApi
 
-To enable ArkServerAPI on your server:
+To enable AsaApi on your server:
 
 1. You can use the dedicated command to enable the API for one or all instances:
    ```bash
-   # Enable ArkServerAPI for a specific instance
+   # Enable AsaApi for a specific instance
    ./POK-manager.sh -API TRUE my_instance
    
-   # Enable ArkServerAPI for all instances
+   # Enable AsaApi for all instances
    ./POK-manager.sh -API TRUE -all
    
-   # Disable ArkServerAPI for a specific instance
+   # Disable AsaApi for a specific instance
    ./POK-manager.sh -API FALSE my_instance
    ```
    The script will automatically update the configuration and offer to restart the instance(s) for you.
@@ -433,44 +433,38 @@ To enable ArkServerAPI on your server:
    ./POK-manager.sh -start my_instance
    ```
 
-### How ArkServerAPI Installation Works
+### How AsaApi Installation Works
 
 When you enable the API feature:
 
-1. The container will automatically download the latest version of ArkServerAPI from the official GitHub repository
+1. The container will automatically download the latest version of AsaApi from the official GitHub repository (https://github.com/ArkServerApi/AsaApi/releases/latest)
 2. The API will be installed to the correct location in your server files
-3. The Visual C++ 2019 Redistributable (required by ArkServerAPI) will be automatically installed in the Proton environment
-4. The server will start with the API enabled
-5. On subsequent starts, the container will check for API updates and install them if available
+3. The Visual C++ 2019 Redistributable (required by AsaApi) will be automatically installed in the Proton environment
+4. The server will start using AsaApiLoader.exe instead of ArkAscendedServer.exe
+5. On subsequent starts, the container will check for AsaApi updates and install them if available
 
 ### Windows Dependencies in Linux Environment
 
-ArkServerAPI requires Windows-specific dependencies (specifically Microsoft Visual C++ 2019 Redistributable) to function. Despite running in a Linux environment, our solution handles this by:
+AsaApi requires Windows-specific dependencies (specifically Microsoft Visual C++ 2019 Redistributable) to function. Despite running in a Linux environment, our solution handles this by:
 
 1. Automatically downloading the required Visual C++ 2019 Redistributable installer
 2. Using Wine/Proton to install it within the Proton environment that runs the Windows-based ARK server
 3. Setting appropriate Wine DLL overrides to ensure the API loads properly
 4. Performing verification tests to confirm the API can load successfully
 
-This approach allows you to use ArkServerAPI seamlessly in our Linux-based container without having to manually install any Windows dependencies.
+This approach allows you to use AsaApi seamlessly in our Linux-based container without having to manually install any Windows dependencies.
 
 ### Installing Plugins
 
-ArkServerAPI plugins can be installed manually. Here's how:
+AsaApi plugins can be installed manually. Here's how:
 
-1. Download the plugin ZIP file from a trusted source
-2. Extract the contents to your server's plugins directory:
+1. Download the plugin file(s) from a trusted source
+2. Place the plugin files in your server's plugins directory:
    ```
-   ./ServerFiles/arkserver/ShooterGame/Binaries/Win64/ArkApi/Plugins/
+   ./ServerFiles/arkserver/ShooterGame/Binaries/Win64/plugins/
    ```
-3. The plugin directory structure should look like:
-   ```
-   ArkApi/
-   └── Plugins/
-       └── PluginName/
-           ├── PluginName.dll
-           └── config.json
-   ```
+3. The plugin directory structure should follow the AsaApi requirements
+
 4. Restart your server for the changes to take effect:
    ```bash
    ./POK-manager.sh -restart 5 my_instance   # Restart with 5-minute countdown
@@ -478,38 +472,40 @@ ArkServerAPI plugins can be installed manually. Here's how:
 
 ### Managing Plugin Configurations
 
-Plugin configurations are stored in JSON files in each plugin's directory. When the ArkServerAPI is updated, these configuration files are automatically preserved.
+Plugin configurations depend on the specific plugin being used. When the AsaApi is updated, any plugin files in the plugins directory should be preserved.
 
 To edit a plugin's configuration:
 
 1. Navigate to the plugin's directory
-2. Edit the appropriate .json configuration file
+2. Edit the appropriate configuration file
 3. Save your changes and restart the server
 
 ### Persistent Plugins
 
 Plugin installations and configurations persist across server updates and container restarts, as they are stored in the volume-mounted server directory.
 
-### Troubleshooting ArkServerAPI
+### Troubleshooting AsaApi
 
-If you encounter issues with ArkServerAPI or plugins:
+If you encounter issues with AsaApi or plugins:
 
 1. Check the server logs for any error messages:
    ```bash
    ./POK-manager.sh -logs -live my_instance
    ```
+   
+   The AsaApi logs can be found in:
+   ```
+   ./ServerFiles/arkserver/ShooterGame/Binaries/Win64/logs/
+   ```
 
 2. Verify that the API is correctly installed:
    ```bash
-   ls -la ./ServerFiles/arkserver/ShooterGame/Binaries/Win64/ArkApi
+   ls -la ./ServerFiles/arkserver/ShooterGame/Binaries/Win64/AsaApiLoader.exe
    ```
 
-3. Ensure plugin files are in the correct location and have the right permissions:
-   ```bash
-   ls -la ./ServerFiles/arkserver/ShooterGame/Binaries/Win64/ArkApi/Plugins
-   ```
+3. Ensure plugin files are in the correct location and have the right permissions
 
-4. Common ArkServerAPI issues in our Linux/Proton environment:
+4. Common AsaApi issues in our Linux/Proton environment:
    - Missing Visual C++ Redistributable: The system will try to install it automatically
    - Wine/Proton configuration: Try manually updating the docker image with `./POK-manager.sh -update`
    - Plugin compatibility: Some plugins may not work with our Linux/Proton setup or with the current version of ARK

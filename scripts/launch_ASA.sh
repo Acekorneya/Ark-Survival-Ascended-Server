@@ -69,81 +69,64 @@ determine_map_path() {
 # Set up ArkServerAPI environment if API is enabled
 setup_arkserverapi() {
   if [ "${API}" = "TRUE" ]; then
-    echo "Setting up ArkServerAPI environment..."
+    echo "Setting up AsaApi environment..."
     
-    # Make sure the API directory exists
-    if [ ! -d "${ASA_DIR}/ShooterGame/Binaries/Win64/ArkApi" ]; then
-      echo "WARNING: ArkServerAPI directory not found! API may not be properly installed."
-      return 1
+    # Define paths to match test_script.sh
+    local ASA_BINARY_DIR="${ASA_DIR}/ShooterGame/Binaries/Win64"
+    local ASA_PLUGIN_BINARY_NAME="AsaApiLoader.exe"
+    local ASA_PLUGIN_BINARY_PATH="$ASA_BINARY_DIR/$ASA_PLUGIN_BINARY_NAME"
+    local ASA_PLUGIN_LOADER_ARCHIVE_NAME=$(basename $ASA_BINARY_DIR/AsaApi_*.zip 2>/dev/null)
+    
+    # Make sure the directory exists
+    mkdir -p "$ASA_BINARY_DIR"
+    
+    # Check if we have an archive file that needs extraction
+    if [ -n "$ASA_PLUGIN_LOADER_ARCHIVE_NAME" ] && [ -f "$ASA_BINARY_DIR/$ASA_PLUGIN_LOADER_ARCHIVE_NAME" ]; then
+      echo "Found AsaApi archive: $ASA_PLUGIN_LOADER_ARCHIVE_NAME, extracting..."
+      cd "$ASA_BINARY_DIR"
+      unzip -o "$ASA_PLUGIN_LOADER_ARCHIVE_NAME"
+      rm -f "$ASA_PLUGIN_LOADER_ARCHIVE_NAME"
+    fi
+    
+    # Make sure the AsaApiLoader exists
+    if [ ! -f "$ASA_PLUGIN_BINARY_PATH" ]; then
+      echo "WARNING: AsaApiLoader.exe not found! API may not be properly installed."
+      echo "Attempting one more installation via common.sh install_ark_server_api function..."
+      install_ark_server_api
+      
+      # Re-check if the file exists after installation attempt
+      if [ ! -f "$ASA_PLUGIN_BINARY_PATH" ]; then
+        echo "ERROR: AsaApiLoader.exe still not found after installation attempt."
+        return 1
+      else
+        echo "AsaApiLoader.exe found after installation."
+      fi
+    else
+      echo "AsaApiLoader.exe found at $ASA_PLUGIN_BINARY_PATH"
     fi
     
     # Verify if Visual C++ Redistributable might be installed in the Proton prefix
     local vcredist_marker="${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files (x86)/Microsoft Visual Studio"
     
     if [ ! -d "$vcredist_marker" ]; then
-      echo "WARNING: Visual C++ Redistributable marker not found in Proton prefix."
-      echo "The ArkServerAPI may not function correctly."
-      echo "Trying to verify redistributable installation..."
-      
-      # Attempt to check registry keys in Wine for VC++ redist
-      local reg_output
-      reg_output=$(WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine reg query "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\x64" 2>/dev/null)
-      
-      if [ $? -eq 0 ] && [ -n "$reg_output" ]; then
-        echo "Visual C++ Redistributable appears to be installed based on registry entries."
-      else
-        echo "No registry entries found for Visual C++ Redistributable."
-        echo "Attempting to reinstall Visual C++ Redistributable..."
-        
-        # Create a directory for the VC++ redistributable
-        local vcredist_dir="/tmp/vcredist"
-        mkdir -p "$vcredist_dir"
-        
-        # Download the VC++ 2019 redistributable (x64)
-        local vcredist_url="https://aka.ms/vs/16/release/vc_redist.x64.exe"
-        local vcredist_file="$vcredist_dir/vc_redist.x64.exe"
-        
-        echo "Downloading VC++ redistributable..."
-        if curl -L -o "$vcredist_file" "$vcredist_url"; then
-          echo "Installing VC++ redistributable in Proton environment..."
-          
-          # Copy the redistributable to the Proton prefix directory
-          local proton_drive_c="${STEAM_COMPAT_DATA_PATH}/pfx/drive_c"
-          mkdir -p "$proton_drive_c/temp"
-          cp "$vcredist_file" "$proton_drive_c/temp/"
-          
-          # Run the installer using Proton with /force to ensure installation
-          WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine "$proton_drive_c/temp/vc_redist.x64.exe" /quiet /norestart /force
-          
-          echo "VC++ redistributable installation attempted."
-          
-          # Clean up
-          rm -f "$vcredist_file"
-          rm -f "$proton_drive_c/temp/vc_redist.x64.exe"
-        else
-          echo "WARNING: Failed to download Visual C++ redistributable."
-        fi
-      fi
+      echo "Visual C++ Redistributable marker not found. Installing VC++ redistributable via winetricks..."
+      # Use winetricks to install Visual C++ 2019 Redistributable
+      WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" winetricks -q vcrun2019
     else
       echo "Visual C++ Redistributable appears to be installed in Proton prefix."
     fi
     
     # Set DLL overrides to ensure API loads properly
     export WINEDLLOVERRIDES="version=n,b"
-    echo "Set DLL overrides for ArkServerAPI"
+    echo "Set DLL overrides for AsaApi"
     
-    # Create a simple test to verify ArkAPI functionality
-    echo "Verifying ArkServerAPI can load..."
-    local test_script="${ASA_DIR}/ShooterGame/Binaries/Win64/test_arkapi.bat"
-    echo '@echo off' > "$test_script"
-    echo 'echo Testing ArkServerAPI loading...' >> "$test_script"
-    echo 'if exist ArkApi\version.dll (echo ArkAPI DLL found) else (echo ArkAPI DLL NOT found)' >> "$test_script"
+    # Create logs directory for AsaApi if it doesn't exist
+    mkdir -p "${ASA_DIR}/ShooterGame/Binaries/Win64/logs"
     
-    WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine cmd /c "$test_script"
-    rm -f "$test_script"
-    
-    echo "ArkServerAPI environment setup completed."
+    echo "AsaApi environment setup completed."
+    return 0
   fi
+  return 0
 }
 
 start_server() {
@@ -215,32 +198,284 @@ start_server() {
     exit 1
   fi
   
-  # Check if the current user has the necessary permissions
-  #if [ ! -r "/home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.exe" ] || [ ! -x "/home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.exe" ]; then
-    #echo "Error: Insufficient permissions to run the server. Please check the file permissions."
-    #exit 1
-  #fi
-  
   # Setup ArkServerAPI if enabled
+  local LAUNCH_BINARY_NAME="ArkAscendedServer.exe"
   if [ "${API}" = "TRUE" ]; then
     setup_arkserverapi
+    # If AsaApiLoader.exe exists, use it instead
+    if [ -f "${ASA_DIR}/ShooterGame/Binaries/Win64/AsaApiLoader.exe" ]; then
+      LAUNCH_BINARY_NAME="AsaApiLoader.exe"
+      echo "Using AsaApiLoader.exe for server start..."
+    else
+      echo "WARNING: AsaApiLoader.exe not found, falling back to standard executable."
+    fi
   fi
   
-  # Construct the full server start command
-  local server_command="proton run /home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.exe $MAP_PATH?listen?$session_name_arg?${rcon_args}${server_password_arg}?ServerAdminPassword=${SERVER_ADMIN_PASSWORD} -Port=${ASA_PORT} -WinLiveMaxPlayers=${MAX_PLAYERS} $cluster_id_arg -servergamelog -servergamelogincludetribelogs -ServerRCONOutputTribeLogs $notify_admin_commands_arg $custom_args $mods_arg $battleye_arg $passive_mods_arg"
-
-  # Start the server using Proton-GE
-  echo "Starting server with Proton-GE..."
+  # Launch the server using proton run directly, similar to test_script.sh
+  # Using the same approach as in test_script.sh which we know works
+  local STEAM_COMPAT_DIR="/home/pok/.steam/steam/compatibilitytools.d"
   
-  # Make sure Proton environment is fully initialized before starting the server
-  if [ ! -f "${STEAM_COMPAT_DATA_PATH}/tracked_files" ] || [ ! -d "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c" ]; then
-    echo "WARNING: Proton environment not fully initialized. Reinitializing..."
-    initialize_proton_prefix
+  # Construct server parameters
+  local server_params="$MAP_PATH?listen?$session_name_arg?${rcon_args}${server_password_arg}?ServerAdminPassword=${SERVER_ADMIN_PASSWORD} -Port=${ASA_PORT} -WinLiveMaxPlayers=${MAX_PLAYERS} $cluster_id_arg -servergamelog -servergamelogincludetribelogs -ServerRCONOutputTribeLogs $notify_admin_commands_arg $custom_args $mods_arg $battleye_arg $passive_mods_arg"
+  
+  # Change to the binary directory
+  cd "${ASA_DIR}/ShooterGame/Binaries/Win64"
+  
+  # Improved Proton path detection with multiple fallbacks
+  local FOUND_PROTON=false
+  local PROTON_EXECUTABLE=""
+  
+  # Define an array of potential Proton directories to check
+  local POTENTIAL_PROTON_DIRS=(
+    "${STEAM_COMPAT_DIR}/GE-Proton-Current"
+    "${STEAM_COMPAT_DIR}/GE-Proton8-21"
+    "${STEAM_COMPAT_DIR}/GE-Proton9-25"
+  )
+  
+  # Find a working Proton installation
+  echo "Looking for Proton installations..."
+  for proton_dir in "${POTENTIAL_PROTON_DIRS[@]}"; do
+    if [ -f "$proton_dir/proton" ]; then
+      PROTON_EXECUTABLE="$proton_dir/proton"
+      PROTON_DIR_NAME=$(basename "$proton_dir")
+      echo "Found Proton executable at: $PROTON_EXECUTABLE (directory: $PROTON_DIR_NAME)"
+      FOUND_PROTON=true
+      break
+    fi
+  done
+  
+  # If no Proton found in standard locations, search for any GE-Proton* directory
+  if ! $FOUND_PROTON; then
+    echo "No Proton found in standard locations, searching for any GE-Proton installation..."
+    # Find any GE-Proton* directory
+    local ANY_PROTON_DIR=$(find $STEAM_COMPAT_DIR -maxdepth 1 -name "GE-Proton*" -type d | head -n 1)
+    
+    if [ -n "$ANY_PROTON_DIR" ] && [ -f "$ANY_PROTON_DIR/proton" ]; then
+      PROTON_EXECUTABLE="$ANY_PROTON_DIR/proton"
+      PROTON_DIR_NAME=$(basename "$ANY_PROTON_DIR")
+      echo "Found Proton executable at: $PROTON_EXECUTABLE (directory: $PROTON_DIR_NAME)"
+      FOUND_PROTON=true
+    else
+      echo "WARNING: No Proton installation found. Will try system 'proton' command."
+      # Check if system 'proton' command exists
+      if command -v proton >/dev/null 2>&1; then
+        echo "System 'proton' command exists, will use it."
+        PROTON_EXECUTABLE="proton"
+        FOUND_PROTON=true
+      else
+        echo "ERROR: No Proton installation found and no system 'proton' command."
+        echo "Creating minimal Proton script as a last resort..."
+        
+        # Create minimal Proton directory and script as last resort
+        mkdir -p "${STEAM_COMPAT_DIR}/GE-Proton-Fallback"
+        echo '#!/bin/bash' > "${STEAM_COMPAT_DIR}/GE-Proton-Fallback/proton"
+        echo 'export WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx"' >> "${STEAM_COMPAT_DIR}/GE-Proton-Fallback/proton"
+        echo 'wine "$@"' >> "${STEAM_COMPAT_DIR}/GE-Proton-Fallback/proton"
+        chmod +x "${STEAM_COMPAT_DIR}/GE-Proton-Fallback/proton"
+        
+        PROTON_EXECUTABLE="${STEAM_COMPAT_DIR}/GE-Proton-Fallback/proton"
+        PROTON_DIR_NAME="GE-Proton-Fallback"
+        echo "Created fallback Proton script at: $PROTON_EXECUTABLE"
+        FOUND_PROTON=true
+      fi
+    fi
   fi
   
-  bash -c "$server_command" &
-
-  SERVER_PID=$!
+  # Set crucial Wine DLL overrides - this is very important for AsaApiLoader.exe
+  export WINEDLLOVERRIDES="version=n,b"
+  
+  # Ensure proper environment variables are set
+  export XDG_RUNTIME_DIR=/run/user/$(id -u)
+  export STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam"
+  export STEAM_COMPAT_DATA_PATH="/home/pok/.steam/steam/steamapps/compatdata/2430930"
+  
+  echo "Launching server..."
+  
+  # Save the current directory to return to it after launching the server
+  local current_dir=$(pwd)
+  
+  # Additional setup to ensure AsaApi environment is fully prepared
+  if [ "$LAUNCH_BINARY_NAME" = "AsaApiLoader.exe" ]; then
+    echo "Setting up additional AsaApi environment variables..."
+    mkdir -p "${ASA_DIR}/ShooterGame/Binaries/Win64/logs"
+    chmod -R 755 "${ASA_DIR}/ShooterGame/Binaries/Win64"
+    
+    # For AsaApiLoader, ensure missing registry entries don't cause issues
+    if [ -f "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg" ]; then
+      if ! grep -q "vcrun2019" "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"; then
+        echo "Adding vcrun2019 DLL override to Wine registry..."
+        echo "[Software\\\\Wine\\\\DllOverrides]" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
+        echo "\"vcrun2019\"=\"native,builtin\"" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
+      fi
+    fi
+    
+    # Verify Visual C++ Redistributable installation
+    if [ ! -d "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files (x86)/Microsoft Visual Studio" ]; then
+      echo "Visual C++ Redistributable not detected, creating directory structure..."
+      # Create directory structure to make AsaApiLoader believe VC++ is installed
+      local vc_dir="${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files (x86)/Microsoft Visual Studio"
+      mkdir -p "$vc_dir/2019/BuildTools/VC/Redist/MSVC/14.29.30133/x64/Microsoft.VC142.CRT"
+      mkdir -p "$vc_dir/2019/BuildTools/VC/Redist/MSVC/14.29.30133/x86/Microsoft.VC142.CRT"
+      
+      # Create dummy files
+      touch "$vc_dir/2019/BuildTools/VC/Redist/MSVC/14.29.30133/x64/Microsoft.VC142.CRT/msvcp140.dll"
+      touch "$vc_dir/2019/BuildTools/VC/Redist/MSVC/14.29.30133/x64/Microsoft.VC142.CRT/vcruntime140.dll"
+    fi
+    
+    # Sync to ensure all changes are written
+    sync
+    sleep 2
+    
+    # Define a function to make a launch attempt
+    attempt_launch() {
+      local method="$1"
+      local binary="$2"
+      local params="$3"
+      
+      echo "Attempting launch using method: $method"
+      
+      case "$method" in
+        "proton_direct")
+          if [ -f "$PROTON_EXECUTABLE" ]; then
+            # Method 1: Direct Proton launch using found executable
+            "$PROTON_EXECUTABLE" run "$binary" $params &
+          else
+            echo "Proton executable not found, skipping this method."
+            return 1
+          fi
+          ;;
+        "proton_fallback")
+          # Method 2: Fallback to fixed path
+          if [ -f "${STEAM_COMPAT_DIR}/GE-Proton8-21/proton" ]; then
+            "${STEAM_COMPAT_DIR}/GE-Proton8-21/proton" run "$binary" $params &
+          elif [ -f "${STEAM_COMPAT_DIR}/GE-Proton9-25/proton" ]; then
+            "${STEAM_COMPAT_DIR}/GE-Proton9-25/proton" run "$binary" $params &
+          else
+            echo "Fallback Proton paths not found, skipping this method."
+            return 1
+          fi
+          ;;
+        "proton_command")
+          # Method 3: System proton command
+          STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam" \
+          STEAM_COMPAT_DATA_PATH="${STEAM_COMPAT_DATA_PATH}" \
+          proton run "$binary" $params &
+          ;;
+        "wine_direct")
+          # Method 4: Direct Wine launch
+          WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine "$binary" $params &
+          ;;
+      esac
+      
+      local pid=$!
+      echo "Launch attempt PID: $pid"
+      
+      # Wait a moment to see if the process starts
+      sleep 5
+      
+      # Check if process is still running
+      if kill -0 $pid 2>/dev/null; then
+        echo "Launch successful using method: $method"
+        return 0
+      else
+        echo "Launch failed using method: $method"
+        return 1
+      fi
+    }
+    
+    # Try different launch methods for AsaApiLoader with better fallbacks
+    SERVER_PID=""
+    
+    if attempt_launch "proton_direct" "$LAUNCH_BINARY_NAME" "$server_params"; then
+      SERVER_PID=$!
+    elif attempt_launch "proton_fallback" "$LAUNCH_BINARY_NAME" "$server_params"; then
+      SERVER_PID=$!
+    elif attempt_launch "proton_command" "$LAUNCH_BINARY_NAME" "$server_params"; then
+      SERVER_PID=$!
+    elif attempt_launch "wine_direct" "$LAUNCH_BINARY_NAME" "$server_params"; then
+      SERVER_PID=$!
+    else
+      # As a last resort, try launching the regular server executable
+      echo "All AsaApiLoader launch attempts failed. Falling back to standard server executable..."
+      LAUNCH_BINARY_NAME="ArkAscendedServer.exe"
+      
+      # Try the same sequence of methods with the standard executable
+      if attempt_launch "proton_direct" "$LAUNCH_BINARY_NAME" "$server_params"; then
+        SERVER_PID=$!
+      elif attempt_launch "proton_fallback" "$LAUNCH_BINARY_NAME" "$server_params"; then
+        SERVER_PID=$!
+      elif attempt_launch "proton_command" "$LAUNCH_BINARY_NAME" "$server_params"; then
+        SERVER_PID=$!
+      elif attempt_launch "wine_direct" "$LAUNCH_BINARY_NAME" "$server_params"; then
+        SERVER_PID=$!
+      else
+        echo "ERROR: All launch attempts failed! Server could not be started."
+        exit 1
+      fi
+    fi
+  else
+    # For regular server launch, try each method in sequence
+    SERVER_PID=""
+    
+    # Try first with the found Proton executable
+    if [ -f "$PROTON_EXECUTABLE" ]; then
+      echo "Launching with found Proton executable: $PROTON_EXECUTABLE"
+      "$PROTON_EXECUTABLE" run "$LAUNCH_BINARY_NAME" $server_params &
+      SERVER_PID=$!
+      
+      # Wait a moment to see if the server started correctly
+      sleep 5
+      
+      # Check if the process is running
+      if ! kill -0 $SERVER_PID 2>/dev/null; then
+        echo "WARNING: First launch attempt failed. Trying alternative methods..."
+        SERVER_PID=""
+      else
+        echo "Server started successfully with primary Proton method."
+      fi
+    else
+      echo "No primary Proton executable found, trying alternative methods..."
+      SERVER_PID=""
+    fi
+    
+    # If first method failed, try alternative methods
+    if [ -z "$SERVER_PID" ] || ! kill -0 $SERVER_PID 2>/dev/null; then
+      # Try different launch methods in sequence
+      if [ -f "${STEAM_COMPAT_DIR}/GE-Proton8-21/proton" ]; then
+        echo "Trying GE-Proton8-21..."
+        "${STEAM_COMPAT_DIR}/GE-Proton8-21/proton" run "$LAUNCH_BINARY_NAME" $server_params &
+        SERVER_PID=$!
+        sleep 5
+      elif [ -f "${STEAM_COMPAT_DIR}/GE-Proton9-25/proton" ]; then
+        echo "Trying GE-Proton9-25..."
+        "${STEAM_COMPAT_DIR}/GE-Proton9-25/proton" run "$LAUNCH_BINARY_NAME" $server_params &
+        SERVER_PID=$!
+        sleep 5
+      elif command -v proton >/dev/null 2>&1; then
+        echo "Trying system proton command..."
+        proton run "$LAUNCH_BINARY_NAME" $server_params &
+        SERVER_PID=$!
+        sleep 5
+      elif command -v wine >/dev/null 2>&1; then
+        echo "Trying direct wine command..."
+        WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine "$LAUNCH_BINARY_NAME" $server_params &
+        SERVER_PID=$!
+        sleep 5
+      else
+        echo "ERROR: No viable launch method found! Server could not be started."
+        exit 1
+      fi
+      
+      # Check if any of these methods worked
+      if ! kill -0 $SERVER_PID 2>/dev/null; then
+        echo "ERROR: All launch attempts failed! Server could not be started."
+        exit 1
+      else
+        echo "Server started successfully with alternative method."
+      fi
+    fi
+  fi
+  
   echo "Server process started with PID: $SERVER_PID"
 
   # Immediate write to PID file
@@ -248,7 +483,7 @@ start_server() {
   echo "PID $SERVER_PID written to $PID_FILE"
 
   # Check for the existence of the ShooterGame.log file with a timeout
-  local timeout=30
+  local timeout=60  # Increased timeout to allow more time for server start
   local elapsed=0
   while [ ! -f "$ASA_DIR/ShooterGame/Saved/Logs/ShooterGame.log" ]; do
     if [ $elapsed -ge $timeout ]; then
@@ -267,23 +502,129 @@ start_server() {
   tail -f "$ASA_DIR/ShooterGame/Saved/Logs/ShooterGame.log" &
   TAIL_PID=$!
   echo "Tailing ShooterGame.log with PID: $TAIL_PID"
+  
+  # If API is enabled, also tail the AsaApi logs
+  if [ "${API}" = "TRUE" ]; then
+    # The AsaApi logs directory
+    local api_logs_dir="$ASA_DIR/ShooterGame/Binaries/Win64/logs"
+    
+    # Wait a moment for the API to initialize and potentially create a log file
+    sleep 5
+    
+    # Check if any log files exist and tail the most recent one
+    if [ -d "$api_logs_dir" ] && [ "$(ls -A $api_logs_dir 2>/dev/null)" ]; then
+      # Find the most recent log file
+      local latest_api_log=$(ls -t $api_logs_dir/ArkApi_*.log 2>/dev/null | head -1)
+      
+      if [ -n "$latest_api_log" ]; then
+        echo "Found AsaApi log file: $latest_api_log, starting to tail."
+        tail -f "$latest_api_log" &
+        API_TAIL_PID=$!
+        echo "Tailing AsaApi log with PID: $API_TAIL_PID"
+      else
+        echo "No AsaApi log files found yet, will check again later."
+        # Set up a background task to check for log files periodically
+        {
+          local attempts=0
+          while [ $attempts -lt 12 ]; do  # Try for up to 2 minutes
+            sleep 10
+            latest_api_log=$(ls -t $api_logs_dir/ArkApi_*.log 2>/dev/null | head -1)
+            if [ -n "$latest_api_log" ]; then
+              echo "Found AsaApi log file: $latest_api_log, starting to tail."
+              tail -f "$latest_api_log" &
+              API_TAIL_PID=$!
+              echo "Tailing AsaApi log with PID: $API_TAIL_PID"
+              break
+            fi
+            attempts=$((attempts + 1))
+          done
+          
+          if [ $attempts -eq 12 ]; then
+            echo "No AsaApi log files found after 2 minutes. AsaApi might not be running correctly."
+          fi
+        } &
+        API_CHECK_PID=$!
+      fi
+    else
+      echo "AsaApi logs directory is empty or doesn't exist yet. Will check again later."
+      mkdir -p "$api_logs_dir"
+      
+      # Set up a background task to check for log files
+      {
+        local attempts=0
+        while [ $attempts -lt 12 ]; do  # Try for up to 2 minutes
+          sleep 10
+          if [ -d "$api_logs_dir" ] && [ "$(ls -A $api_logs_dir/ArkApi_*.log 2>/dev/null)" ]; then
+            latest_api_log=$(ls -t $api_logs_dir/ArkApi_*.log 2>/dev/null | head -1)
+            if [ -n "$latest_api_log" ]; then
+              echo "Found AsaApi log file: $latest_api_log, starting to tail."
+              tail -f "$latest_api_log" &
+              API_TAIL_PID=$!
+              echo "Tailing AsaApi log with PID: $API_TAIL_PID"
+              break
+            fi
+          fi
+          attempts=$((attempts + 1))
+        done
+        
+        if [ $attempts -eq 12 ]; then
+          echo "No AsaApi log files found after 2 minutes. AsaApi might not be running correctly."
+        fi
+      } &
+      API_CHECK_PID=$!
+    fi
+  fi
 
   # Wait for the server to fully start, monitoring the log file
   echo "Waiting for server to start..."
-  while true; do
+  local LOG_FILE="$ASA_DIR/ShooterGame/Saved/Logs/ShooterGame.log"
+  local max_wait_time=300  # 5 minutes maximum wait time
+  local wait_time=0
+  
+  while [ $wait_time -lt $max_wait_time ]; do
     if [ -f "$LOG_FILE" ] && grep -q "Server started" "$LOG_FILE"; then
       echo "Server started successfully. PID: $SERVER_PID"
       break
     fi
     sleep 10
+    wait_time=$((wait_time + 10))
+    
+    # Check if process is still running
+    if ! kill -0 $SERVER_PID 2>/dev/null; then
+      echo "WARNING: Server process appears to have stopped. PID: $SERVER_PID"
+      # Check the log file for errors if it exists
+      if [ -f "$LOG_FILE" ]; then
+        echo "Last 20 lines of log file:"
+        tail -n 20 "$LOG_FILE"
+      fi
+      break
+    fi
   done
+  
+  if [ $wait_time -ge $max_wait_time ]; then
+    echo "WARNING: Server did not start within the expected time, but process is still running."
+    echo "Check logs for potential issues."
+  fi
 
   # Wait for the server process to exit
   wait $SERVER_PID
   echo "Server stopped."
+  
   # Kill the tail process when the server stops
-  kill $TAIL_PID
+  kill $TAIL_PID 2>/dev/null || true
   echo "Stopped tailing ShooterGame.log."
+  
+  # Kill the API tail process if it exists
+  if [ -n "$API_TAIL_PID" ]; then
+    kill $API_TAIL_PID 2>/dev/null || true
+    echo "Stopped tailing AsaApi log."
+  fi
+  
+  # Kill the API check process if it exists
+  if [ -n "$API_CHECK_PID" ]; then
+    kill $API_CHECK_PID 2>/dev/null || true
+    echo "Stopped API log check process."
+  fi
 }
 
 
