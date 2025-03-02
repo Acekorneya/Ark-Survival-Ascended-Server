@@ -231,6 +231,13 @@ start_server() {
 
   # Start the server using Proton-GE
   echo "Starting server with Proton-GE..."
+  
+  # Make sure Proton environment is fully initialized before starting the server
+  if [ ! -f "${STEAM_COMPAT_DATA_PATH}/tracked_files" ] || [ ! -d "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c" ]; then
+    echo "WARNING: Proton environment not fully initialized. Reinitializing..."
+    initialize_proton_prefix
+  fi
+  
   bash -c "$server_command" &
 
   SERVER_PID=$!

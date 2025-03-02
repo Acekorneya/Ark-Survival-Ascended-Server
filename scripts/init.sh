@@ -12,11 +12,16 @@ if [ "${RANDOM_STARTUP_DELAY:-TRUE}" = "TRUE" ]; then
   sleep $DELAY
 fi
 
+# Ensure Proton environment is properly set up before proceeding
+echo "----Setting up Proton environment----"
 mkdir -p "${STEAM_COMPAT_DATA_PATH}"
 if [ ! -d "${STEAM_COMPAT_DATA_PATH}" ]; then
   echo "Error creating ${STEAM_COMPAT_DATA_PATH}" >&2
   exit 1
 fi
+
+# Initialize Proton prefix to prevent race conditions
+initialize_proton_prefix
 
 # Check for stale update flags which could prevent proper startup
 # If this was a previous interrupted update, clear the flag

@@ -17,6 +17,36 @@ RCON_PATH="/usr/local/bin/rcon-cli" # Path to the RCON executable (installed in 
 export STEAM_COMPAT_DATA_PATH=${STEAM_COMPAT_DATA_PATH}
 export STEAM_COMPAT_CLIENT_INSTALL_PATH=${STEAM_COMPAT_CLIENT_INSTALL_PATH}
 
+# Function to properly initialize Proton prefix to prevent initialization errors
+initialize_proton_prefix() {
+  echo "Initializing Proton prefix environment..."
+  
+  # Create the Proton prefix directory if it doesn't exist
+  mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx"
+  
+  # Create empty tracked_files file to prevent initialization errors
+  mkdir -p "$(dirname "${STEAM_COMPAT_DATA_PATH}/tracked_files")"
+  touch "${STEAM_COMPAT_DATA_PATH}/tracked_files"
+  
+  # Run a simple command with Proton to initialize the environment
+  echo "Running Proton initialization..."
+  proton run "cmd.exe" "/c" "echo Proton initialization complete" > /dev/null 2>&1 || true
+  
+  # Give Proton a moment to finish any background initialization
+  sleep 2
+  
+  # Verify if initialization was successful
+  if [ -d "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c" ]; then
+    echo "Proton prefix successfully initialized."
+    return 0
+  else
+    echo "WARNING: Proton prefix initialization may not be complete. This might cause issues."
+    # Create basic directory structure if missing
+    mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/windows/system32"
+    return 1
+  fi
+}
+
 # check if the server is running
 is_process_running() {
   local display_message=${1:-false} # Default to not displaying the message
@@ -164,6 +194,7 @@ get_current_build_id() {
   local build_id=$(curl -sX GET "https://api.steamcmd.net/v1/info/$APPID" | jq -r ".data.\"$APPID\".depots.branches.public.buildid")
   echo "$build_id"
 }
+
 # Execute initialization functions
 clean_format_mod_ids
 validate_server_password
@@ -176,6 +207,12 @@ install_ark_server_api() {
   fi
 
   echo "---- Installing/Updating ArkServerAPI ----"
+  
+  # Ensure Proton environment is properly initialized before proceeding
+  if [ ! -f "${STEAM_COMPAT_DATA_PATH}/tracked_files" ] || [ ! -d "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c" ]; then
+    echo "Proton environment not fully initialized. Initializing before ArkServerAPI installation..."
+    initialize_proton_prefix
+  fi
   
   # Define paths
   local api_dir="${ASA_DIR}/ShooterGame/Binaries/Win64/ArkApi"
@@ -210,7 +247,13 @@ install_ark_server_api() {
   # Check if an update is needed
   if [ "$current_api_version" = "$latest_version" ]; then
     echo "ArkServerAPI is already up-to-date."
-    return 0
+    
+    # Verify the installation is complete even if up-to-date
+    if [ ! -f "${api_dir}/version.dll" ]; then
+      echo "WARNING: ArkServerAPI installation appears incomplete. Forcing reinstallation."
+    else
+      return 0
+    fi
   fi
   
   echo "Downloading ArkServerAPI $latest_version..."
@@ -269,8 +312,16 @@ install_ark_server_api() {
     mkdir -p "$proton_drive_c/temp"
     cp "$vcredist_file" "$proton_drive_c/temp/"
     
-    # Run the installer using Proton
-    WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" proton run "$proton_drive_c/temp/vc_redist.x64.exe" /quiet /norestart
+    # Wait a moment to ensure files are synced
+    sync
+    sleep 2
+    
+    # Run the installer using Proton directly rather than Wine
+    echo "Running VC++ installer with Proton..."
+    proton run "$proton_drive_c/temp/vc_redist.x64.exe" "/quiet" "/norestart" || true
+    
+    # Sleep to give the installer time to complete
+    sleep 5
     
     echo "VC++ redistributable installation completed."
     
@@ -285,6 +336,13 @@ install_ark_server_api() {
   # Set correct permissions
   chmod -R 755 "$bin_dir/ArkApi"
   
-  echo "ArkServerAPI $latest_version installed successfully."
-  return 0
+  # Verify installation
+  if [ -f "${api_dir}/version.dll" ]; then
+    echo "ArkServerAPI $latest_version installed successfully."
+    return 0
+  else
+    echo "WARNING: ArkServerAPI installation appears incomplete. version.dll not found."
+    echo "This may be due to an issue with Proton/Wine environment."
+    return 1
+  fi
 }
