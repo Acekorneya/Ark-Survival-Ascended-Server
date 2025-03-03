@@ -23,6 +23,9 @@ display_animated_countdown() {
   local warning_color="\033[1;33m" # Yellow for warnings
   local action_color="\033[1;35m" # Magenta for action status
   
+  # Enable quiet mode for RCON during countdown to prevent message spam
+  export RCON_QUIET_MODE="TRUE"
+  
   # Set the appropriate message based on countdown type
   local op_text="Shutting down"
   if [ "$countdown_type" = "restart" ]; then
@@ -39,6 +42,15 @@ display_animated_countdown() {
   
   # Initialize notification tracking
   local last_notification_point=""
+  
+  # Send the initial notification
+  if [ "${SKIP_INITIAL_NOTIFICATION}" != "TRUE" ]; then
+    if [ "$countdown_type" = "restart" ]; then
+      send_rcon_command "ServerChat Server restarting in $duration minute(s)"
+    else
+      send_rcon_command "ServerChat Server shutting down in $duration minute(s)"
+    fi
+  fi
   
   # Main countdown loop
   while [ $seconds_remaining -gt 0 ]; do
@@ -67,6 +79,35 @@ display_animated_countdown() {
     
     # If we hit a notification point and it's different from the last one, log it
     if [ -n "$current_point" ] && [ "$current_point" != "$last_notification_point" ]; then
+      # Send in-game notification for this timepoint
+      local notification_text=""
+      
+      if [ "$countdown_type" = "restart" ]; then
+        notification_text="Server restarting in"
+      else
+        notification_text="Server shutting down in"
+      fi
+      
+      # Format the notification based on the timepoint
+      if [[ "$current_point" == *"m" ]]; then
+        # Minutes
+        local min_value=${current_point%m}
+        if [ "$min_value" = "1" ]; then
+          send_rcon_command "ServerChat $notification_text $min_value minute"
+        else
+          send_rcon_command "ServerChat $notification_text $min_value minutes"
+        fi
+      else
+        # Seconds
+        local sec_value=${current_point%s}
+        if [ "$sec_value" = "1" ]; then
+          send_rcon_command "ServerChat $notification_text $sec_value second"
+        else
+          send_rcon_command "ServerChat $notification_text $sec_value seconds"
+        fi
+      fi
+      
+      # Display notification in console
       echo -e "\r${success_color}✓${reset_color} Server notification sent: ${time_color}${current_point}${reset_color} remaining          "
       last_notification_point="$current_point"
       # Log notification but don't break the line
@@ -99,6 +140,13 @@ display_animated_countdown() {
   
   # Show completion message
   echo -e "\r${success_color}✓${reset_color} ${action_color}${op_text}:${reset_color} ${time_color}Countdown complete!${reset_color}                 "
+  
+  # Send final notification
+  if [ "$countdown_type" = "restart" ]; then
+    send_rcon_command "ServerChat Server is restarting NOW!"
+  else
+    send_rcon_command "ServerChat Server is shutting down NOW!"
+  fi
   
   # Wait for shutdown flag to appear with cleaner status display
   local wait_count=0
@@ -193,23 +241,53 @@ main() {
     # Enable animated countdown in restart_server.sh
     export SHOW_ANIMATED_COUNTDOWN="TRUE"
     
+    # Skip initial notification in shutdown_server.sh when coming from POK-manager.sh
+    # This prevents duplicate notifications
+    export SKIP_INITIAL_NOTIFICATION="TRUE"
+    
     # Call restart_server.sh and pass countdown duration
     /home/pok/scripts/restart_server.sh "$1"
     ;;
   -shutdown)
     if [ -z "$1" ]; then
       echo "Error: Shutdown command requires a duration in minutes."
+      echo "Example usage: -shutdown 5   (This will schedule a shutdown in 5 minutes)"
+      usage
       exit 1
     fi
-    # Start the shutdown in background
-    initiate_shutdown "$1" &
-    SHUTDOWN_PID=$!
     
-    # Display animated countdown in foreground, with "shutdown" type
+    # Validate that the time parameter is a number
+    if ! [[ "$1" =~ ^[0-9]+$ ]]; then
+      echo "Error: Shutdown time must be a positive number in minutes."
+      echo "Example usage: -shutdown 5   (This will schedule a shutdown in 5 minutes)"
+      usage
+      exit 1
+    fi
+    
+    # Set a variable to indicate this is a shutdown operation (not a restart)
+    export API_CONTAINER_RESTART="FALSE"
+    
+    # Enable animated countdown display
+    export SHOW_ANIMATED_COUNTDOWN="TRUE"
+    
+    # Use quiet mode for RCON to suppress "Command received, but no response was provided" messages
+    export RCON_QUIET_MODE="TRUE"
+    
+    # Skip initial notification in shutdown_server.sh when coming from POK-manager.sh
+    # This prevents duplicate notifications
+    export SKIP_INITIAL_NOTIFICATION="TRUE"
+    
+    # Create a temporary flag file to indicate we're using the enhanced display
+    touch "/tmp/enhanced_shutdown_display"
+    
+    # Display animated countdown in foreground
     display_animated_countdown "$1" "shutdown"
     
-    # Wait for the background process to finish
-    wait $SHUTDOWN_PID 2>/dev/null || true
+    # Start the shutdown process only after the countdown completes
+    initiate_shutdown "$1"
+    
+    # Remove the temporary flag file
+    rm -f "/tmp/enhanced_shutdown_display" 2>/dev/null || true
     ;;
   -stop)
     echo "🛑 Safely stopping server and ensuring world save completion..."

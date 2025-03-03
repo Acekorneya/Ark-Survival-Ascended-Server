@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.43"
+POK_MANAGER_VERSION="2.1.44"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -2184,79 +2184,58 @@ execute_rcon_command() {
     # Check if there are any running instances before processing the command
     if [ -n "$running_instances" ]; then
       if [[ "$action" == "-shutdown" ]]; then
-        local eta_seconds=$((wait_time * 60)) # Convert wait time to seconds
-        local eta_time=$(date -d "@$(($(date +%s) + eta_seconds))" "+%Y-%m-%d %H:%M:%S") # Calculate ETA as a human-readable timestamp
-
-        # First send shutdown notification to all instances
-        for instance in $(list_running_instances); do
-          echo "----- Server $instance: Command: ${action#-}${message:+ $message} -----"
-          echo "Shutdown command sent to $instance. Countdown: $wait_time minute(s)."
-          # Just send the RCON command, don't actually shut down yet
-          run_in_container "$instance" "$action" "$message" >/dev/null 2>&1 &
-        done
-
-        # Inform the user not to exit POK-manager and start the live countdown
-        echo "Please do not exit POK-manager until the countdown is finished."
-
-        # Define colors for the countdown
-        local status_color="\033[1;36m" # Cyan for status
-        local time_color="\033[1;33m" # Yellow for time
-        local reset_color="\033[0m"
-        local action_color="\033[1;35m" # Magenta for action status
-        local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
-        local spinner_idx=0
-
-        # Start the live countdown with spinner animation
-        (
-          for ((i=eta_seconds; i>=0; i--)); do
-            # Format the remaining time as minutes and seconds
-            minutes=$((i / 60))
-            seconds=$((i % 60))
-            
-            # Update the spinner
-            local current_spinner=${spinner[$spinner_idx]}
-            spinner_idx=$(( (spinner_idx + 1) % ${#spinner[@]} ))
-            
-            # Format time as "Xm Ys"
-            local eta_display="${minutes}m ${seconds}s"
-            
-            # Clear line and print the countdown with spinner
-            printf "\r${status_color}%s${reset_color} ${action_color}Shutting down:${reset_color} ${time_color}ETA: %-8s${reset_color}" "$current_spinner" "$eta_display"
-            
-            # Check for notification points - these should match what's happening in-game
-            if [ $seconds -eq 0 ] && ([ $minutes -eq 5 ] || [ $minutes -eq 3 ] || [ $minutes -eq 1 ]); then
-              # Add a newline and print the notification without disrupting the countdown
-              echo ""
-              echo -e "${status_color}Server notification: ${time_color}${minutes}m remaining${reset_color}"
-            elif [ $minutes -eq 0 ] && [ $seconds -eq 30 ]; then
-              echo ""
-              echo -e "${status_color}Server notification: ${time_color}30s remaining${reset_color}"
-            elif [ $minutes -eq 0 ] && [ $seconds -le 10 ] && [ $seconds -gt 0 ]; then
-              echo ""
-              echo -e "${status_color}Server notification: ${time_color}${seconds}s remaining${reset_color}"
-            fi
-            
-            sleep 1
-          done
-          
-          # Show completion message
-          echo -e "\r${status_color}✓${reset_color} ${action_color}Shutting down:${reset_color} ${time_color}Countdown complete!${reset_color}                 "
-          echo ""
-        )
-
-        # Now actually inject shutdown flags and perform the shutdown after countdown
-        for instance in $(list_running_instances); do
-          echo "Performing final shutdown for instance: $instance"
-          inject_shutdown_flag_and_shutdown "$instance" "$message" "$wait_time"
-        done
-
-        echo "----- All instances have been shut down successfully. -----"
-        echo "Script exiting..."
-        exit 0 # Exit script after shutdown completes
-
+        # Validate wait_time or set default
+        if [ -z "$wait_time" ]; then
+          echo "No shutdown time specified. Using default of 1 minute."
+          wait_time=1
+        fi
+        
+        # Validate that wait_time is a number
+        if ! [[ "$wait_time" =~ ^[0-9]+$ ]]; then
+          echo "Error: Invalid shutdown time '$wait_time'. Must be a positive number."
+          echo "Using default of 1 minute instead."
+          wait_time=1
+        fi
+        
+        # Use the enhanced shutdown command for better visuals and consistent experience
+        echo "Using enhanced shutdown functionality for all instances..."
+        enhanced_shutdown_command "$wait_time" "-all"
+        
+        # enhanced_shutdown_command exits the script when done, so no additional code is needed here
+        return
       elif [[ "$action" == "-restart" ]]; then
         # Check if there are any running instances before processing the command
         if [ -n "$(list_running_instances)" ]; then
+          # First, check if there's a mix of API and non-API instances
+          local api_instances=()
+          local non_api_instances=()
+          
+          for instance in $(list_running_instances); do
+            local docker_compose_file="${BASE_DIR}/Instance_${instance}/docker-compose-${instance}.yaml"
+            
+            # Check if API=TRUE in the docker-compose file
+            if [ -f "$docker_compose_file" ] && (grep -q "^ *- API=TRUE" "$docker_compose_file" || grep -q "^ *- API:TRUE" "$docker_compose_file"); then
+              api_instances+=("$instance")
+            else
+              non_api_instances+=("$instance")
+            fi
+          done
+          
+          # If mixed API modes, show warning
+          if [ ${#api_instances[@]} -gt 0 ] && [ ${#non_api_instances[@]} -gt 0 ]; then
+            echo "⚠️ WARNING: Mixed API modes detected (both TRUE and FALSE). ⚠️"
+            echo "When restarting with mixed API modes, server files WILL NOT be updated."
+            echo "If a game update is available, this restart will NOT apply it."
+            echo ""
+            echo "To properly update server files, you should:"
+            echo "1. Stop all containers:  ./POK-manager.sh -stop -all"
+            echo "2. Update server files:  ./POK-manager.sh -update"
+            echo "3. Start all containers: ./POK-manager.sh -start -all"
+            echo ""
+            echo "This prevents SteamCMD errors and ensures all files are updated correctly."
+            sleep 3
+          fi
+          
           # Use the enhanced restart command for all instances
           echo "Using enhanced restart functionality for all instances..."
           enhanced_restart_command "$message" "-all"
@@ -2350,71 +2329,72 @@ execute_rcon_command() {
       fi
 
       if [[ "$action" == "-shutdown" ]]; then
-        local eta_seconds=$((wait_time * 60)) # Convert wait time to seconds
-        local eta_time=$(date -d "@$(($(date +%s) + eta_seconds))" "+%Y-%m-%d %H:%M:%S") # Calculate ETA as a human-readable timestamp
+        # Validate wait_time or set default
+        if [ -z "$wait_time" ]; then
+          echo "No shutdown time specified. Using default of 1 minute."
+          wait_time=1
+        fi
         
-        # First send the RCON command to initiate in-game countdown
-        echo "Sending shutdown command to $instance_name with countdown: $wait_time minute(s)."
-        run_in_container "$instance_name" "$action" "$message" >/dev/null 2>&1
+        # Validate that wait_time is a number
+        if ! [[ "$wait_time" =~ ^[0-9]+$ ]]; then
+          echo "Error: Invalid shutdown time '$wait_time'. Must be a positive number."
+          echo "Using default of 1 minute instead."
+          wait_time=1
+        fi
         
-        echo "Waiting for server $instance_name to complete countdown... ETA: $eta_time"
-
-        # Define colors for the countdown
-        local status_color="\033[1;36m" # Cyan for status
-        local time_color="\033[1;33m" # Yellow for time
-        local reset_color="\033[0m"
-        local action_color="\033[1;35m" # Magenta for action status
-        local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
-        local spinner_idx=0
-
-        # Start the live countdown with spinner animation
-        (
-          for ((i=eta_seconds; i>=0; i--)); do
-            # Format the remaining time as minutes and seconds
-            minutes=$((i / 60))
-            seconds=$((i % 60))
-            
-            # Update the spinner
-            local current_spinner=${spinner[$spinner_idx]}
-            spinner_idx=$(( (spinner_idx + 1) % ${#spinner[@]} ))
-            
-            # Format time as "Xm Ys"
-            local eta_display="${minutes}m ${seconds}s"
-            
-            # Clear line and print the countdown with spinner
-            printf "\r${status_color}%s${reset_color} ${action_color}Shutting down:${reset_color} ${time_color}ETA: %-8s${reset_color}" "$current_spinner" "$eta_display"
-            
-            # Check for notification points - these should match what's happening in-game
-            if [ $seconds -eq 0 ] && ([ $minutes -eq 5 ] || [ $minutes -eq 3 ] || [ $minutes -eq 1 ]); then
-              # Add a newline and print the notification without disrupting the countdown
-              echo ""
-              echo -e "${status_color}Server notification: ${time_color}${minutes}m remaining${reset_color}"
-            elif [ $minutes -eq 0 ] && [ $seconds -eq 30 ]; then
-              echo ""
-              echo -e "${status_color}Server notification: ${time_color}30s remaining${reset_color}"
-            elif [ $minutes -eq 0 ] && [ $seconds -le 10 ] && [ $seconds -gt 0 ]; then
-              echo ""
-              echo -e "${status_color}Server notification: ${time_color}${seconds}s remaining${reset_color}"
-            fi
-            
-            sleep 1
-          done
-          
-          # Show completion message
-          echo -e "\r${status_color}✓${reset_color} ${action_color}Shutting down:${reset_color} ${time_color}Countdown complete!${reset_color}                 "
-          echo ""
-        )
-
-        # Now actually inject shutdown flag and perform the shutdown
-        inject_shutdown_flag_and_shutdown "$instance_name" "$message" "$wait_time"
+        # Use the enhanced shutdown command for better visuals and consistent experience
+        echo "Using enhanced shutdown functionality for instance: $instance_name"
+        enhanced_shutdown_command "$wait_time" "$instance_name"
         
-        echo "----- Shutdown Complete for instance: $instance_name -----"
-        echo "Commands dispatched. Script exiting..."
-        exit 0 # Exit the script after the countdown and shutdown process are complete
-      
+        # enhanced_shutdown_command exits the script when done
+        return
       elif [[ "$action" == "-restart" ]]; then
         # Use the enhanced restart command for a single instance
         echo "Using enhanced restart functionality for instance: $instance_name"
+        
+        # First check if there's a mix of API and non-API instances
+        local all_api=true
+        local all_non_api=true
+        
+        # Check if the current instance is API=TRUE
+        local this_instance_api=false
+        local docker_compose_file="${BASE_DIR}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
+        if [ -f "$docker_compose_file" ] && (grep -q "^ *- API=TRUE" "$docker_compose_file" || grep -q "^ *- API:TRUE" "$docker_compose_file"); then
+          this_instance_api=true
+        fi
+        
+        # Check other running instances
+        for instance in $(list_running_instances | grep -v "^$instance_name$"); do
+          local other_docker_compose_file="${BASE_DIR}/Instance_${instance}/docker-compose-${instance}.yaml"
+          
+          if [ -f "$other_docker_compose_file" ] && (grep -q "^ *- API=TRUE" "$other_docker_compose_file" || grep -q "^ *- API:TRUE" "$other_docker_compose_file"); then
+            # This instance is API=TRUE
+            if [ "$this_instance_api" = "false" ]; then
+              all_api=false  # Mixed mode detected
+            fi
+          else
+            # This instance is API=FALSE
+            if [ "$this_instance_api" = "true" ]; then
+              all_non_api=false  # Mixed mode detected
+            fi
+          fi
+        done
+        
+        # If mixed modes detected, show warning
+        if [ "$all_api" = "false" ] && [ "$all_non_api" = "false" ]; then
+          echo "⚠️ WARNING: Mixed API modes detected across running instances. ⚠️"
+          echo "When restarting with mixed API modes, server files WILL NOT be updated."
+          echo "If a game update is available, this restart will NOT apply it."
+          echo ""
+          echo "To properly update server files, you should:"
+          echo "1. Stop all containers:  ./POK-manager.sh -stop -all"
+          echo "2. Update server files:  ./POK-manager.sh -update"
+          echo "3. Start all containers: ./POK-manager.sh -start -all"
+          echo ""
+          echo "This prevents SteamCMD errors and ensures all files are updated correctly."
+          sleep 3
+        fi
+        
         enhanced_restart_command "$message" "$instance_name"
         # Don't exit immediately - the enhanced restart function will handle everything
       elif [[ "$run_in_background" == "true" ]]; then
@@ -2651,13 +2631,9 @@ run_in_container() {
 
   # Verify the container exists and is running, then execute the command and capture the output
   if docker ps -q -f name=^/${container_name}$ > /dev/null; then
-    if [[ "$cmd" == "-shutdown" || "$cmd" == "-restart" ]]; then
-      # Redirect all output to a variable for -shutdown and -restart commands
-      output=$(docker exec "$container_name" /bin/bash -c "$command")
-    else
-      # Capture the output for all other commands
-      output=$(docker exec "$container_name" /bin/bash -c "$command")
-    fi
+    # Execute the command in the container and capture the output
+    # Don't redirect output for shutdown and restart, show it directly to the user
+    output=$(docker exec "$container_name" /bin/bash -c "$command")
     echo "$output" # Return the captured output
   else
     echo "Instance ${instance} is not running or does not exist."
@@ -5544,19 +5520,42 @@ enhanced_restart_command() {
   if [ ${#api_instances[@]} -gt 0 ] && [ ${#non_api_instances[@]} -gt 0 ]; then
     restart_mode="mixed"
     echo "⚠️ Mixed API modes detected. Using coordinated restart approach for all instances."
+    echo ""
+    echo "⚠️ IMPORTANT UPDATE WARNING: ⚠️"
+    echo "When restarting instances with mixed API modes (TRUE and FALSE), server files WILL NOT be updated."
+    echo "If a game update is available, this restart will NOT apply it."
+    echo ""
+    echo "To properly update your server files:"
+    echo "1. Stop all containers first:   ./POK-manager.sh -stop -all"
+    echo "2. Run the update command:      ./POK-manager.sh -update"
+    echo "3. Start all containers:        ./POK-manager.sh -start -all"
+    echo ""
+    echo "This prevents SteamCMD errors and ensures all files are updated correctly."
+    echo "Continuing with restart (without updates) in 5 seconds..."
+    sleep 5
   elif [ ${#api_instances[@]} -gt 0 ]; then
     restart_mode="api-only"
     echo "All instances have API=TRUE. Using container-level restart approach."
   else
+    restart_mode="standard"
     echo "All instances have API=FALSE. Using standard in-game restart approach."
   fi
   
   # First, notify all instances of the pending restart
   echo "🔔 Notifying all servers of restart in $countdown_minutes minutes..."
+  
+  # Prepare a special message for mixed mode
+  local restart_message=""
+  if [ "$restart_mode" = "mixed" ]; then
+    restart_message="SERVER ANNOUNCEMENT: Prepare for restart in ${countdown_minutes} minutes. Please note: This restart will NOT include game updates."
+  else
+    restart_message="SERVER ANNOUNCEMENT: Prepare for restart in ${countdown_minutes} minutes. Please finish your current activities."
+  fi
+  
   for instance in "${instances_to_process[@]}"; do
     echo "  - Notifying ${instance}..."
     # For both API and non-API instances, send a chat notification
-    run_in_container_background "$instance" "-chat" "Server will restart in ${countdown_minutes} minutes. Please prepare accordingly."
+    run_in_container_background "$instance" "-chat" "$restart_message" >/dev/null 2>&1
   done
   
   # Handle different restart modes
@@ -5752,6 +5751,148 @@ enhanced_restart_command() {
 
 # Original api_restart_instance function stays the same
 # Note: This comment is just a marker - the real api_restart_instance function remains unchanged
+
+# Function for enhanced shutdown command with better visuals (similar to restart)
+enhanced_shutdown_command() {
+  local minutes_arg="$1"
+  local instance_arg="$2"
+  
+  # Default to 1 minute if not specified
+  local countdown_minutes="${minutes_arg:-1}"
+  
+  # Validate countdown_minutes is a positive number
+  if ! [[ "$countdown_minutes" =~ ^[0-9]+$ ]]; then
+    echo "Invalid shutdown time: $countdown_minutes. Using default of 1 minute."
+    countdown_minutes=1
+  fi
+  
+  # Define colors for the countdown
+  local status_color="\033[1;36m" # Cyan for status
+  local time_color="\033[1;33m" # Yellow for time
+  local reset_color="\033[0m"
+  local success_color="\033[1;32m" # Green for success
+  local warning_color="\033[1;33m" # Yellow for warnings
+  local action_color="\033[1;35m" # Magenta for action status
+  local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+  local spinner_idx=0
+  
+  # Determine which instances to process
+  local instances_to_process=()
+  
+  if [[ "$instance_arg" == "-all" ]]; then
+    # Get all running instances
+    instances_to_process=($(list_running_instances))
+    if [ ${#instances_to_process[@]} -eq 0 ]; then
+      echo "No running instances found."
+      exit 1  # Exit with error status
+    fi
+    echo "Processing all running instances for shutdown: ${instances_to_process[*]}"
+  else
+    # Verify the specific instance exists and is running
+    if ! validate_instance "$instance_arg"; then
+      echo "Instance '$instance_arg' is not running or does not exist."
+      exit 1  # Exit with error status
+    fi
+    instances_to_process=("$instance_arg")
+    echo "Processing instance for shutdown: $instance_arg"
+  fi
+  
+  # Notify all servers of the shutdown
+  echo "🔔 Notifying all servers of shutdown in $countdown_minutes minutes..."
+  for instance in "${instances_to_process[@]}"; do
+    echo "  - Notifying $instance..."
+    # Send RCON commands to notify of shutdown
+    run_in_container_background "$instance" "-chat" "Server shutdown in $countdown_minutes minute(s)!" >/dev/null 2>&1
+  done
+  
+  # Start the enhanced countdown
+  echo "⏱️ Beginning shutdown countdown: $countdown_minutes minutes"
+  
+  # Convert minutes to seconds for countdown
+  local total_seconds=$((countdown_minutes * 60))
+  local seconds_remaining=$total_seconds
+  
+  # List of notification points in seconds
+  local notification_points=(
+    $((60 * 5))  # 5 minutes
+    $((60 * 3))  # 3 minutes
+    $((60 * 1))  # 1 minute
+    30           # 30 seconds
+    10 9 8 7 6 5 4 3 2 1  # Final countdown
+  )
+  
+  # Countdown loop
+  while [ $seconds_remaining -gt 0 ]; do
+    local minutes=$((seconds_remaining / 60))
+    local seconds=$((seconds_remaining % 60))
+    
+    # Update spinner
+    local current_spinner=${spinner[$spinner_idx]}
+    spinner_idx=$(( (spinner_idx + 1) % ${#spinner[@]} ))
+    
+    # Display countdown
+    printf "\r${current_spinner} ${action_color}Shutting down:${reset_color} ${time_color}ETA: %dm %ds${reset_color}   " $minutes $seconds
+    
+    # Check if we need to send a notification
+    for point in "${notification_points[@]}"; do
+      if [ $seconds_remaining -eq $point ]; then
+        echo ""  # New line for notification
+        if [ $point -ge 60 ]; then
+          local min_val=$((point / 60))
+          echo "Server notification: $min_val minute(s) remaining"
+          # Send to all servers
+          for instance in "${instances_to_process[@]}"; do
+            run_in_container_background "$instance" "-chat" "Server shutdown in $min_val minute(s)!" >/dev/null 2>&1
+          done
+        else
+          echo "Server notification: $point seconds remaining"
+          # Send to all servers
+          for instance in "${instances_to_process[@]}"; do
+            run_in_container_background "$instance" "-chat" "Server shutdown in $point seconds!" >/dev/null 2>&1
+          done
+        fi
+        break
+      fi
+    done
+    
+    sleep 1
+    ((seconds_remaining--))
+  done
+  
+  # Countdown complete
+  echo -e "\r✓ Shutting down: Countdown complete!                 "
+  echo ""
+  
+  # Final notification
+  for instance in "${instances_to_process[@]}"; do
+    run_in_container_background "$instance" "-chat" "Server is shutting down NOW!" >/dev/null 2>&1
+  done
+  
+  # Begin shutdown process
+  echo "🛑 Beginning coordinated shutdown process..."
+  echo "💾 Saving world data for all instances..."
+  
+  for instance in "${instances_to_process[@]}"; do
+    echo "  - Saving world for $instance..."
+    run_in_container "$instance" "-saveworld" >/dev/null 2>&1 &
+  done
+  
+  # Wait for saves to complete
+  echo "⏳ Waiting for saves to complete (10 seconds)..."
+  sleep 10
+  
+  # Stop all instances
+  echo "🛑 Stopping all instances..."
+  for instance in "${instances_to_process[@]}"; do
+    echo "  - Stopping $instance..."
+    stop_instance "$instance"
+  done
+  
+  echo "✅ All servers have been shut down successfully."
+  
+  # Exit gracefully
+  exit 0
+}
 
 # Invoke the main function with all passed arguments
 main "$@"

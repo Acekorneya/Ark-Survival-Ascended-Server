@@ -20,13 +20,16 @@ send_rcon_command() {
   local output
   output=$(${RCON_PATH} -a ${RCON_HOST}:${RCON_PORT} -p "${RCON_PASSWORD}" "$command" 2>&1)
 
-  echo "$output" # Print the output for visibility
+  # Only print output if not in quiet mode or if output contains actual content beyond status messages
+  if [ "${RCON_QUIET_MODE:-FALSE}" != "TRUE" ] || ! echo "$output" | grep -q "Server received"; then
+    echo "$output" # Print the output for visibility
+  fi
 
   # Check if the output contains a critical failure message
   if echo "$output" | grep -q "Failed to connect"; then
     echo "Error: Failed to connect to RCON server. Terminating script." >&2
     exit 1 # Exit the script with an error status
-  elif echo "$output" | grep -q "Server received, But no response!!"; then
+  elif [ "${RCON_QUIET_MODE:-FALSE}" != "TRUE" ] && echo "$output" | grep -q "Server received, But no response!!"; then
     echo "Warning: Command received by server, but no response was provided." >&2
     # Optionally, you can handle this case differently, such as logging the incident or sending a notification.
   fi

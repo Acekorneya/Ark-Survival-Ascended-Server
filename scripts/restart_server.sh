@@ -470,3 +470,8 @@ else
     restart_server_direct
   fi
 fi
+
+# First send a notification about the restart
+if [ "${SKIP_INITIAL_NOTIFICATION}" != "TRUE" ]; then
+  send_rcon_command "ServerChat Server restarting in $RESTART_NOTICE_MINUTES minute(s)"
+fi

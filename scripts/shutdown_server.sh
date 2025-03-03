@@ -154,28 +154,87 @@ initiate_shutdown() {
   local duration_in_minutes
 
   if [ -z "$1" ]; then
-    while true; do
-      echo -n "Enter countdown duration in minutes (or type 'cancel' to return to main menu): "
-      read input
+    # When called directly (not from rcon_interface.sh), we need to prompt for input
+    # Only do this when run interactively, not from scripts
+    if [ -t 0 ]; then  # Check if stdin is a terminal
+      while true; do
+        echo -n "Enter countdown duration in minutes (or type 'cancel' to return to main menu): "
+        read input
 
-      if [[ "$input" =~ ^[0-9]+$ ]]; then
-        duration_in_minutes=$input
-        break
-      elif [[ "$input" == "cancel" ]]; then
-        echo "Restart cancelled. Returning to main menu."
-        return
-      else
-        echo "Invalid input. Please enter a number or 'cancel'."
-      fi
-    done
+        if [[ "$input" =~ ^[0-9]+$ ]]; then
+          duration_in_minutes=$input
+          break
+        elif [[ "$input" == "cancel" ]]; then
+          echo "Shutdown cancelled. Returning to main menu."
+          return 1
+        else
+          echo "Invalid input. Please enter a number or 'cancel'."
+        fi
+      done
+    else
+      # Non-interactive mode with missing parameter - return error
+      echo "Error: Shutdown command requires a duration in minutes."
+      echo "Example usage: -shutdown 5   (This will schedule a shutdown in 5 minutes)"
+      return 1
+    fi
   else
+    # Validate the parameter is a positive number
     if ! [[ "$1" =~ ^[0-9]+$ ]]; then
-      echo "Invalid duration: $1. Must be a number."
-      return
+      echo "Error: Invalid duration: $1. Must be a positive number."
+      echo "Example usage: -shutdown 5   (This will schedule a shutdown in 5 minutes)" 
+      return 1
     fi
     duration_in_minutes=$1
   fi
 
+  # Check if we're using the enhanced display from rcon_interface.sh
+  if [ -f "/tmp/enhanced_shutdown_display" ]; then
+    # Skip the countdown display since it's already being handled by rcon_interface.sh
+    # Just execute the shutdown logic
+    
+    # Send a final notification
+    if [ "${API_CONTAINER_RESTART}" = "TRUE" ]; then
+      send_rcon_command "ServerChat Server is restarting NOW! Saving world data..."
+    else
+      send_rcon_command "ServerChat Server is shutting down NOW! Saving world data..."
+    fi
+    
+    # Save the world
+    echo "Saving world data..."
+    send_rcon_command "saveworld"
+    
+    # Wait for the save to complete
+    echo "Waiting for save completion..."
+    local save_wait=0
+    local save_wait_max=60
+    
+    while [ $save_wait -lt $save_wait_max ] && ! save_complete_check; do
+      sleep 2
+      save_wait=$((save_wait + 2))
+    done
+    
+    # Execute the shutdown
+    echo "Sending shutdown command to server..."
+    send_rcon_command "DoExit"
+    
+    # Wait for the server to stop
+    echo "Waiting for server to exit..."
+    local stop_wait=0
+    local max_stop_wait=60
+    
+    while [ $stop_wait -lt $max_stop_wait ] && ! server_stopped_check; do
+      sleep 2
+      stop_wait=$((stop_wait + 2))
+    done
+    
+    # Create the shutdown complete flag
+    touch "$SHUTDOWN_COMPLETE_FLAG"
+    
+    # Return early - we're done with the shutdown
+    return 0
+  fi
+
+  # Original countdown display logic - only used when not being called from rcon_interface.sh
   local total_seconds=$((duration_in_minutes * 60))
   local seconds_remaining=$total_seconds
   local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
@@ -204,7 +263,9 @@ initiate_shutdown() {
   echo "Press Ctrl+C to exit this display (process will continue in background)"
   
   # First notification always happens at the start
-  send_rcon_command "ServerChat $shutdown_message $duration_in_minutes minute(s)"
+  if [ "${SKIP_INITIAL_NOTIFICATION}" != "TRUE" ]; then
+    send_rcon_command "ServerChat $shutdown_message $duration_in_minutes minute(s)"
+  fi
   
   # Track when we last sent a notification to avoid duplicates
   local last_notification_time=$seconds_remaining
