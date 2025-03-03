@@ -2,12 +2,174 @@
 
 source /home/pok/scripts/common.sh
 
+# Check if we're restarting from a container restart
+if [ -f "/home/pok/restart_reason.flag" ] && [ "$(cat /home/pok/restart_reason.flag)" = "API_RESTART" ]; then
+  echo "🔄 Container restarted for API mode recovery"
+  RESTART_MODE=true
+  # Remove the flag file
+  rm -f "/home/pok/restart_reason.flag"
+  
+  if [ "${API}" = "TRUE" ]; then
+    echo "🖥️ API mode container recovery - setting up fresh environment..."
+    # Force a complete environment reset
+    export XDG_RUNTIME_DIR=/run/user/$(id -u)
+    export STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam"
+    export STEAM_COMPAT_DATA_PATH="/home/pok/.steam/steam/steamapps/compatdata/2430930"
+    export WINEDLLOVERRIDES="version=n,b"
+    export WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx"
+    export DISPLAY=:0.0
+    
+    # Kill any leftover processes
+    pkill -9 -f "AsaApiLoader.exe" >/dev/null 2>&1 || true
+    pkill -9 -f "ArkAscendedServer.exe" >/dev/null 2>&1 || true
+    pkill -9 -f "wine" >/dev/null 2>&1 || true
+    pkill -9 -f "wineserver" >/dev/null 2>&1 || true
+    pkill -9 -f "Xvfb" >/dev/null 2>&1 || true
+    sleep 2
+    
+    # Clean up X11 sockets completely
+    if [ -d "/tmp/.X11-unix" ]; then
+      rm -rf /tmp/.X11-unix/* 2>/dev/null || true
+      mkdir -p /tmp/.X11-unix
+      chmod 1777 /tmp/.X11-unix
+    fi
+    
+    # Remove PID file
+    if [ -f "$PID_FILE" ]; then
+      echo "- Removing stale PID file..."
+      rm -f "$PID_FILE"
+    fi
+  fi
+fi
+
+# Check whether we're called from restart or directly
+if [ "$1" = "--from-restart" ] || [ -f "/tmp/restart_in_progress" ]; then
+  RESTART_MODE=true
+  # If restart flag exists, remove it
+  rm -f "/tmp/restart_in_progress" 2>/dev/null || true
+  echo "🔄 Running in restart mode - using specialized environment setup..."
+  
+  # Force reset environment variables that are critical for API mode
+  if [ "${API}" = "TRUE" ]; then
+    echo "🖥️ Forcing Xvfb setup for API restart mode..."
+    export XDG_RUNTIME_DIR=/run/user/$(id -u)
+    export STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam"
+    export STEAM_COMPAT_DATA_PATH="/home/pok/.steam/steam/steamapps/compatdata/2430930"
+    export WINEDLLOVERRIDES="version=n,b"
+    export WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx"
+    export DISPLAY=:0.0
+    
+    # Kill any existing Xvfb processes to ensure clean state
+    pkill -9 -f "Xvfb" >/dev/null 2>&1 || true
+    sleep 2
+    
+    # Clean up X11 sockets completely
+    if [ -d "/tmp/.X11-unix" ]; then
+      rm -rf /tmp/.X11-unix/* 2>/dev/null || true
+      mkdir -p /tmp/.X11-unix
+      chmod 1777 /tmp/.X11-unix
+    fi
+    
+    # Explicitly start Xvfb here for API mode restart
+    Xvfb :0 -screen 0 1024x768x16 2>/dev/null &
+    XVFB_RESTART_PID=$!
+    echo "- Started Xvfb with PID: $XVFB_RESTART_PID"
+    sleep 2
+    
+    # Verify Xvfb is running
+    if kill -0 $XVFB_RESTART_PID 2>/dev/null; then
+      echo "- ✅ Virtual display is running on :0.0"
+    else
+      echo "- ⚠️ Primary virtual display failed. Trying backup display..."
+      export DISPLAY=:1.0
+      Xvfb :1 -screen 0 1024x768x16 2>/dev/null &
+      XVFB_RESTART_PID=$!
+      sleep 2
+    fi
+    
+    # Ensure log directories are created for API mode
+    echo "- Creating log directories to ensure visibility..."
+    mkdir -p "${ASA_DIR}/ShooterGame/Saved/Logs"
+    mkdir -p "${ASA_DIR}/ShooterGame/Binaries/Win64/logs"
+    chmod -R 755 "${ASA_DIR}/ShooterGame/Saved/Logs"
+    chmod -R 755 "${ASA_DIR}/ShooterGame/Binaries/Win64/logs"
+    
+    # Create a symlink to ShooterGame.log in more accessible location for monitoring
+    if [ ! -L "/home/pok/shooter_game.log" ]; then
+      ln -sf "${ASA_DIR}/ShooterGame/Saved/Logs/ShooterGame.log" "/home/pok/shooter_game.log" 2>/dev/null || true
+    fi
+  fi
+fi
+
+# Enhanced cleanup for API=TRUE to ensure clean server startup
+if [ "${API}" = "TRUE" ]; then
+  echo "🧹 API mode: Performing enhanced environment cleanup for a clean start..."
+  
+  # Kill any existing Wine/Proton processes
+  if pgrep -f "wine" >/dev/null 2>&1 || pgrep -f "wineserver" >/dev/null 2>&1; then
+    echo "   - Cleaning up Wine/Proton processes..."
+    pkill -9 -f "wine" >/dev/null 2>&1 || true
+    pkill -9 -f "wineserver" >/dev/null 2>&1 || true
+    sleep 2
+  fi
+  
+  # Don't kill Xvfb if we're in restart mode - we just started it above
+  if [ "$RESTART_MODE" != "true" ]; then
+    # Kill any existing Xvfb processes
+    if pgrep -f "Xvfb" >/dev/null 2>&1; then
+      echo "   - Cleaning up Xvfb processes..."
+      pkill -9 -f "Xvfb" >/dev/null 2>&1 || true
+      sleep 2
+    fi
+    
+    # Clean up X11 sockets
+    if [ -d "/tmp/.X11-unix" ]; then
+      echo "   - Cleaning up X11 sockets..."
+      rm -rf /tmp/.X11-unix/* 2>/dev/null || true
+      mkdir -p /tmp/.X11-unix
+      chmod 1777 /tmp/.X11-unix
+    fi
+  else
+    echo "   - Skipping Xvfb cleanup in restart mode (already handled)"
+  fi
+  
+  # Remove PID file if it exists
+  if [ -f "$PID_FILE" ]; then
+    echo "   - Removing stale PID file..."
+    rm -f "$PID_FILE"
+  fi
+  
+  echo "✅ Environment cleanup completed."
+fi
+
 # Configure ulimit
 ulimit -n 100000
 
 echo ""
 echo "🎮 ==== ARK SURVIVAL ASCENDED SERVER STARTING ==== 🎮"
 echo ""
+
+# Handle log rotation on startup
+echo "🔄 Checking for old log files to rotate..."
+# Rotate ShooterGame.log if it exists
+if [ -f "${ASA_DIR}/ShooterGame/Saved/Logs/ShooterGame.log" ]; then
+  TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+  echo "📄 Renaming existing ShooterGame.log to ShooterGame.log.${TIMESTAMP}"
+  mv "${ASA_DIR}/ShooterGame/Saved/Logs/ShooterGame.log" "${ASA_DIR}/ShooterGame/Saved/Logs/ShooterGame.log.${TIMESTAMP}"
+fi
+
+# Rotate API logs if they exist
+if [ -d "${ASA_DIR}/ShooterGame/Binaries/Win64/logs" ] && [ "$(ls -A ${ASA_DIR}/ShooterGame/Binaries/Win64/logs/*.log 2>/dev/null)" ]; then
+  TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+  echo "📄 Renaming existing API log files..."
+  for logfile in ${ASA_DIR}/ShooterGame/Binaries/Win64/logs/*.log; do
+    if [ -f "$logfile" ]; then
+      newname="${logfile}.${TIMESTAMP}"
+      echo "   - Renaming $(basename "$logfile") to $(basename "$newname")"
+      mv "$logfile" "$newname"
+    fi
+  done
+fi
 
 # Create directories if not already present
 mkdir -p ${ASA_DIR}/Engine/Binaries/ThirdParty/Steamworks/Steamv153/Win64/
@@ -73,6 +235,12 @@ export CONTAINER_MODE="TRUE"
 
 # Robust virtual display setup for headless operation
 setup_virtual_display() {
+  # If we're in restart mode and API=TRUE, we already set up Xvfb above, so skip this
+  if [ "$RESTART_MODE" = "true" ] && [ "${API}" = "TRUE" ]; then
+    echo "🖥️ Virtual display already set up in restart mode, skipping..."
+    return 0
+  fi
+  
   echo "🖥️ Setting up virtual display for headless operation..."
   export DISPLAY=:0.0
   
@@ -403,6 +571,89 @@ fi
   fi
 } &
 MONITOR_PID=$!
+
+# After the server has successfully started, set up a monitoring loop to detect when it exits
+# This will ensure that if the server issues its own restart command, we'll detect it and restart
+{
+  # Give the server time to fully start before monitoring
+  sleep 60
+  
+  echo "🔍 Starting server restart detection..."
+  
+  # Keep checking if the server process is running
+  while true; do
+    # Check if server process is running
+    if ! pgrep -f "AsaApiLoader.exe" >/dev/null 2>&1 && ! pgrep -f "ArkAscendedServer.exe" >/dev/null 2>&1; then
+      # Server process not found, check if this is a deliberate shutdown
+      if [ -f "/home/pok/shutdown.flag" ]; then
+        echo "🛑 Detected shutdown flag. Not restarting server."
+        break
+      else
+        # This might be a server-initiated restart, wait a moment to be sure
+        echo "⚠️ Server process not found. Waiting to confirm if this is a restart..."
+        sleep 10
+        
+        # Check again to make sure the server is really gone
+        if ! pgrep -f "AsaApiLoader.exe" >/dev/null 2>&1 && ! pgrep -f "ArkAscendedServer.exe" >/dev/null 2>&1; then
+          echo "🔄 Detected server self-restart. Initiating simplified restart process..."
+          
+          # If in API mode and EXIT_ON_API_RESTART is enabled, trigger container restart
+          if [ "${API}" = "TRUE" ] && [ "${EXIT_ON_API_RESTART:-TRUE}" = "TRUE" ]; then
+            echo "🔄 API mode detected - using container restart strategy for self-restart"
+            
+            # Create flag files for container restart detection
+            echo "$(date) - Container exiting for automatic restart due to server self-restart" > /home/pok/container_restart.log
+            echo "API_RESTART" > /home/pok/restart_reason.flag
+            
+            # Perform basic cleanup
+            echo "Cleaning up processes before container restart..."
+            pkill -9 -f "wine" >/dev/null 2>&1 || true
+            pkill -9 -f "wineserver" >/dev/null 2>&1 || true
+            
+            # Remove PID file if it exists
+            if [ -f "$PID_FILE" ]; then
+              echo "- Removing stale PID file..."
+              rm -f "$PID_FILE"
+            fi
+            
+            echo "🔄 Exiting container for automatic restart..."
+            sleep 3
+            exit 0
+          else
+            # Perform basic cleanup - but don't handle Xvfb, let restart_server.sh do that
+            echo "Performing basic process cleanup..."
+            
+            # Kill any Wine/Proton processes
+            if pgrep -f "wine" >/dev/null 2>&1 || pgrep -f "wineserver" >/dev/null 2>&1; then
+              echo "- Cleaning up Wine/Proton processes..."
+              pkill -9 -f "wine" >/dev/null 2>&1 || true
+              pkill -9 -f "wineserver" >/dev/null 2>&1 || true
+              sleep 2
+            fi
+            
+            # Remove PID file if it exists
+            if [ -f "$PID_FILE" ]; then
+              echo "- Removing stale PID file..."
+              rm -f "$PID_FILE"
+            fi
+            
+            echo "Process cleanup completed. Running restart_server.sh immediate..."
+            
+            # Use the restart_server.sh script with the restart flag
+            /home/pok/scripts/restart_server.sh immediate
+            
+            echo "🔄 Restart command issued. Exiting monitoring loop."
+            break
+          fi
+        fi
+      fi
+    fi
+    
+    # Check every 30 seconds
+    sleep 30
+  done
+} &
+RESTART_MONITOR_PID=$!
 
 # Keep the init.sh script running to prevent container from exiting
 # This will not block log display since logs are handled separately

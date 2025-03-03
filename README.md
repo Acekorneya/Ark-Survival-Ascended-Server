@@ -118,6 +118,7 @@ Before using POK-manager.sh, ensure that you have the following prerequisites in
 - `-beta`: Switches to beta mode, using the beta branch for updates and beta Docker images.
 - `-stable`: Switches to stable mode, using the master branch for updates and stable Docker images.
 - `-API <TRUE|FALSE> <instance_name|-all>`: Enables or disables AsaApi for specified instance(s).
+- `-api-recovery`: Check and recover API instances with container restart - useful for automatic monitoring via cron.
 - `-version`: Displays the current version of POK-manager.
 
 ### Examples
@@ -152,10 +153,18 @@ To schedule automatic restarts using cron, add an entry to your crontab file. He
   0 0 * * 0 /path/to/POK-manager.sh -restart 5 my_instance
   ```
 
+> **Note:** When using `-restart` with instances that have `API=TRUE`, the script automatically uses a special restart process that stops and starts the container instead of using the in-game restart command. This ensures proper restarting for API-enabled servers.
+
 - Save the world of all instances every 30 minutes:
   ```
   */30 * * * * /path/to/POK-manager.sh -saveworld -all
   ```
+
+- Automatic recovery for API-enabled instances every 15 minutes:
+  ```
+  */15 * * * * /path/to/POK-manager.sh -api-recovery
+  ```
+  This specialized command checks all API=TRUE instances and automatically restarts any container where the server process has crashed but the container is still running. This is particularly useful for API mode servers which can sometimes crash while their containers remain active.
 
 #### Custom RCON Commands
 You can execute custom RCON commands using the `-custom` flag followed by the command and the instance name or `-all` for all instances. Here are a few examples:
@@ -442,6 +451,48 @@ When you enable the API feature:
 3. The Visual C++ 2019 Redistributable (required by AsaApi) will be automatically installed in the Proton environment
 4. The server will start using AsaApiLoader.exe instead of ArkAscendedServer.exe
 5. On subsequent starts, the container will check for AsaApi updates and install them if available
+
+### Special Handling for API Mode Restarts
+
+AsaApi instances require special handling when restarting. POK-manager includes a specialized restart mechanism for API=TRUE instances:
+
+#### API Mode Restart Process
+
+When using the `-restart` command on an instance with API=TRUE, POK-manager:
+
+1. Detects that the instance is in API mode
+2. Sends a shutdown command with the specified countdown
+3. Waits for the server to completely shut down
+4. Stops the Docker container entirely
+5. Starts a fresh container
+
+This approach ensures a clean environment for API mode restarts, which solves common issues where API-enabled servers fail to restart properly when using the in-game restart command.
+
+```bash
+# Restart an API-enabled instance with a 5-minute countdown
+./POK-manager.sh -restart 5 my_api_instance
+
+# This automatically uses the container-level restart approach
+```
+
+#### Automatic Recovery for API Instances
+
+POK-manager includes an automatic recovery system specifically designed for API mode instances:
+
+1. A new `-api-recovery` command that checks all API=TRUE instances:
+   - Verifies if the ARK server process is running inside the container
+   - If the container is running but the server process is not, it restarts the container
+   - This provides automatic recovery for crashed API mode servers
+
+2. You can set up automatic monitoring via cron:
+   ```
+   # Check every 15 minutes and recover any API instances that have crashed
+   */15 * * * * /path/to/POK-manager.sh -api-recovery
+   ```
+
+3. This is particularly useful for servers that occasionally crash but don't trigger a container failure.
+
+This approach provides a robust solution for API mode servers, ensuring they can properly restart and automatically recover from crashes.
 
 ### Windows Dependencies in Linux Environment
 

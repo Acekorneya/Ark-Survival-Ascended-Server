@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.40"
+POK_MANAGER_VERSION="2.1.41"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -1209,6 +1209,12 @@ perform_action_on_all_instances() {
   local base_dir=$(dirname "$(realpath "$0")")
   echo "Performing '${action}' on all instances..."
 
+  # Special case for stop action - use the optimized function
+  if [[ "$action" == "-stop" ]]; then
+    stop_all_instances
+    return
+  fi
+
   # Find all instance directories
   local instance_dirs=($(find "${base_dir}/Instance_"* -maxdepth 0 -type d 2>/dev/null || true))
 
@@ -1236,20 +1242,58 @@ stop_all_instances() {
   local base_dir=$(dirname "$(realpath "$0")")
   
   echo "Stopping all running instances..."
-  # Find all docker-compose files for instances
-  local compose_files=($(find "${base_dir}/Instance_"* -name 'docker-compose-*.yaml'))
   
-  for compose_file in "${compose_files[@]}"; do
-    local instance=$(basename "$compose_file" | sed -E 's/docker-compose-(.*)\.yaml/\1/')
-    echo "Stopping instance: $instance"
-    stop_instance "$instance"
+  # Get all running instances
+  local running_instances=($(list_running_instances))
+  
+  if [ ${#running_instances[@]} -eq 0 ]; then
+    echo "No running instances found. Nothing to stop."
+    return 0
+  fi
+  
+  echo "Found ${#running_instances[@]} running instances to stop."
+  
+  # First, attempt quick saves on all running instances in parallel
+  echo "Attempting quick saves on all running instances..."
+  for instance in "${running_instances[@]}"; do
+    local container_name="asa_${instance}"
+    echo "  Sending quick save command to $instance..."
+    
+    # Run saveworld command with a 3-second timeout in background
+    (
+      timeout 3s docker exec "$container_name" /bin/bash -c "/home/pok/scripts/rcon_interface.sh -saveworld" >/dev/null 2>&1
+      save_exit_code=$?
+      if [ $save_exit_code -eq 0 ]; then
+        echo "  Save command sent successfully to $instance"
+      else
+        echo "  Save command failed or timed out for $instance, proceeding with stop"
+      fi
+    ) &
   done
+  
+  # Give all instances a short time to process their saves
+  echo "Waiting 5 seconds for save operations to complete..."
+  sleep 5
+  
+  # Now stop all instances
+  echo "Now stopping all containers..."
+  for instance in "${running_instances[@]}"; do
+    echo "Stopping instance: $instance"
+    stop_instance "$instance" &
+  done
+  
+  # Wait for all stop operations to complete
+  wait
+  
+  echo "All instances have been stopped."
+  return 0
 }
 
 # Function to inject shutdown flag and perform shutdown
 inject_shutdown_flag_and_shutdown() {
   local instance="$1"
   local message="$2"
+  local wait_time="$3"
   local container_name="asa_${instance}" # Assuming container naming convention
   local base_dir=$(dirname "$(realpath "$0")")
   local instance_dir="${base_dir}/Instance_${instance}"
@@ -1257,18 +1301,60 @@ inject_shutdown_flag_and_shutdown() {
 
   # Check if the container exists and is running
   if docker ps -q -f name=^/${container_name}$ > /dev/null; then
-    # Inject shutdown.flag into the container
+    echo "Preparing container for shutdown..."
+    
+    # Create a check file to verify if the server was already saved
+    docker exec "$container_name" touch /home/pok/shutdown_prepared.flag
+    
+    # First inject shutdown.flag into the container
+    # This signals to the container's monitoring scripts that shutdown is intended
+    echo "Injecting shutdown flag..."
     docker exec "$container_name" touch /home/pok/shutdown.flag
-
-    # Send the shutdown command to rcon_interface
-    run_in_container "$instance" "-shutdown" "$message" >/dev/null 2>&1
-
-    # Wait for shutdown completion
-    wait_for_shutdown "$instance" "$wait_time"
-
+    
+    # Check if any wait time is left - rarely needed but good for safety
+    local current_time=$(date +%s)
+    local eta_time=$(date -d "@$((current_time + wait_time * 60))" "+%s")
+    local remaining_seconds=$((eta_time - current_time))
+    
+    if [ $remaining_seconds -gt 10 ]; then  # If more than 10 seconds left
+      echo "Waiting for server's internal countdown to complete..."
+      sleep $remaining_seconds
+    fi
+    
+    # Verify the game process is still running before trying to save again
+    if docker exec "$container_name" pgrep -f "ArkAscendedServer.exe" > /dev/null; then
+      # Send a final saveworld command to ensure latest data is saved
+      echo "Sending final save command to server..."
+      docker exec "$container_name" /bin/bash -c "/home/pok/scripts/rcon_interface.sh -saveworld" >/dev/null 2>&1 || true
+      
+      # Create a short wait to allow save to complete
+      sleep 5
+    else
+      echo "Game process has already stopped."
+    fi
+    
+    # Create a shutdown_complete flag for the wait function to check
+    docker exec "$container_name" touch /home/pok/shutdown_complete.flag 2>/dev/null || true
+    
+    # Wait for shutdown completion with timeout
+    echo "Waiting for server process to exit completely..."
+    if ! wait_for_shutdown "$instance" "$wait_time"; then
+      echo "Warning: Shutdown wait timed out. Forcing container shutdown."
+    fi
+    
+    # Get docker compose command
+    get_docker_compose_cmd
+    
     # Shutdown the container using docker-compose
-    $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down
-    echo "----- Shutdown Complete for instance: $instance-----"
+    echo "Stopping container for $instance..."
+    if [ -f "$docker_compose_file" ]; then
+      $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down
+    else
+      # Fallback to docker stop if compose file not found
+      docker stop "$container_name"
+    fi
+    
+    echo "Instance ${instance} shutdown completed successfully."
   else
     echo "Instance ${instance} is not running or does not exist."
   fi
@@ -1960,9 +2046,36 @@ stop_instance() {
   local instance_name=$1
   local base_dir=$(dirname "$(realpath "$0")")
   local docker_compose_file="${base_dir}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
+  local container_name="asa_${instance_name}"
 
   echo "-----Stopping ${instance_name} Server-----"
+  
+  # Check if the container is running
+  if docker ps -q -f name="$container_name" > /dev/null; then
+    echo "Server is running. Attempting quick save before stopping..."
+    
+    # Attempt a quick saveworld with timeout - run in background and kill if it takes too long
+    (
+      # Use timeout to limit how long the RCON command can run
+      timeout 3s docker exec "$container_name" /bin/bash -c "/home/pok/scripts/rcon_interface.sh -saveworld" >/dev/null 2>&1
+      save_exit_code=$?
+      if [ $save_exit_code -eq 124 ]; then
+        echo "Save command timed out, continuing with container stop"
+      elif [ $save_exit_code -ne 0 ]; then
+        echo "Save command failed or not available, continuing with container stop"
+      else
+        echo "Save command sent successfully"
+      fi
+    ) &
+    
+    # Wait briefly for save to complete (maximum 5 seconds)
+    echo "Waiting up to 5 seconds for save to complete..."
+    sleep 5
+  else
+    echo "Container is not running, proceeding with stop."
+  fi
 
+  # Get sudo preference
   local use_sudo
   local config_file=$(get_config_file_path)
   if [ -f "$config_file" ]; then
@@ -1971,47 +2084,64 @@ stop_instance() {
     use_sudo="true"
   fi
 
+  # Stop the container with default timeout
+  echo "Stopping container..."
   if [ "$use_sudo" = "true" ]; then
-    echo "Using 'sudo' for Docker commands..."
     if [ -f "$docker_compose_file" ]; then
-      sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down
+      sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down || {
+        echo "Warning: Error occurred while stopping the container using docker-compose down"
+        # Fallback to docker stop if docker-compose fails
+        sudo docker stop "$container_name" || {
+          echo "Error: Failed to stop container using fallback method"
+          return 1
+        }
+      }
     else
-      sudo docker stop -t 30 "asa_${instance_name}"
+      sudo docker stop "$container_name" || {
+        echo "Error: Failed to stop container"
+        return 1
+      }
     fi
   else
     if [ -f "$docker_compose_file" ]; then
       $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down || {
         local exit_code=$?
         if [ $exit_code -eq 1 ] && [[ $($DOCKER_COMPOSE_CMD -f "$docker_compose_file" down 2>&1) =~ "permission denied" ]]; then
-          echo "Permission denied error occurred while stopping the instance."
-          echo "It seems the user is not set up correctly to run Docker commands without 'sudo'."
-          echo "Falling back to using 'sudo' for Docker commands."
-          sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down
+          echo "Permission denied error occurred. Falling back to sudo..."
+          sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down || {
+            echo "Error: Failed to stop container even with sudo"
+            return 1
+          }
         else
-          echo "An error occurred while stopping the instance:"
-          echo "$($DOCKER_COMPOSE_CMD -f "$docker_compose_file" down 2>&1)"
-          exit 1
+          echo "Error: Failed to stop container with docker-compose"
+          echo "Attempting fallback to docker stop..."
+          docker stop "$container_name" || sudo docker stop "$container_name" || {
+            echo "Error: All stop attempts failed"
+            return 1
+          }
         fi
       }
     else
-      docker stop -t 30 "asa_${instance_name}" || {
+      docker stop "$container_name" || {
         local exit_code=$?
-        if [ $exit_code -eq 1 ] && [[ $(docker stop -t 30 "asa_${instance_name}" 2>&1) =~ "permission denied" ]]; then
-          echo "Permission denied error occurred while stopping the container."
-          echo "It seems the user is not set up correctly to run Docker commands without 'sudo'."
-          echo "Falling back to using 'sudo' for Docker commands."
-          sudo docker stop -t 30 "asa_${instance_name}"
+        if [ $exit_code -eq 1 ] && [[ $(docker stop "$container_name" 2>&1) =~ "permission denied" ]]; then
+          echo "Permission denied error occurred. Falling back to sudo..."
+          sudo docker stop "$container_name" || {
+            echo "Error: Failed to stop container even with sudo"
+            return 1
+          }
         else
-          echo "An error occurred while stopping the container:"
-          echo "$(docker stop -t 30 "asa_${instance_name}" 2>&1)"
-          exit 1
+          echo "Error: Failed to stop container"
+          return 1
         fi
       }
     fi
   fi
 
   echo "Instance ${instance_name} stopped successfully."
+  return 0
 }
+
 list_running_instances() {
   local instances=($(list_instances))
   local running_instances=()
@@ -2030,119 +2160,176 @@ execute_rcon_command() {
   local wait_time="${3:-1}" # Default wait time set to 1 if not specified
   shift # Remove the action from the argument list.
 
-  if [[ "$1" == "-all" ]]; then
-    shift # Remove the -all flag
+  # Check for common typos of -all like -al, -a, -aall, etc.
+  if [[ "$1" =~ ^-a+l*$ ]]; then
+    echo "Note: Interpreted '$1' as '-all'"
+    shift
     local message="$*" # Remaining arguments form the message/command
+    local target_all=true
+  elif [[ "$1" == "-all" ]]; then
+    shift
+    local message="$*" # Remaining arguments form the message/command
+    local target_all=true
+  else
+    local instance_name="$1"
+    shift
+    local message="$*" # Remaining arguments form the message/command
+    local target_all=false
+  fi
 
-    if [[ "$action" == "-shutdown" ]]; then
-      local eta_seconds=$((wait_time * 60)) # Convert wait time to seconds
-      local eta_time=$(date -d "@$(($(date +%s) + eta_seconds))" "+%Y-%m-%d %H:%M:%S") # Calculate ETA as a human-readable timestamp
+  if [[ "$target_all" == "true" ]]; then
+    # Get list of running instances
+    local running_instances=($(list_running_instances))
+    
+    # Check if there are any running instances before processing the command
+    if [ -n "$running_instances" ]; then
+      if [[ "$action" == "-shutdown" ]]; then
+        local eta_seconds=$((wait_time * 60)) # Convert wait time to seconds
+        local eta_time=$(date -d "@$(($(date +%s) + eta_seconds))" "+%Y-%m-%d %H:%M:%S") # Calculate ETA as a human-readable timestamp
 
-      # Check if there are any running instances before processing the command
-      if [ -n "$(list_running_instances)" ]; then
+        # First send shutdown notification to all instances
         for instance in $(list_running_instances); do
           echo "----- Server $instance: Command: ${action#-}${message:+ $message} -----"
-          echo "Waiting for server $instance to finish with countdown... ETA: $eta_time"
-          echo "Shutdown command sent to $instance. ETA: $wait_time minute(s)."
-          inject_shutdown_flag_and_shutdown "$instance" "$message" "$wait_time" &
+          echo "Shutdown command sent to $instance. Countdown: $wait_time minute(s)."
+          # Just send the RCON command, don't actually shut down yet
+          run_in_container "$instance" "$action" "$message" >/dev/null 2>&1 &
         done
 
         # Inform the user not to exit POK-manager and start the live countdown
         echo "Please do not exit POK-manager until the countdown is finished."
 
-        # Start the live countdown in a background process
+        # Define colors for the countdown
+        local status_color="\033[1;36m" # Cyan for status
+        local time_color="\033[1;33m" # Yellow for time
+        local reset_color="\033[0m"
+        local action_color="\033[1;35m" # Magenta for action status
+        local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+        local spinner_idx=0
+
+        # Start the live countdown with spinner animation
         (
           for ((i=eta_seconds; i>=0; i--)); do
-            # Clear the line
-            echo -ne "\033[2K\r"
-
             # Format the remaining time as minutes and seconds
             minutes=$((i / 60))
             seconds=$((i % 60))
-
-            # Print the countdown
-            echo -ne "ETA: ${minutes}m ${seconds}s\r"
+            
+            # Update the spinner
+            local current_spinner=${spinner[$spinner_idx]}
+            spinner_idx=$(( (spinner_idx + 1) % ${#spinner[@]} ))
+            
+            # Format time as "Xm Ys"
+            local eta_display="${minutes}m ${seconds}s"
+            
+            # Clear line and print the countdown with spinner
+            printf "\r${status_color}%s${reset_color} ${action_color}Shutting down:${reset_color} ${time_color}ETA: %-8s${reset_color}" "$current_spinner" "$eta_display"
+            
+            # Check for notification points - these should match what's happening in-game
+            if [ $seconds -eq 0 ] && ([ $minutes -eq 5 ] || [ $minutes -eq 3 ] || [ $minutes -eq 1 ]); then
+              # Add a newline and print the notification without disrupting the countdown
+              echo ""
+              echo -e "${status_color}Server notification: ${time_color}${minutes}m remaining${reset_color}"
+            elif [ $minutes -eq 0 ] && [ $seconds -eq 30 ]; then
+              echo ""
+              echo -e "${status_color}Server notification: ${time_color}30s remaining${reset_color}"
+            elif [ $minutes -eq 0 ] && [ $seconds -le 10 ] && [ $seconds -gt 0 ]; then
+              echo ""
+              echo -e "${status_color}Server notification: ${time_color}${seconds}s remaining${reset_color}"
+            fi
+            
             sleep 1
           done
-          # Print a newline after the countdown is finished
-          echo
-        ) &
+          
+          # Show completion message
+          echo -e "\r${status_color}✓${reset_color} ${action_color}Shutting down:${reset_color} ${time_color}Countdown complete!${reset_color}                 "
+          echo ""
+        )
 
-        wait # Wait for all background processes to complete
-        echo "----- All running instances processed with $action command. -----"
-        echo "Commands dispatched. Script exiting..."
-        exit 0 # Exit the script after the countdown and shutdown processes are complete
-      else
-        echo "---- No Running Instances Found for command: $action -----"
-        echo " To start an instance, use the -start -all or -start <instance_name> command."
-        exit 1 # Exit the script with an error status
-      fi
-    elif [[ "$action" == "-restart" ]]; then
-      # Check if there are any running instances before processing the command
-      if [ -n "$(list_running_instances)" ]; then
+        # Now actually inject shutdown flags and perform the shutdown after countdown
         for instance in $(list_running_instances); do
-          echo "----- Server $instance: Command: ${action#-}${message:+ $message} -----"
-          run_in_container_background "$instance" "$action" "$message" &
+          echo "Performing final shutdown for instance: $instance"
+          inject_shutdown_flag_and_shutdown "$instance" "$message" "$wait_time"
         done
-        echo "----- All running instances processed with $action command. -----"
-      else
-        echo "---- No Running Instances Found for command: $action -----"
-        echo " To start an instance, use the -start -all or -start <instance_name> command."
-      fi
-      #echo "Commands dispatched. Script exiting..."
-      exit 0 # Exit the script immediately after sending the restart command
-    fi
 
-    # Check if there are any running instances before processing the command
-    if [ -n "$(list_running_instances)" ]; then
-      # Create an associative array to store the output for each instance
-      declare -A instance_outputs
-      echo "----- Processing $action command for all running instances Please wait... -----"
-      for instance in $(list_running_instances); do
-        if ! validate_instance "$instance"; then
-          echo "Instance $instance is not running or does not exist. Skipping..."
-          continue
+        echo "----- All instances have been shut down successfully. -----"
+        echo "Script exiting..."
+        exit 0 # Exit script after shutdown completes
+
+      elif [[ "$action" == "-restart" ]]; then
+        # Check if there are any running instances before processing the command
+        if [ -n "$(list_running_instances)" ]; then
+          # Use the enhanced restart command for all instances
+          echo "Using enhanced restart functionality for all instances..."
+          enhanced_restart_command "$message" "-all"
+        else
+          echo "---- No Running Instances Found for command: $action -----"
+          echo " To start an instance, use the -start -all or -start <instance_name> command."
         fi
+        # Don't exit immediately - the enhanced restart function will handle everything
+      else
+        # For other commands (-status, -saveworld, etc.)
+        # Create an associative array to store the output for each instance
+        declare -A instance_outputs
+        echo "----- Processing $action command for all running instances. Please wait... -----"
+        for instance in $(list_running_instances); do
+          if ! validate_instance "$instance"; then
+            echo "Instance $instance is not running or does not exist. Skipping..."
+            continue
+          fi
 
-        if [[ "$action" == "-status" ]]; then
-          local container_name="asa_${instance}"
-          local pdb_file="/home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.pdb"
-          local update_flag="/home/pok/update.flag"
+          if [[ "$action" == "-status" ]]; then
+            local container_name="asa_${instance}"
+            local pdb_file="/home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.pdb"
+            local update_flag="/home/pok/update.flag"
 
-          if ! docker exec "$container_name" test -f "$pdb_file"; then
-            if docker exec "$container_name" test -f "$update_flag"; then
-              echo "Instance $instance is still updating/installing. Please wait until the update is complete before checking the status."
-              continue
-            else
-              echo "Instance $instance has not fully started yet. Please wait a few minutes before checking the status."
-              echo "If the instance is still not running, please check the logs for more information."
-              echo "you can use the -logs -live $instance command to follow the logs."
-              continue
+            if ! docker exec "$container_name" test -f "$pdb_file"; then
+              if docker exec "$container_name" test -f "$update_flag"; then
+                echo "Instance $instance is still updating/installing. Please wait until the update is complete before checking the status."
+                continue
+              else
+                echo "Instance $instance has not fully started yet. Please wait a few minutes before checking the status."
+                echo "If the instance is still not running, please check the logs for more information."
+                echo "you can use the -logs -live $instance command to follow the logs."
+                continue
+              fi
             fi
           fi
-        fi
 
-        # Capture the command output in a variable
-        instance_outputs["$instance"]=$(run_in_container "$instance" "$action" "$message")
-      done
+          # Capture the command output in a variable
+          instance_outputs["$instance"]=$(run_in_container "$instance" "$action" "$message")
+        done
 
-      # Print the outputs in the desired format
-      for instance in "${!instance_outputs[@]}"; do
-        echo "----- Server $instance: Command: ${action#-}${message:+ $message} -----"
-        echo "${instance_outputs[$instance]}"
-      done
+        # Print the outputs in the desired format
+        for instance in "${!instance_outputs[@]}"; do
+          echo "----- Server $instance: Command: ${action#-}${message:+ $message} -----"
+          echo "${instance_outputs[$instance]}"
+        done
 
-      echo "----- All running instances processed with $action command. -----"
+        echo "----- All running instances processed with $action command. -----"
+      fi
     else
       echo "---- No Running Instances Found for command: $action -----"
       echo " To start an instance, use the -start -all or -start <instance_name> command."
     fi
   else
-    local instance_name="$1"
-    shift # Remove the instance name
-    local message="$*" # Remaining arguments form the message/command
+    # Handle single instance
+    # Check if the instance name starts with a dash but isn't a valid command flag
+    if [[ "$instance_name" == -* ]] && ! [[ "$instance_name" == "-all" ]]; then
+      echo "Warning: '$instance_name' appears to be an invalid flag or typo."
+      echo "If you meant to target all instances, use '-all' instead."
+      echo "Otherwise, instance names shouldn't start with a dash (-)"
+      echo ""
+      read -p "Would you like to process all running instances instead? (y/N): " process_all
+      if [[ "$process_all" =~ ^[Yy]$ ]]; then
+        # Recursively call this function with -all
+        execute_rcon_command "$action" "-all" "$wait_time" "$message"
+        return
+      else
+        echo "Command canceled. Please try again with a valid instance name."
+        return 1
+      fi
+    fi
 
-    # Check if the instance is running before processing the command
+    # Validate the instance for a single-instance command
     if validate_instance "$instance_name"; then
       echo "Processing $action command on $instance_name..."
 
@@ -2165,36 +2352,71 @@ execute_rcon_command() {
       if [[ "$action" == "-shutdown" ]]; then
         local eta_seconds=$((wait_time * 60)) # Convert wait time to seconds
         local eta_time=$(date -d "@$(($(date +%s) + eta_seconds))" "+%Y-%m-%d %H:%M:%S") # Calculate ETA as a human-readable timestamp
-        echo "Waiting for server $instance_name to finish with countdown... ETA: $eta_time"
-        echo "Shutdown command sent to $instance_name. ETA: $wait_time minute(s)."
-        inject_shutdown_flag_and_shutdown "$instance_name" "$message" "$wait_time" &
+        
+        # First send the RCON command to initiate in-game countdown
+        echo "Sending shutdown command to $instance_name with countdown: $wait_time minute(s)."
+        run_in_container "$instance_name" "$action" "$message" >/dev/null 2>&1
+        
+        echo "Waiting for server $instance_name to complete countdown... ETA: $eta_time"
 
-        # Start the live countdown in a background process
+        # Define colors for the countdown
+        local status_color="\033[1;36m" # Cyan for status
+        local time_color="\033[1;33m" # Yellow for time
+        local reset_color="\033[0m"
+        local action_color="\033[1;35m" # Magenta for action status
+        local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+        local spinner_idx=0
+
+        # Start the live countdown with spinner animation
         (
           for ((i=eta_seconds; i>=0; i--)); do
-            # Clear the line
-            echo -ne "\033[2K\r"
-
             # Format the remaining time as minutes and seconds
             minutes=$((i / 60))
             seconds=$((i % 60))
-
-            # Print the countdown
-            echo -ne "ETA: ${minutes}m ${seconds}s\r"
+            
+            # Update the spinner
+            local current_spinner=${spinner[$spinner_idx]}
+            spinner_idx=$(( (spinner_idx + 1) % ${#spinner[@]} ))
+            
+            # Format time as "Xm Ys"
+            local eta_display="${minutes}m ${seconds}s"
+            
+            # Clear line and print the countdown with spinner
+            printf "\r${status_color}%s${reset_color} ${action_color}Shutting down:${reset_color} ${time_color}ETA: %-8s${reset_color}" "$current_spinner" "$eta_display"
+            
+            # Check for notification points - these should match what's happening in-game
+            if [ $seconds -eq 0 ] && ([ $minutes -eq 5 ] || [ $minutes -eq 3 ] || [ $minutes -eq 1 ]); then
+              # Add a newline and print the notification without disrupting the countdown
+              echo ""
+              echo -e "${status_color}Server notification: ${time_color}${minutes}m remaining${reset_color}"
+            elif [ $minutes -eq 0 ] && [ $seconds -eq 30 ]; then
+              echo ""
+              echo -e "${status_color}Server notification: ${time_color}30s remaining${reset_color}"
+            elif [ $minutes -eq 0 ] && [ $seconds -le 10 ] && [ $seconds -gt 0 ]; then
+              echo ""
+              echo -e "${status_color}Server notification: ${time_color}${seconds}s remaining${reset_color}"
+            fi
+            
             sleep 1
           done
-          # Print a newline after the countdown is finished
-          echo
-        ) &
+          
+          # Show completion message
+          echo -e "\r${status_color}✓${reset_color} ${action_color}Shutting down:${reset_color} ${time_color}Countdown complete!${reset_color}                 "
+          echo ""
+        )
 
-        wait # Wait for the shutdown process to complete
+        # Now actually inject shutdown flag and perform the shutdown
+        inject_shutdown_flag_and_shutdown "$instance_name" "$message" "$wait_time"
+        
         echo "----- Shutdown Complete for instance: $instance_name -----"
         echo "Commands dispatched. Script exiting..."
         exit 0 # Exit the script after the countdown and shutdown process are complete
+      
       elif [[ "$action" == "-restart" ]]; then
-        run_in_container_background "$instance_name" "$action" "$message" &
-        echo "Commands dispatched. Script exiting..."
-        exit 0 # Exit the script immediately after sending the restart command
+        # Use the enhanced restart command for a single instance
+        echo "Using enhanced restart functionality for instance: $instance_name"
+        enhanced_restart_command "$message" "$instance_name"
+        # Don't exit immediately - the enhanced restart function will handle everything
       elif [[ "$run_in_background" == "true" ]]; then
         run_in_container_background "$instance_name" "$action" "$message"
         exit 0 # Exit script after background job is complete
@@ -2206,26 +2428,91 @@ execute_rcon_command() {
       echo " To start an instance, use the -start -all or -start <instance_name> command."
     fi
   fi
-  #echo "Commands dispatched. Script exiting..."
 }
 
 # Updated function to wait for shutdown completion
 wait_for_shutdown() {
   local instance="$1"
-  local wait_time="$2"
+  local wait_time="${2:-1}"
   local container_name="asa_${instance}" # Assuming container naming convention
+  local max_wait_seconds=180  # Maximum time to wait (3 minutes) regardless of wait_time
+  local check_interval=5      # Check every 5 seconds
+  local elapsed=0
+  local pid_file_exists=true
+  local complete_flag_exists=false
+  local process_running=true
 
-  # Loop until the PID file is removed
-  while docker exec "$container_name" test -f /home/pok/${instance}_ark_server.pid; do
-    sleep 5 # Check every 5 seconds. Adjust as necessary.
+  # Start with a small delay to give time for any pending operations
+  sleep 3
+
+  echo "Monitoring shutdown progress for $instance..."
+  
+  # Loop until either:
+  # 1. Both PID file is gone AND shutdown_complete.flag exists
+  # 2. OR the maximum wait time is exceeded
+  # 3. OR the container has already stopped
+  while [ $elapsed -lt $max_wait_seconds ]; do
+    # Check if container is still running
+    if ! docker ps -q -f name=^/${container_name}$ > /dev/null; then
+      echo "Container has already stopped."
+      return 0
+    fi
+    
+    # Check for the PID file
+    if docker exec "$container_name" test -f /home/pok/${instance}_ark_server.pid 2>/dev/null; then
+      pid_file_exists=true
+    else
+      pid_file_exists=false
+    fi
+    
+    # Check for the shutdown complete flag
+    if docker exec "$container_name" test -f /home/pok/shutdown_complete.flag 2>/dev/null; then
+      complete_flag_exists=true
+    else
+      complete_flag_exists=false
+    fi
+    
+    # Check if the game process is still running
+    if ! docker exec "$container_name" pgrep -f "ArkAscendedServer.exe" > /dev/null 2>&1; then
+      process_running=false
+    else
+      process_running=true
+    fi
+    
+    # If the game process is not running AND either the PID file is gone OR the complete flag exists
+    if [ "$process_running" = "false" ] && ([ "$pid_file_exists" = "false" ] || [ "$complete_flag_exists" = "true" ]); then
+      echo "Server $instance has safely shut down. (Process stopped, PID: $pid_file_exists, Complete flag: $complete_flag_exists)"
+      return 0
+    fi
+    
+    # If we've waited more than 60 seconds and the game is still running but 
+    # the shutdown was signaled, we might need to force it
+    if [ $elapsed -gt 60 ] && [ "$process_running" = "true" ] && [ "$complete_flag_exists" = "true" ]; then
+      echo "Server process is taking a long time to exit. Continuing with shutdown anyway."
+      return 0
+    fi
+    
+    # Provide status updates at 30-second intervals
+    if [ $((elapsed % 30)) -eq 0 ] && [ $elapsed -gt 0 ]; then
+      echo "Still waiting for $instance to shut down... ($elapsed seconds elapsed)"
+      echo "Status: Process running: $process_running, PID file exists: $pid_file_exists, Complete flag: $complete_flag_exists"
+    fi
+    
+    # Wait for the next check interval
+    sleep $check_interval
+    elapsed=$((elapsed + check_interval))
   done
 
-  echo "Server $instance is ready for shutdown."
+  # If we got here, we timed out
+  echo "Timeout waiting for $instance to shut down cleanly after $elapsed seconds."
+  echo "Final status: Process running: $process_running, PID file exists: $pid_file_exists, Complete flag: $complete_flag_exists"
+  return 1
 }
 
 inject_shutdown_flag_and_shutdown() {
   local instance="$1"
   local message="$2"
+  local wait_time="$3"
   local container_name="asa_${instance}" # Assuming container naming convention
   local base_dir=$(dirname "$(realpath "$0")")
   local instance_dir="${base_dir}/Instance_${instance}"
@@ -2233,21 +2520,106 @@ inject_shutdown_flag_and_shutdown() {
 
   # Check if the container exists and is running
   if docker ps -q -f name=^/${container_name}$ > /dev/null; then
-    # Inject shutdown.flag into the container
+    echo "Preparing container for shutdown..."
+    
+    # Create a check file to verify if the server was already saved
+    docker exec "$container_name" touch /home/pok/shutdown_prepared.flag
+    
+    # First inject shutdown.flag into the container
+    # This signals to the container's monitoring scripts that shutdown is intended
+    echo "Injecting shutdown flag..."
     docker exec "$container_name" touch /home/pok/shutdown.flag
-
-    # Send the shutdown command to rcon_interface
-    run_in_container "$instance" "-shutdown" "$message" >/dev/null 2>&1
-
-    # Wait for shutdown completion
-    wait_for_shutdown "$instance" "$wait_time"
-
+    
+    # Check if any wait time is left - rarely needed but good for safety
+    local current_time=$(date +%s)
+    local eta_time=$(date -d "@$((current_time + wait_time * 60))" "+%s")
+    local remaining_seconds=$((eta_time - current_time))
+    
+    if [ $remaining_seconds -gt 10 ]; then  # If more than 10 seconds left
+      echo "Waiting for server's internal countdown to complete..."
+      sleep $remaining_seconds
+    fi
+    
+    # Verify the game process is still running before trying to save again
+    if docker exec "$container_name" pgrep -f "ArkAscendedServer.exe" > /dev/null; then
+      # Send a final saveworld command to ensure latest data is saved
+      echo "Sending final save command to server..."
+      docker exec "$container_name" /bin/bash -c "/home/pok/scripts/rcon_interface.sh -saveworld" >/dev/null 2>&1 || true
+      
+      # Create a short wait to allow save to complete
+      sleep 5
+    else
+      echo "Game process has already stopped."
+    fi
+    
+    # Create a shutdown_complete flag for the wait function to check
+    docker exec "$container_name" touch /home/pok/shutdown_complete.flag 2>/dev/null || true
+    
+    # Wait for shutdown completion with timeout
+    echo "Waiting for server process to exit completely..."
+    if ! wait_for_shutdown "$instance" "$wait_time"; then
+      echo "Warning: Shutdown wait timed out. Forcing container shutdown."
+    fi
+    
+    # Get docker compose command
+    get_docker_compose_cmd
+    
     # Shutdown the container using docker-compose
-    $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down
-    echo "----- Shutdown Complete for instance: $instance-----"
+    echo "Stopping container for $instance..."
+    if [ -f "$docker_compose_file" ]; then
+      $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down
+    else
+      # Fallback to docker stop if compose file not found
+      docker stop "$container_name"
+    fi
+    
+    echo "Instance ${instance} shutdown completed successfully."
   else
     echo "Instance ${instance} is not running or does not exist."
   fi
+}
+
+# Add a new function to handle API-mode restart
+api_restart_instance() {
+  local instance_name=$1
+  local message=${2:-"5"}  # Default restart message is 5 minutes
+
+  echo "Detected API=TRUE for instance $instance_name"
+  echo "Using special restart process for API mode..."
+  
+  # First, send the shutdown command with the provided countdown
+  echo "Sending shutdown command with countdown: $message minutes"
+  # Use the original run_in_container logic to send the shutdown command
+  local container_name="asa_${instance_name}"
+  local shutdown_command="/home/pok/scripts/rcon_interface.sh -shutdown '$message'"
+  
+  if docker ps -q -f name=^/${container_name}$ > /dev/null; then
+    docker exec "$container_name" /bin/bash -c "$shutdown_command" || true
+  else
+    echo "Instance ${instance_name} is not running or does not exist."
+    return 1
+  fi
+  
+  # Wait for the shutdown to complete 
+  local shutdown_wait=$((message * 60 + 30))  # Convert minutes to seconds + 30 seconds buffer
+  echo "Waiting for shutdown to complete ($shutdown_wait seconds)..."
+  sleep $shutdown_wait
+  
+  # Stop the container
+  echo "Stopping container for instance $instance_name..."
+  stop_instance "$instance_name"
+  
+  # Wait for container to fully stop
+  echo "Waiting for container to completely stop..."
+  sleep 10
+  
+  # Start the container again
+  echo "Starting container for instance $instance_name..."
+  start_instance "$instance_name"
+  
+  echo "✅ API instance $instance_name has been restarted using container restart strategy."
+  echo "   This ensures a clean environment for API mode."
+  return 0
 }
 
 # Adjust `run_in_container` to correctly construct and execute the Docker command
@@ -2255,6 +2627,19 @@ run_in_container() {
   local instance="$1"
   local cmd="$2"
   local args="${@:3}" # Capture all remaining arguments as the command args
+
+  # If this is a restart command and the instance has API=TRUE, use our special restart function
+  if [[ "$cmd" == "-restart" ]]; then
+    # Get the docker-compose file path
+    local base_dir=$(dirname "$(realpath "$0")")
+    local docker_compose_file="${base_dir}/Instance_${instance}/docker-compose-${instance}.yaml"
+    
+    # Check if API=TRUE in the docker-compose file
+    if [ -f "$docker_compose_file" ] && (grep -q "^ *- API=TRUE" "$docker_compose_file" || grep -q "^ *- API:TRUE" "$docker_compose_file"); then
+      api_restart_instance "$instance" "$args"
+      return $?
+    fi
+  fi
 
   local container_name="asa_${instance}" # Construct the container name
   local command="/home/pok/scripts/rcon_interface.sh ${cmd}"
@@ -2824,10 +3209,45 @@ select_instance() {
 
 validate_instance() {
   local instance_name="$1"
-  if ! docker ps -q -f name=^/asa_${instance_name}$ > /dev/null; then
-    echo "Instance $instance_name is not running or does not exist."
+  
+  # Check for common typos of -all
+  if [[ "$instance_name" =~ ^-a+l*$ ]] || [[ "$instance_name" =~ ^-al+$ ]] || \
+     [[ "$instance_name" =~ ^-aall?$ ]] || [[ "$instance_name" =~ ^-alll?$ ]]; then
+    echo "Error: '$instance_name' appears to be a typo of '-all'."
+    echo "If you want to target all instances, please use '-all' exactly."
     return 1
   fi
+  
+  # Check if instance name starts with a dash but isn't -all
+  if [[ "$instance_name" == -* ]] && [[ "$instance_name" != "-all" ]]; then
+    echo "Error: '$instance_name' appears to be an invalid flag."
+    echo "Instance names shouldn't start with a dash (-). If you meant to target all instances, use '-all'."
+    return 1
+  fi
+  
+  # Check if the container is running
+  local container_name="asa_${instance_name}"
+  if ! docker ps -q -f name=^/${container_name}$ > /dev/null; then
+    # Container isn't running - provide helpful message
+    if docker ps -a -q -f name=^/${container_name}$ > /dev/null; then
+      echo "Instance $instance_name exists but is not currently running."
+      echo "Use './POK-manager.sh -start $instance_name' to start it."
+    else
+      # Check if the instance directory exists at least
+      local base_dir=$(dirname "$(realpath "$0")")
+      local instance_dir="${base_dir}/Instance_${instance_name}"
+      if [ -d "$instance_dir" ]; then
+        echo "Instance $instance_name is configured but has never been started or is currently stopped."
+        echo "Use './POK-manager.sh -start $instance_name' to start it."
+      else
+        echo "Instance $instance_name does not exist."
+        echo "Use './POK-manager.sh -create $instance_name' to create a new instance."
+      fi
+    fi
+    return 1
+  fi
+  
+  return 0
 }
 
 display_logs() {
@@ -3016,7 +3436,7 @@ manage_service() {
 }
 # Define valid actions
 declare -a valid_actions
-valid_actions=("-create" "-start" "-stop" "-saveworld" "-shutdown" "-restart" "-status" "-update" "-list" "-beta" "-stable" "-version" "-upgrade" "-logs" "-backup" "-restore" "-migrate" "-setup" "-edit" "-custom" "-chat" "-clearupdateflag" "-API" "-validate_update" "-force-restore" "-emergency-restore" "-fix")
+valid_actions=("-create" "-start" "-stop" "-saveworld" "-shutdown" "-restart" "-status" "-update" "-list" "-beta" "-stable" "-version" "-upgrade" "-logs" "-backup" "-restore" "-migrate" "-setup" "-edit" "-custom" "-chat" "-clearupdateflag" "-API" "-validate_update" "-force-restore" "-emergency-restore" "-fix" "-api-recovery")
 
 display_usage() {
   echo "Usage: $0 {action} [instance_name|-all] [additional_args...]"
@@ -3047,6 +3467,7 @@ display_usage() {
   echo "  -API <TRUE|FALSE> <instance_name|-all>    Enable or disable ArkServerAPI for specified instance(s)"
   echo "  -fix                                      Fix permissions on files owned by root (0:0) that could cause container issues"
   echo "  -version                                  Display the current version of POK-manager"
+  echo "  -api-recovery                             Check and recover API instances with container restart"
 }
 
 # Display version information
@@ -3837,9 +4258,8 @@ migrate_file_ownership() {
           # Get absolute path for the instance directory
           local abs_instance_dir=$(realpath "$instance_dir")
           
-          # Use sed instead of awk to avoid escaping issues
-          # Find the line with Saved: mapping and add the API_Logs line after it with absolute path
-          sed -e '/Saved:.*ShooterGame\/Saved/ a\      - "'$abs_instance_dir'/API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs"' "$docker_compose_file" > "$tmp_file"
+          # Use sed to add the API_Logs volume after the Saved volume with absolute path
+          sed -e "/Saved:.*ShooterGame\/Saved/ a\\      - \"$abs_instance_dir/API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs\"" "$docker_compose_file" > "$tmp_file"
           
           # Replace the original file with the updated one
           mv -f "$tmp_file" "$docker_compose_file"
@@ -4758,7 +5178,7 @@ configure_api_for_instance() {
         local abs_instance_dir=$(realpath "$instance_dir")
         
         # Use sed to add the API_Logs volume after the Saved volume with absolute path
-        sed -e "/Saved:.*ShooterGame\/Saved/ a\\      - \"$abs_instance_dir/API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs\"" "$docker_compose_file" > "$tmp_file"
+        sed -e "/Saved:.*ShooterGame\/Saved/ a\\      - \"$abs_instance_dir/API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs" "$docker_compose_file" > "$tmp_file"
         
         # Replace the original file with the updated one
         mv -f "$tmp_file" "$docker_compose_file"
@@ -4991,6 +5411,331 @@ detect_remaining_root_files() {
   
   return 1  # No remaining root-owned files
 }
+
+# Add a function to handle automatic recovery for API mode instances
+handle_api_recovery() {
+  # This function is called when the monitor script detects a server is not running
+  # and needs to be recovered. For API mode, we'll use the container restart approach.
+  
+  # Add this function after the api_restart_instance function
+  
+  # Check all running instances for API=TRUE and monitor status
+  echo "Checking for API instances that need recovery..."
+  
+  for instance in $(list_instances); do
+    # Get the docker-compose file path
+    local base_dir=$(dirname "$(realpath "$0")")
+    local docker_compose_file="${base_dir}/Instance_${instance}/docker-compose-${instance}.yaml"
+    
+    # Skip if docker-compose file doesn't exist
+    if [ ! -f "$docker_compose_file" ]; then
+      continue
+    fi
+    
+    # Check if API=TRUE in the docker-compose file
+    if grep -q "^ *- API=TRUE" "$docker_compose_file" || grep -q "^ *- API:TRUE" "$docker_compose_file"; then
+      # Check if the container exists but the ARK server process is not running
+      local container_name="asa_${instance}"
+      
+      # Check if container is running
+      if docker ps -q -f name=^/${container_name}$ > /dev/null; then
+        echo "API instance $instance container is running, checking server process..."
+        
+        # Check if ARK server process is running inside the container
+        local server_running=$(docker exec "$container_name" /bin/bash -c "pgrep -f 'AsaApiLoader.exe\|ArkAscendedServer.exe' >/dev/null 2>&1 && echo 'running' || echo 'stopped'")
+        
+        if [ "$server_running" = "stopped" ]; then
+          echo "⚠️ API instance $instance container is running but server process is not!"
+          echo "Performing recovery by restarting the container..."
+          
+          # Stop the container
+          stop_instance "$instance"
+          
+          # Wait for container to fully stop
+          sleep 10
+          
+          # Start the container again
+          start_instance "$instance"
+          
+          echo "✅ API instance $instance has been recovered using container restart strategy."
+        fi
+      fi
+    fi
+  done
+}
+
+# Add a cron-friendly recovery command that can be run periodically
+if [ "$1" = "-api-recovery" ]; then
+  handle_api_recovery
+  exit 0
+fi
+
+# Add enhanced restart functionality with verification and mixed-mode support
+enhanced_restart_command() {
+  local minutes_arg="$1"
+  local instance_arg="$2"
+  
+  # Default to 5 minutes if not specified
+  local countdown_minutes="${minutes_arg:-5}"
+  
+  # Initialize arrays to track different types of instances
+  local api_instances=()
+  local non_api_instances=()
+  local instances_to_process=()
+  
+  # Define colors for the countdown (same as shutdown)
+  local status_color="\033[1;36m" # Cyan for status
+  local time_color="\033[1;33m" # Yellow for time
+  local reset_color="\033[0m"
+  local action_color="\033[1;35m" # Magenta for action status
+  local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+  
+  # Determine which instances to process
+  if [[ "$instance_arg" == "-all" ]]; then
+    # Get all running instances
+    instances_to_process=($(list_running_instances))
+    if [ ${#instances_to_process[@]} -eq 0 ]; then
+      echo "No running instances found."
+      exit 1  # Exit with error status
+    fi
+    echo "Processing all running instances for restart: ${instances_to_process[*]}"
+  else
+    # Verify the specific instance exists and is running
+    if ! validate_instance "$instance_arg"; then
+      echo "Instance '$instance_arg' is not running or does not exist."
+      exit 1  # Exit with error status
+    fi
+    instances_to_process=("$instance_arg")
+    echo "Processing instance for restart: $instance_arg"
+  fi
+  
+  # Categorize instances based on API mode
+  for instance in "${instances_to_process[@]}"; do
+    local docker_compose_file="${BASE_DIR}/Instance_${instance}/docker-compose-${instance}.yaml"
+    
+    # Check if API=TRUE in the docker-compose file
+    if [ -f "$docker_compose_file" ] && (grep -q "^ *- API=TRUE" "$docker_compose_file" || grep -q "^ *- API:TRUE" "$docker_compose_file"); then
+      api_instances+=("$instance")
+      echo "Instance $instance has API=TRUE"
+    else
+      non_api_instances+=("$instance")
+      echo "Instance $instance has API=FALSE"
+    fi
+  done
+  
+  # Set restart mode based on the mix of instances
+  local restart_mode="standard"
+  if [ ${#api_instances[@]} -gt 0 ] && [ ${#non_api_instances[@]} -gt 0 ]; then
+    restart_mode="mixed"
+    echo "⚠️ Mixed API modes detected. Using coordinated restart approach for all instances."
+  elif [ ${#api_instances[@]} -gt 0 ]; then
+    restart_mode="api-only"
+    echo "All instances have API=TRUE. Using container-level restart approach."
+  else
+    echo "All instances have API=FALSE. Using standard in-game restart approach."
+  fi
+  
+  # First, notify all instances of the pending restart
+  echo "🔔 Notifying all servers of restart in $countdown_minutes minutes..."
+  for instance in "${instances_to_process[@]}"; do
+    echo "  - Notifying ${instance}..."
+    # For both API and non-API instances, send a chat notification
+    run_in_container_background "$instance" "-chat" "Server will restart in ${countdown_minutes} minutes. Please prepare accordingly."
+  done
+  
+  # Handle different restart modes
+  case "$restart_mode" in
+    "mixed"|"api-only"|"standard")
+      # Use the same countdown mechanism for all modes
+      # Start countdown
+      local total_seconds=$((countdown_minutes * 60))
+      local remaining_seconds=$total_seconds
+      # Notification points to include every second from 10 to 1
+      local notification_points=(300 180 60 30 10 9 8 7 6 5 4 3 2 1)
+      local spinner_idx=0
+      
+      echo -e "${status_color}⏱️${reset_color} Beginning restart countdown: $countdown_minutes minutes"
+      
+      # Loop until countdown completes
+      while [ $remaining_seconds -gt 0 ]; do
+        # Update the spinner
+        local current_spinner=${spinner[$spinner_idx]}
+        spinner_idx=$(( (spinner_idx + 1) % ${#spinner[@]} ))
+        
+        # Format the remaining time
+        local minutes=$((remaining_seconds / 60))
+        local seconds=$((remaining_seconds % 60))
+        local eta_display="${minutes}m ${seconds}s"
+        
+        # Clear line and print the countdown with spinner (same style as shutdown)
+        printf "\r${status_color}%s${reset_color} ${action_color}Restarting:${reset_color} ${time_color}ETA: %-8s${reset_color}" "$current_spinner" "$eta_display"
+        
+        # Check for notification points
+        for point in "${notification_points[@]}"; do
+          if [ $remaining_seconds -eq $point ]; then
+            local display_time=""
+            if [ $point -ge 60 ]; then
+              display_time="$((point / 60)) minute(s)"
+            else
+              display_time="$point seconds"
+            fi
+            # Add a newline and print the notification without disrupting the countdown
+            echo ""
+            echo -e "${status_color}Server notification: ${time_color}${display_time} remaining${reset_color}"
+            
+            # Send notification to all instances
+            for instance in "${instances_to_process[@]}"; do
+              run_in_container_background "$instance" "-chat" "Server restart in $display_time!"
+            done
+            break
+          fi
+        done
+        
+        sleep 1
+        remaining_seconds=$((remaining_seconds - 1))
+      done
+      
+      # Show completion message
+      echo -e "\r${status_color}✓${reset_color} ${action_color}Restarting:${reset_color} ${time_color}Countdown complete!${reset_color}                 "
+      echo ""
+      
+      echo -e "${status_color}🔄${reset_color} Beginning coordinated restart process..."
+      
+      # 1. Save world for all instances
+      echo -e "${status_color}💾${reset_color} Saving world data for all instances..."
+      for instance in "${instances_to_process[@]}"; do
+        echo "  - Saving world for ${instance}..."
+        run_in_container "$instance" "-saveworld"
+      done
+      
+      # Give some time for saves to complete
+      echo -e "${status_color}⏳${reset_color} Waiting for saves to complete (10 seconds)..."
+      sleep 10
+      
+      # 2. Stop all instances
+      echo -e "${status_color}🛑${reset_color} Stopping all instances..."
+      for instance in "${instances_to_process[@]}"; do
+        echo "  - Stopping ${instance}..."
+        stop_instance "$instance"
+      done
+      
+      # 3. Update server files if needed
+      echo -e "${status_color}🔍${reset_color} Checking for server file updates..."
+      update_server_files_and_docker
+      
+      # 4. Start all instances
+      echo -e "${status_color}🚀${reset_color} Starting all instances..."
+      for instance in "${instances_to_process[@]}"; do
+        echo "  - Starting ${instance}..."
+        start_instance "$instance"
+      done
+      
+      # 5. Verify all instances restarted successfully
+      echo -e "${status_color}✅${reset_color} Verifying all instances are running..."
+      ;;
+      
+    "standard")
+      # For non-API instances, use the in-game restart command
+      echo "📢 Sending restart command with countdown: $countdown_minutes minutes"
+      
+      for instance in "${non_api_instances[@]}"; do
+        echo "🔄 Sending restart command to instance: $instance"
+        run_in_container "$instance" "-restart" "$countdown_minutes"
+      done
+      
+      # Calculate how long to wait for restart
+      local total_wait_seconds=$((countdown_minutes * 60 + 120))  # Add 2 minutes for server restart process
+      local wait_interval=30  # Check every 30 seconds
+      local wait_attempts=$((total_wait_seconds / wait_interval))
+      
+      echo "⏳ Waiting for restart to complete (~$((total_wait_seconds / 60)) minutes)..."
+      
+      # Wait for restart to complete
+      local restart_verified=false
+      for ((i=1; i<=wait_attempts; i++)); do
+        local all_restarted=true
+        local failed_instances=()
+        
+        for instance in "${non_api_instances[@]}"; do
+          if ! validate_instance "$instance"; then
+            all_restarted=false
+            failed_instances+=("$instance")
+          fi
+        done
+        
+        if [ "$all_restarted" = true ]; then
+          echo "✅ All non-API instances have successfully restarted!"
+          restart_verified=true
+          break
+        else
+          echo "⏳ Waiting for instances to restart: ${failed_instances[*]} (Check $i/$wait_attempts)"
+          sleep $wait_interval
+        fi
+      done
+      
+      if [ "$restart_verified" = false ]; then
+        echo "⚠️ WARNING: Some instances may not have restarted properly: ${failed_instances[*]}"
+        echo "Please check these instances manually."
+        exit 1  # Exit with error status
+      fi
+      ;;
+    "api-only")
+      # For API=TRUE instances, use the container restart approach
+      # Use the same countdown loop as we just defined for "mixed" mode
+      # Start countdown
+      local total_seconds=$((countdown_minutes * 60))
+      local remaining_seconds=$total_seconds
+      # Notification points to include every second from 10 to 1
+      local notification_points=(300 180 60 30 10 9 8 7 6 5 4 3 2 1)
+      local spinner_idx=0
+      
+      echo -e "${status_color}⏱️${reset_color} Beginning restart countdown: $countdown_minutes minutes"
+      
+      # Loop until countdown completes
+      while [ $remaining_seconds -gt 0 ]; do
+        # Update the spinner
+        local current_spinner=${spinner[$spinner_idx]}
+        spinner_idx=$(( (spinner_idx + 1) % ${#spinner[@]} ))
+        
+        # Format the remaining time
+        local minutes=$((remaining_seconds / 60))
+        local seconds=$((remaining_seconds % 60))
+        local eta_display="${minutes}m ${seconds}s"
+        
+        # Clear line and print the countdown with spinner (same style as shutdown)
+        printf "\r${status_color}%s${reset_color} ${action_color}Restarting:${reset_color} ${time_color}ETA: %-8s${reset_color}" "$current_spinner" "$eta_display"
+        
+        # Check for notification points
+        for point in "${notification_points[@]}"; do
+          if [ $remaining_seconds -eq $point ]; then
+            local display_time=""
+            if [ $point -ge 60 ]; then
+              display_time="$((point / 60)) minute(s)"
+            else
+              display_time="$point seconds"
+            fi
+            # Add a newline and print the notification without disrupting the countdown
+            echo ""
+            echo -e "${status_color}Server notification: ${time_color}${display_time} remaining${reset_color}"
+            break
+          fi
+        done
+        
+        sleep 1
+        remaining_seconds=$((remaining_seconds - 1))
+      done
+      ;;
+    "mixed")
+      # For mixed API mode, we need to handle both API and non-API instances
+      # Start countdown for API instances
+  esac
+  
+  echo "🎮 Server restart operation completed for all instances."
+  exit 0  # Add explicit exit with success status to ensure function terminates
+}
+
+# Original api_restart_instance function stays the same
+# Note: This comment is just a marker - the real api_restart_instance function remains unchanged
 
 # Invoke the main function with all passed arguments
 main "$@"

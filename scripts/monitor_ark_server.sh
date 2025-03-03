@@ -1,21 +1,81 @@
 #!/bin/bash
 source /home/pok/scripts/rcon_commands.sh
 source /home/pok/scripts/common.sh
+source /home/pok/scripts/shutdown_server.sh
 
 NO_RESTART_FLAG="/home/pok/shutdown.flag"
+RESTART_FLAG="/home/pok/restart.flag"
+SHUTDOWN_COMPLETE_FLAG="/home/pok/shutdown_complete.flag"
 INITIAL_STARTUP_DELAY=120  # Delay in seconds before starting the monitoring
 lock_file="$ASA_DIR/updating.flag"
 RECOVERY_LOG="/home/pok/server_recovery.log"
+EXIT_ON_API_RESTART="${EXIT_ON_API_RESTART:-TRUE}" # Default to TRUE - controls container exit behavior
 
 # Restart update window
 RESTART_NOTICE_MINUTES=${RESTART_NOTICE_MINUTES:-30}  # Default to 30 minutes if not set
 UPDATE_WINDOW_MINIMUM_TIME=${UPDATE_WINDOW_MINIMUM_TIME:-12:00 AM} # Default to "12:00 AM" if not set
 UPDATE_WINDOW_MAXIMUM_TIME=${UPDATE_WINDOW_MAXIMUM_TIME:-11:59 PM} # Default to "11:59 PM" if not set
 
+# Function to restart container for API mode
+exit_container_for_recovery() {
+  local current_time=$(date "+%Y-%m-%d %H:%M:%S")
+  echo "[$current_time] 🔄 Using container exit/restart strategy for API mode recovery..." | tee -a "$RECOVERY_LOG"
+  
+  # Create a flag file to indicate a clean exit for restart
+  echo "$(date) - Container exiting for automatic restart/recovery by orchestration system" > /home/pok/container_recovery.log
+  
+  # Create a flag file that will be detected on container restart
+  echo "API_RESTART" > /home/pok/restart_reason.flag
+  
+  echo "[$current_time] ⚠️ Container will now exit with code 0 for orchestration system to restart it" | tee -a "$RECOVERY_LOG"
+  echo "[$current_time] 📝 If container does not restart automatically, please restart it manually" | tee -a "$RECOVERY_LOG"
+  
+  # Before exiting, ensure world save is complete
+  # Use safe_container_stop function to ensure world save
+  echo "[$current_time] 💾 Ensuring world data is saved before container exit..." | tee -a "$RECOVERY_LOG"
+  safe_container_stop
+  
+  # Kill any running server processes first
+  if pgrep -f "AsaApiLoader.exe" >/dev/null 2>&1 || pgrep -f "ArkAscendedServer.exe" >/dev/null 2>&1; then
+    echo "[$current_time] Terminating any running server processes before exit..." | tee -a "$RECOVERY_LOG"
+    pkill -9 -f "AsaApiLoader.exe" >/dev/null 2>&1 || true
+    pkill -9 -f "ArkAscendedServer.exe" >/dev/null 2>&1 || true
+    pkill -9 -f "wine" >/dev/null 2>&1 || true
+    pkill -9 -f "wineserver" >/dev/null 2>&1 || true
+    sleep 2
+  fi
+  
+  # Make sure any existing shutdown flag is removed so a fresh restart can occur
+  if [ -f "$SHUTDOWN_COMPLETE_FLAG" ]; then
+    echo "[$current_time] Removing existing shutdown complete flag..." | tee -a "$RECOVERY_LOG"
+    rm -f "$SHUTDOWN_COMPLETE_FLAG"
+  fi
+  
+  # Allow some time for logs to be written
+  sleep 3
+  
+  # Exit the container with success code (0) which should trigger restart by orchestration
+  exit 0
+}
+
 # Enhanced recovery function with better logging and recovery 
 recover_server() {
   local current_time=$(date "+%Y-%m-%d %H:%M:%S")
   echo "[$current_time] Initiating server recovery procedure..." | tee -a "$RECOVERY_LOG"
+  
+  # Before recovery, ensure any ongoing shutdown completes
+  if [ -f "$SHUTDOWN_COMPLETE_FLAG" ]; then
+    echo "[$current_time] Found shutdown complete flag. Waiting for shutdown to complete..." | tee -a "$RECOVERY_LOG"
+    sleep 10
+    rm -f "$SHUTDOWN_COMPLETE_FLAG"
+  fi
+  
+  # For API mode, use the container exit/restart strategy if enabled
+  if [ "${API}" = "TRUE" ] && [ "${EXIT_ON_API_RESTART}" = "TRUE" ]; then
+    echo "[$current_time] API mode recovery - using container restart strategy..." | tee -a "$RECOVERY_LOG"
+    exit_container_for_recovery
+    # This function will not return as it exits the container
+  fi
   
   # Double-check server status with a more thorough approach
   local server_running=false
@@ -46,99 +106,22 @@ recover_server() {
     return 0
   fi
   
-  # Server is not running, check for Wine/Proton processes that might be stuck
-  if pgrep -f "wine" >/dev/null 2>&1 || pgrep -f "wineserver" >/dev/null 2>&1; then
-    echo "[$current_time] Found stuck Wine/Proton processes. Cleaning up..." | tee -a "$RECOVERY_LOG"
-    pkill -9 -f "wine" >/dev/null 2>&1 || true
-    pkill -9 -f "wineserver" >/dev/null 2>&1 || true
-    sleep 3
+  # Make sure any existing shutdown flag is removed for a clean restart
+  if [ -f "$SHUTDOWN_COMPLETE_FLAG" ]; then
+    echo "[$current_time] Removing existing shutdown complete flag before recovery..." | tee -a "$RECOVERY_LOG"
+    rm -f "$SHUTDOWN_COMPLETE_FLAG"
   fi
   
-  # Check for Xvfb and clean it up
-  if pgrep -f "Xvfb" >/dev/null 2>&1; then
-    echo "[$current_time] Found Xvfb processes. Cleaning up..." | tee -a "$RECOVERY_LOG"
-    pkill -9 -f "Xvfb" >/dev/null 2>&1 || true
-    sleep 2
-  fi
+  # Server is not running, using restart_server.sh for recovery
+  echo "[$current_time] Server is not running, using restart_server.sh for recovery..." | tee -a "$RECOVERY_LOG"
   
-  # Clean up X11 sockets
-  if [ -d "/tmp/.X11-unix" ]; then
-    echo "[$current_time] Cleaning up X11 sockets..." | tee -a "$RECOVERY_LOG"
-    rm -rf /tmp/.X11-unix/* 2>/dev/null || true
-    mkdir -p /tmp/.X11-unix
-    chmod 1777 /tmp/.X11-unix
-  fi
+  # Use restart_server.sh for consistency - with "immediate" parameter for instant restart
+  echo "[$current_time] Running restart_server.sh immediate..." | tee -a "$RECOVERY_LOG"
+  /home/pok/scripts/restart_server.sh immediate
   
-  # Remove PID file if it exists
-  if [ -f "$PID_FILE" ]; then
-    rm -f "$PID_FILE"
-  fi
-  
-  # Attempt server restart
-  echo "[$current_time] Attempting server restart..." | tee -a "$RECOVERY_LOG"
-  
-  # For API mode, need extra care
-  if [ "${API}" = "TRUE" ]; then
-    echo "[$current_time] API mode requires special handling. Verifying environment..." | tee -a "$RECOVERY_LOG"
-    # Run the environment verification like init.sh does
-    export DISPLAY=:0.0
-    export STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam"
-    export STEAM_COMPAT_DATA_PATH="/home/pok/.steam/steam/steamapps/compatdata/2430930"
-    export WINEDLLOVERRIDES="version=n,b"
-    
-    # Set up Xvfb again
-    Xvfb :0 -screen 0 1024x768x16 2>/dev/null &
-    sleep 2
-  fi
-  
-  # Use screen to launch the server with log visibility
-  # Attempt to use screen if available, otherwise fall back to basic method
-  SCREEN_AVAILABLE=false
-  if command -v screen >/dev/null 2>&1; then
-    SCREEN_AVAILABLE=true
-  else
-    # Try to install screen but don't fail if it doesn't work
-    echo "[$current_time] Attempting to install screen for better log visibility (optional)..." | tee -a "$RECOVERY_LOG"
-    apt-get update -qq && apt-get install -y screen >/dev/null 2>&1
-    # Check if installation succeeded
-    if command -v screen >/dev/null 2>&1; then
-      SCREEN_AVAILABLE=true
-      echo "[$current_time] ✅ Screen installed successfully!" | tee -a "$RECOVERY_LOG"
-    else
-      echo "[$current_time] ⚠️ Screen installation failed. Will use fallback method instead." | tee -a "$RECOVERY_LOG"
-    fi
-  fi
-  
-  # Launch the server differently based on whether screen is available
-  echo "[$current_time] Launching server via init.sh..." | tee -a "$RECOVERY_LOG"
-  mkdir -p /home/pok/logs
-  
-  if [ "$SCREEN_AVAILABLE" = true ]; then
-    # Launch using screen to maintain log visibility
-    screen -dmS ark_recovery bash -c "/home/pok/scripts/init.sh 2>&1 | tee -a /home/pok/recovery_launch.log; exec bash"
-    echo "[$current_time] Server launched in screen session. View logs with: screen -r ark_recovery" | tee -a "$RECOVERY_LOG"
-  else
-    # Fallback method - use nohup to run in background
-    nohup /home/pok/scripts/init.sh > /home/pok/logs/recovery_console.log 2>&1 &
-    echo "[$current_time] Server launched with fallback method. View logs with: tail -f /home/pok/logs/recovery_console.log" | tee -a "$RECOVERY_LOG"
-    echo "[$current_time] For detailed server logs once started: tail -f /home/pok/logs/server_console.log" | tee -a "$RECOVERY_LOG"
-  fi
-  
-  # Wait for the restart to take effect
-  sleep 20
-  
-  # Check if server came up
-  if is_process_running "true"; then
-    if [ "$SCREEN_AVAILABLE" = true ]; then
-      echo "[$current_time] Server successfully restarted! Use 'screen -r ark_recovery' to view logs." | tee -a "$RECOVERY_LOG"
-    else
-      echo "[$current_time] Server successfully restarted! View logs with: tail -f /home/pok/logs/server_console.log" | tee -a "$RECOVERY_LOG"
-    fi
-    return 0
-  else
-    echo "[$current_time] Server restart failed! Check logs for details." | tee -a "$RECOVERY_LOG"
-    return 1
-  fi
+  # Return success, as we've delegated the restart to restart_server.sh
+  echo "[$current_time] Restart command issued via restart_server.sh" | tee -a "$RECOVERY_LOG"
+  return 0
 }
 
 # Wait for the initial startup before monitoring
@@ -146,6 +129,13 @@ sleep $INITIAL_STARTUP_DELAY
 
 # Monitoring loop
 while true; do
+  # Check if there's an active shutdown in progress
+  if [ -f "$SHUTDOWN_COMPLETE_FLAG" ]; then
+    echo "Server shutdown/restart in progress, waiting before continuing monitoring..."
+    sleep 30
+    continue
+  fi
+
   # Check for stale update flags (older than 6 hours) 
   # This prevents server from being stuck in "updating" mode if an update was interrupted
   if [ -f "$lock_file" ]; then
@@ -188,7 +178,15 @@ while true; do
     update_window_upper_bound=$(date -d "${UPDATE_WINDOW_MAXIMUM_TIME}" +%s)
 
     if ((current_time - last_update_check_time > update_check_interval_seconds)) && ((current_time >= update_window_lower_bound && current_time <= update_window_upper_bound)); then
+      # Make sure any stale shutdown flags are cleared before update check
+      if [ -f "$SHUTDOWN_COMPLETE_FLAG" ]; then
+        echo "Removing stale shutdown complete flag before update check..."
+        rm -f "$SHUTDOWN_COMPLETE_FLAG"
+      fi
+      
       if /home/pok/scripts/POK_Update_Monitor.sh; then
+        # Set restart mode flag for proper messaging during restart
+        export API_CONTAINER_RESTART="TRUE"
         /home/pok/scripts/restart_server.sh $RESTART_NOTICE_MINUTES
       fi
       last_update_check_time=$current_time
