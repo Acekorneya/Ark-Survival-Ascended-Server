@@ -495,16 +495,8 @@ SCREEN_AVAILABLE=false
 if command -v screen >/dev/null 2>&1; then
   SCREEN_AVAILABLE=true
 else
-  # Try to install screen but don't fail if it doesn't work
-  echo "Attempting to install screen for better log visibility (optional)..."
-  apt-get update -qq && apt-get install -y screen >/dev/null 2>&1
-  # Check if installation succeeded
-  if command -v screen >/dev/null 2>&1; then
-    SCREEN_AVAILABLE=true
-    echo "✅ Screen installed successfully!"
-  else
-    echo "⚠️ Screen installation failed. Will use fallback method instead."
-  fi
+  # Don't try to install screen as non-root user
+  echo "Screen is not installed. Will use fallback method instead."
 fi
 
 # Launch the server differently based on whether screen is available
@@ -517,6 +509,21 @@ else
   # Fallback method - use nohup to run in background while still capturing logs
   echo "Starting server with fallback method (nohup)..."
   mkdir -p /home/pok/logs
+  
+  # First check if server files exist before trying to launch
+  if [ ! -f "/home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.exe" ]; then
+    echo "Server files not found. Running installation first..."
+    /home/pok/scripts/install_server.sh
+    
+    # Verify installation was successful
+    if [ ! -f "/home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.exe" ]; then
+      echo "ERROR: Server installation failed. Please check logs."
+      exit 1
+    else
+      echo "Server installation completed successfully."
+    fi
+  fi
+  
   nohup /home/pok/scripts/launch_ASA.sh > /home/pok/logs/server_console.log 2>&1 &
   SERVER_PID=$!
   echo "ARK server launched with PID: $SERVER_PID"

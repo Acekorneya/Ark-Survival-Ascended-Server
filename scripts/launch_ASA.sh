@@ -222,10 +222,29 @@ start_server() {
     notify_admin_commands_arg="-NotifyAdminCommandsInChat"
   fi
 
-  # Check if the server files exist
+  # Check if the server files exist with more detailed error reporting
   if [ ! -f "/home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.exe" ]; then
-    echo "Error: Server files not found. Please ensure the server is properly installed."
-    exit 1
+    echo "Error: ArkAscendedServer.exe not found at: /home/pok/arkserver/ShooterGame/Binaries/Win64/"
+    echo "Current directory structure:"
+    ls -la /home/pok/arkserver/ 2>/dev/null || echo "arkserver directory not found or not accessible"
+    
+    # Check if install needs to be run
+    if [ ! -d "/home/pok/arkserver/ShooterGame" ]; then
+      echo "ShooterGame directory not found. Server may not be installed."
+      echo "Running install_server.sh to attempt installation..."
+      /home/pok/scripts/install_server.sh
+      
+      # Check again after installation attempt
+      if [ ! -f "/home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.exe" ]; then
+        echo "Error: Server installation failed. Please check logs and ensure steamcmd has proper permissions."
+        exit 1
+      else
+        echo "Server installation completed successfully."
+      fi
+    else
+      echo "ShooterGame directory exists but executable is missing. Verify installation."
+      exit 1
+    fi
   fi
   
   # Setup ArkServerAPI if enabled

@@ -277,10 +277,74 @@ check_server_files() {
   return 0
 }
 
+# Function to check directory permissions and ownership
+check_directory_permissions() {
+  echo "Checking directory permissions..."
+  
+  # Get the current user ID
+  local current_uid=$(id -u)
+  
+  # List of essential directories to check
+  local directories=(
+    "$ASA_DIR"
+    "/home/pok/.steam/steam"
+    "/home/pok/.steam/steam/compatibilitytools.d"
+    "/home/pok/logs"
+    "/opt/steamcmd"
+  )
+  
+  local permission_issues=false
+  
+  for dir in "${directories[@]}"; do
+    echo "Checking directory: $dir"
+    
+    # Create the directory if it doesn't exist
+    if [ ! -d "$dir" ]; then
+      echo "  - Directory doesn't exist. Creating it..."
+      mkdir -p "$dir" 2>/dev/null || {
+        echo "  - ERROR: Failed to create directory $dir"
+        permission_issues=true
+        continue
+      }
+    fi
+    
+    # Check write permissions
+    if [ ! -w "$dir" ]; then
+      echo "  - WARNING: No write permission to $dir"
+      echo "  - Current permissions: $(ls -ld "$dir")"
+      echo "  - Attempting to fix permissions..."
+      chmod -R 755 "$dir" 2>/dev/null || echo "  - Failed to fix permissions"
+      permission_issues=true
+    else
+      echo "  - Write permissions OK"
+    fi
+  done
+  
+  # Check steamcmd executable
+  if [ -f "/opt/steamcmd/steamcmd.sh" ] && [ ! -x "/opt/steamcmd/steamcmd.sh" ]; then
+    echo "SteamCMD is not executable. Attempting to fix..."
+    chmod +x /opt/steamcmd/steamcmd.sh 2>/dev/null || echo "Failed to make steamcmd.sh executable"
+    permission_issues=true
+  fi
+  
+  if [ "$permission_issues" = "true" ]; then
+    echo "Some permission issues were detected. Server might not function correctly."
+    return 1
+  else
+    echo "Directory permissions check: PASSED"
+    return 0
+  fi
+}
+
 # Main function to run all checks
 run_all_checks() {
   echo "Running all pre-launch checks..."
   local all_passed=true
+  
+  # Check directory permissions first since other checks depend on it
+  if ! check_directory_permissions; then
+    all_passed=false
+  fi
   
   # Check for Proton installations
   if ! check_proton_installations; then
