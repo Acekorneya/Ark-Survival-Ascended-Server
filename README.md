@@ -94,6 +94,55 @@ Before using POK-manager.sh, ensure that you have the following prerequisites in
      sudo rm -rf Ark-Survival-Ascended-Server
      ```
 
+### Installation Tips for Different User Types
+
+#### For Root Users
+If you're installing as the root user or plan to run everything with sudo, follow these steps:
+
+1. **Important**: The container always runs internally as user 7777 (or 1000 for legacy versions), even when run as root.
+
+2. **Always use sudo with the script**:
+   ```bash
+   sudo ./POK-manager.sh <command>
+   ```
+
+3. **Set correct permissions for all files during setup**:
+   ```bash
+   sudo chown -R 7777:7777 /path/to/your/POK-manager/directory
+   ```
+
+4. **Fix permission issues during runtime**:
+   - If you encounter "Permission denied" or "Files not found" errors when starting the container, run:
+     ```bash
+     sudo chown -R 7777:7777 /path/to/your/POK-manager/ServerFiles
+     sudo chown -R 7777:7777 /path/to/your/POK-manager/Instance_*
+     ```
+
+5. **Remember**: Running as root doesn't bypass the need for correct file ownership. The container still requires files owned by UID 7777 or 1000 to function properly.
+
+#### For Non-Root Users (Recommended)
+If you're running as a non-root user (recommended for security):
+
+1. **Create a dedicated user** as described in the prerequisites:
+   ```bash
+   sudo groupadd -g 7777 pokuser
+   sudo useradd -u 7777 -g 7777 -m -s /bin/bash pokuser
+   ```
+
+2. **Switch to this user** to run commands:
+   ```bash
+   sudo su - pokuser
+   ```
+
+3. **Files automatically have the correct ownership** when created by this user.
+
+4. **Run without sudo** when logged in as this user:
+   ```bash
+   ./POK-manager.sh <command>
+   ```
+
+This approach provides better security while ensuring permissions are automatically correct.
+
 ## Usage
 
 ### Commands
@@ -268,6 +317,30 @@ The container runs with a fixed user ID (UID) and group ID (GID) that is set whe
 - 2_1_latest images use UID:GID 7777:7777 (default since version 2.1)
 
 **These values cannot be changed at runtime.** For proper file access, the files on your host system must be owned by a user with a matching UID:GID.
+
+### Running as Root User
+
+If you're running the container as the root user, you **must still ensure** that file permissions are set correctly:
+
+1. **Container User vs. Host User**: Even when you run commands as root, the container itself still runs internally as UID 7777 (or 1000 for older versions). The files must have this ownership to be accessible.
+
+2. **Using sudo with POK-manager.sh**: When running as root, use the following format to ensure proper permissions are maintained:
+   ```bash
+   sudo ./POK-manager.sh <command>
+   ```
+
+3. **Permission Troubleshooting**: If you encounter "Permission denied" errors or "Server files not found" errors during startup, you likely have a permission issue. Fix it with:
+   ```bash
+   # For 2.1+ users (recommended)
+   sudo chown -R 7777:7777 /path/to/your/POK-manager/directory
+   
+   # For 2.0 legacy users
+   sudo chown -R 1000:1000 /path/to/your/POK-manager/directory
+   ```
+
+4. **Auto-fixing on Startup**: If the container detects permission issues during startup, it will try to fix them automatically, but this may not always succeed if the container doesn't have the right permissions to change ownership. In such cases, you'll need to manually fix permissions from the host.
+
+> **Important**: Even if you are logged in as root or using sudo, your server files MUST be owned by the user ID that the container runs as (7777 or 1000). This is a fundamental requirement that cannot be bypassed.
 
 ### File Ownership Requirements
 
@@ -630,6 +703,56 @@ the following ports are used by RCON
 Note: The query port is not needed for Ark Ascended.
 
 ## Troubleshooting
+
+### Common Permission Issues
+
+If you encounter any of these errors:
+```
+E: List directory /var/lib/apt/lists/partial is missing. - Acquire (13: Permission denied)
+Error: Server files not found. Please ensure the server is properly installed.
+```
+
+These indicate permission problems in the container:
+
+1. **Fix File Ownership on Host**:
+   ```bash
+   # For 2.1+ containers (recommended)
+   sudo chown -R 7777:7777 /path/to/your/POK-manager/directory
+   
+   # For 2.0 legacy containers
+   sudo chown -R 1000:1000 /path/to/your/POK-manager/directory
+   ```
+
+2. **Permission Issues with Root User**: If you're running as root, remember the container still needs files owned by UID 7777 or 1000:
+   ```bash
+   # Always run the script with
+   sudo ./POK-manager.sh <command>
+   
+   # Never run with
+   ./POK-manager.sh <command>    # May cause permission issues
+   ```
+
+3. **Volume Mount Permission Issues**: If using custom volume mounts in Docker, ensure they are accessible to the container's user:
+   ```bash
+   # For Docker volume mounts
+   sudo chown -R 7777:7777 /your/custom/volume/path
+   ```
+
+4. **Steam Installation Directory**: If SteamCMD fails to download or install the server, ensure these directories exist and have correct permissions:
+   ```bash
+   sudo mkdir -p /home/pok/.steam/steam
+   sudo chown -R 7777:7777 /home/pok/.steam
+   ```
+
+5. **Server Startup Issues**: If the server fails to start after installation, check permissions on the server directories:
+   ```bash
+   sudo chmod -R 755 /path/to/your/POK-manager/ServerFiles
+   sudo chown -R 7777:7777 /path/to/your/POK-manager/ServerFiles
+   ```
+
+Remember: The container runs as UID 7777 (newer versions) or 1000 (legacy versions) - regardless of which host user launches it. Files must have the correct ownership to be accessible to the container.
+
+### Allocator Stats Error
 
 If you encounter the following error in your logs:
 ```
