@@ -1,11 +1,65 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.44"
+POK_MANAGER_VERSION="2.1.45"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 BASE_DIR="$SCRIPT_DIR"
+
+# Function to create and display the POK-Manager logo
+display_logo() {
+  local logo_file="${BASE_DIR}/config/POK-manager/logo.txt"
+  local config_dir=$(dirname "$logo_file")
+  
+  # Create config directory if it doesn't exist
+  mkdir -p "$config_dir"
+  
+  # Check if the logo file exists, create it if it doesn't
+  if [ ! -f "$logo_file" ]; then
+    # Create ASCII art logo and save it to the file
+    cat > "$logo_file" << 'EOF'
+╔═══════════════════════════════════════════════════════════════════╗
+║                                                                   ║
+║   ██████╗  ██████╗ ██╗  ██╗      █████╗ ██████╗ ██╗  ██╗        ║
+║   ██╔══██╗██╔═══██╗██║ ██╔╝     ██╔══██╗██╔══██╗██║ ██╔╝        ║
+║   ██████╔╝██║   ██║█████╔╝█████╗███████║██████╔╝█████╔╝         ║
+║   ██╔═══╝ ██║   ██║██╔═██╗╚════╝██╔══██║██╔══██╗██╔═██╗         ║
+║   ██║     ╚██████╔╝██║  ██╗     ██║  ██║██║  ██║██║  ██╗        ║
+║   ╚═╝      ╚═════╝ ╚═╝  ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝        ║
+║                                                                   ║
+║             ARK Survival Ascended Server Manager                  ║
+╚═══════════════════════════════════════════════════════════════════╝
+EOF
+  fi
+
+  # Check if version is 2.1 or higher (to determine whether to show the logo)
+  local major_version=$(echo "$POK_MANAGER_VERSION" | cut -d'.' -f1)
+  local minor_version=$(echo "$POK_MANAGER_VERSION" | cut -d'.' -f2)
+  
+  if [ "$major_version" -gt 2 ] || ([ "$major_version" -eq 2 ] && [ "$minor_version" -ge 1 ]); then
+    # Check if we're in a terminal that supports color
+    if [ -t 1 ]; then
+      # Define colors for the logo
+      local CYAN='\033[0;36m'
+      local GREEN='\033[0;32m'
+      local YELLOW='\033[1;33m'
+      local RESET='\033[0m'
+      
+      # Display the logo with colors
+      echo -e "${CYAN}"
+      cat "$logo_file"
+      echo -e "${RESET}"
+      
+      # Display version information
+      echo -e "${GREEN}Version:${RESET} ${YELLOW}$POK_MANAGER_VERSION${RESET} (${YELLOW}$POK_MANAGER_BRANCH${RESET})"
+      echo ""
+    else
+      # In non-interactive mode, don't display the logo
+      :
+    fi
+  fi
+}
 
 # Check for beta mode early
 if [ -f "${BASE_DIR}/config/POK-manager/beta_mode" ]; then
@@ -4568,6 +4622,9 @@ check_post_migration_permissions() {
 }
 
 main() {
+  # Display the POK-Manager logo
+  display_logo
+  
   # Extract the command portion without PUID/PGID
   local command_args=""
   
