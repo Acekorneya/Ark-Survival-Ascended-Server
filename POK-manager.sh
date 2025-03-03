@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.41"
+POK_MANAGER_VERSION="2.1.42"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -3712,6 +3712,22 @@ upgrade_pok_manager() {
         
         echo "Update successful. POK-manager.sh has been updated to version $new_version"
         echo "Restarting script to load updated version..."
+        
+        # Add this message:
+        echo ""
+        echo "----------------------------------------------------------"
+        echo "NOTICE: The POK-manager has been successfully upgraded!"
+        echo "Your original command needs to be re-run with the new version."
+        echo ""
+        echo "You can now run your command again:"
+        echo "  $0 $command_args"
+        echo "----------------------------------------------------------"
+        echo ""
+        
+        # If running interactively, add a pause
+        if [ -t 0 ]; then
+          read -p "Press Enter to automatically restart with your command or Ctrl+C to cancel..."
+        fi
         
         # Execute the updated script with the same arguments
         exec "$original_script" "$@"
