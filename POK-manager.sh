@@ -579,13 +579,37 @@ adjust_ownership_and_permissions() {
 check_vm_max_map_count() {
   local required_map_count=262144
   local current_map_count=$(cat /proc/sys/vm/max_map_count)
+  
+  # Check if sudo is available
+  local has_sudo=true
+  sudo -n true 2>/dev/null || has_sudo=false
+  
   if [ "$current_map_count" -lt "$required_map_count" ]; then
-    echo "ERROR: vm.max_map_count is too low ($current_map_count). Needs to be at least $required_map_count."
-    echo "Please run the following command to temporarily set the value:"
-    echo "  sudo sysctl -w vm.max_map_count=262144"
-    echo "To set the value permanently, add the following line to /etc/sysctl.conf and run 'sudo sysctl -p':"
-    echo "  vm.max_map_count=262144"
-    exit 1
+    echo "WARNING: vm.max_map_count is too low ($current_map_count). Needs to be at least $required_map_count."
+    
+    if [ "$has_sudo" = true ]; then
+      echo "Would you like to set vm.max_map_count to $required_map_count now? [y/N]: "
+      read -r response
+      if [[ "$response" =~ ^[Yy]$ ]]; then
+        sudo sysctl -w vm.max_map_count=262144
+        echo "Value set temporarily. To set permanently, add the following line to /etc/sysctl.conf:"
+        echo "  vm.max_map_count=262144"
+      else
+        echo "Please run the following command to temporarily set the value:"
+        echo "  sudo sysctl -w vm.max_map_count=262144"
+        echo "To set the value permanently, add the following line to /etc/sysctl.conf and run 'sudo sysctl -p':"
+        echo "  vm.max_map_count=262144"
+        echo "The ARK server may not run correctly without this setting."
+      fi
+    else
+      echo "You do not have sudo privileges to set this value."
+      echo "Please ask your system administrator to run the following command:"
+      echo "  sudo sysctl -w vm.max_map_count=262144"
+      echo "To set the value permanently, add the following line to /etc/sysctl.conf and run 'sudo sysctl -p':"
+      echo "  vm.max_map_count=262144"
+      echo "The ARK server may not run correctly without this setting."
+      echo "Continuing setup, but be aware that the server may not start properly."
+    fi
   fi
 }
 

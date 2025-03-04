@@ -34,6 +34,12 @@ sudo passwd pokuser  # Create a secure password when prompted
 # NOTE: You will need to type the password twice to confirm it
 # The password won't be visible as you type for security reasons
 
+# IMPORTANT: If you're on a cloud provider (Google Cloud VM, etc.)
+# Add the new user to sudoers for required permissions
+sudo usermod -aG sudo pokuser  # For Ubuntu/Debian-based systems
+# OR
+# sudo usermod -aG wheel pokuser  # For CentOS/RHEL-based systems
+
 # CRITICAL: Set required system parameters
 # Method 1: Temporary setting (will reset after reboot)
 sudo sysctl -w vm.max_map_count=262144
@@ -161,6 +167,16 @@ If you're new to Linux, follow these step-by-step instructions for a smooth setu
    # 1. Enter a secure password (will not be visible as you type)
    # 2. Re-enter the same password to confirm
    # 3. Make note of this password as you'll need it to log in as pokuser
+
+   # IMPORTANT FOR CLOUD ENVIRONMENTS (Google Cloud VM, AWS, etc.):
+   # The pokuser needs sudo access to run some commands
+   # Add the user to the sudo group (Ubuntu/Debian) or wheel group (CentOS/RHEL)
+   
+   # For Ubuntu/Debian systems:
+   sudo usermod -aG sudo pokuser
+   
+   # For CentOS/RHEL systems:
+   # sudo usermod -aG wheel pokuser
    ```
 
 2. **Configure system settings** for Ark server:
@@ -934,6 +950,50 @@ Follow these steps to resolve it:
    
    # Log out and back in, or run:
    newgrp docker
+   ```
+
+### Sudoers Issues in Cloud Environments
+
+If you encounter this error:
+```
+pokuser is not in the sudoers file.
+This incident has been reported to the administrator.
+```
+
+This means the pokuser account doesn't have sudo permissions, which is needed for some operations:
+
+1. **For cloud providers (Google Cloud VM, AWS, etc.)**:
+   ```bash
+   # You must log in as your default cloud user (the one with sudo permissions)
+   # Then add pokuser to the sudo group:
+   
+   # For Ubuntu/Debian:
+   sudo usermod -aG sudo pokuser
+   
+   # For CentOS/RHEL:
+   sudo usermod -aG wheel pokuser
+   
+   # You might need to set up sudo without password (USE WITH CAUTION):
+   echo "pokuser ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/pokuser
+   sudo chmod 440 /etc/sudoers.d/pokuser
+   ```
+
+2. **If you're already using the cloud provider's default user**:
+   You can either:
+   - Use that user to run POK-manager with sudo (less secure but simpler)
+   - Or modify the script to use your existing user's UID/GID instead of 7777
+
+3. **Simplified approach for cloud environments**:
+   If setting up a dedicated pokuser account is problematic, you can run:
+   ```bash
+   # Find your current user's UID and GID
+   id
+   
+   # Then run the setup with your current UID/GID
+   sudo ./POK-manager.sh -setup
+   
+   # And run docker commands with sudo
+   sudo docker-compose -f docker-compose-my_instance.yaml up -d
    ```
 
 ### Common Permission Issues
