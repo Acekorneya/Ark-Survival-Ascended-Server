@@ -1,8 +1,23 @@
 # POK Ark Survival Ascended Server Management Script
 
+[![Docker Pulls](https://img.shields.io/docker/pulls/acekorneya/asa_server?style=for-the-badge&logo=docker&logoColor=white&color=2496ED)](https://hub.docker.com/r/acekorneya/asa_server)
+[![GitHub Stars](https://img.shields.io/github/stars/Acekorneya/Ark-Survival-Ascended-Server?style=for-the-badge&logo=github&color=yellow)](https://github.com/Acekorneya/Ark-Survival-Ascended-Server)
+[![Discord](https://img.shields.io/discord/822083695374573580?style=for-the-badge&logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/9GJKWjQuXy)
+[![Version](https://img.shields.io/badge/Version-2.1.48-blue?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/Acekorneya/Ark-Survival-Ascended-Server)
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/acekorneyab)
+
 ## Introduction
 
 POK-manager.sh is a powerful and user-friendly script for managing Ark Survival Ascended Server instances using Docker. It simplifies the process of creating, starting, stopping, updating, and performing various operations on server instances, making it easy for both beginners and experienced users to manage their servers effectively.
+
+### Key Features
+
+- 🚀 **Easy Setup**: Simple one-command installation and server creation
+- 🔄 **Automatic Updates**: Keep your ARK server up-to-date with minimal effort
+- 🌐 **Multi-Server Support**: Manage multiple server instances from a single script
+- 🧰 **Powerful Tools**: Backups, restores, chat commands, and more
+- 🔌 **AsaApi Support**: Easily enable and manage server plugins
+- 🔒 **Secure**: Runs with correct permissions and without requiring root
 
 ## Quick Start Guide for New Linux Users
 
@@ -15,7 +30,9 @@ sudo apt-get update && sudo apt-get install -y git
 # Create the dedicated server user with correct permissions
 sudo groupadd -g 7777 pokuser
 sudo useradd -u 7777 -g 7777 -m -s /bin/bash pokuser
-sudo passwd pokuser  # You'll be prompted to create a password
+sudo passwd pokuser  # Create a secure password when prompted
+# NOTE: You will need to type the password twice to confirm it
+# The password won't be visible as you type for security reasons
 
 # CRITICAL: Set required system parameters
 # Method 1: Temporary setting (will reset after reboot)
@@ -41,6 +58,7 @@ rm -rf Ark-Survival-Ascended-Server
 
 # Run the setup command
 ./POK-manager.sh -setup
+# NOTE: POK-manager will automatically install Docker and other dependencies if they're not found
 
 # Create your first server instance
 ./POK-manager.sh -create my_server
@@ -80,17 +98,21 @@ After these steps, you'll have a working Ark Survival Ascended server setup. See
 
 ## Prerequisites
 
-Before using POK-manager.sh, ensure that you have the following prerequisites installed on your Linux system:
+Before using POK-manager.sh, ensure that you have the following prerequisites on your Linux system:
 
-- [Docker](https://docs.docker.com/engine/install/)
-- [Docker Compose](https://docs.docker.com/compose/install/)
-- [Git](https://git-scm.com/downloads)
-- [yq](https://github.com/mikefarah/yq?tab=readme-ov-file#install)
+- Linux Host OS (Ubuntu, Debian, Arch) 
 - `sudo` access
+- Git (for initial download only)
 - CPU - FX Series AMD Or Intel Second Gen Sandy Bridge CPU
 - 16GB of RAM (or more) for each instance
 - 80 GB for Server data
-- Linux Host OS (Ubuntu, Debian, Arch)
+
+**Note:** POK-manager.sh will automatically install the following dependencies if they're not found on your system:
+- [Docker](https://docs.docker.com/engine/install/)
+- [Docker Compose](https://docs.docker.com/compose/install/)
+- [yq](https://github.com/mikefarah/yq?tab=readme-ov-file#install)
+
+This automatic dependency installation makes setup much easier for new users. All you need to start is Git and sudo access.
 
 ## Critical System Requirements
 
@@ -132,8 +154,13 @@ If you're new to Linux, follow these step-by-step instructions for a smooth setu
    # Create the user with UID 7777
    sudo useradd -u 7777 -g 7777 -m -s /bin/bash pokuser
    
-   # Set a password for the new user (you'll need this to log in)
+   # Set a password for the new user
    sudo passwd pokuser
+   
+   # When prompted:
+   # 1. Enter a secure password (will not be visible as you type)
+   # 2. Re-enter the same password to confirm
+   # 3. Make note of this password as you'll need it to log in as pokuser
    ```
 
 2. **Configure system settings** for Ark server:
@@ -154,20 +181,13 @@ If you're new to Linux, follow these step-by-step instructions for a smooth setu
    sudo su - pokuser
    ```
 
-4. **Install Git** (if not already installed):
-   ```bash
-   # This will prompt for your password if needed
-   sudo apt-get update
-   sudo apt-get install git
-   ```
-
-5. **Create a directory for your server** (optional but recommended):
+4. **Create a directory for your server** (optional but recommended):
    ```bash
    mkdir -p ~/asa_server
    cd ~/asa_server
    ```
 
-6. **Download and set up POK-manager.sh**:
+5. **Download and set up POK-manager.sh**:
    ```bash
    git clone https://github.com/Acekorneya/Ark-Survival-Ascended-Server.git && \
    mv Ark-Survival-Ascended-Server/POK-manager.sh . && \
@@ -176,16 +196,25 @@ If you're new to Linux, follow these step-by-step instructions for a smooth setu
    rm -rf Ark-Survival-Ascended-Server
    ```
 
-7. **Run the setup command**:
+6. **Run the setup command**:
    ```bash
    ./POK-manager.sh -setup
    ```
+   
+   During this step, POK-manager will:
+   - Check for required dependencies (Docker, Docker Compose, yq)
+   - Automatically install any missing dependencies
+   - Configure Docker to work with the pokuser account
+   - Prepare the environment for your ARK server
+   
    Since you're already running as the pokuser with UID 7777, this should work without permission issues.
 
-8. **Create your first server instance**:
+7. **Create your first server instance**:
    ```bash
    ./POK-manager.sh -create my_server
    ```
+   
+   Follow the prompts to configure your server. You can accept the defaults or customize settings as needed.
 
 ### Alternative Installation Options
 
@@ -219,7 +248,11 @@ If you're installing as the root user or plan to run everything with sudo, follo
 
 3. **Set correct permissions for all files during setup**:
    ```bash
+   # For newer installations (2.1+)
    sudo chown -R 7777:7777 /path/to/your/POK-manager/directory
+   
+   # For legacy installations (2.0)
+   sudo chown -R 1000:1000 /path/to/your/POK-manager/directory
    ```
 
 4. **Fix permission issues during runtime**:
@@ -232,27 +265,39 @@ If you're installing as the root user or plan to run everything with sudo, follo
 5. **Remember**: Running as root doesn't bypass the need for correct file ownership. The container still requires files owned by UID 7777 or 1000 to function properly.
 
 #### For Non-Root Users (Recommended)
-If you're running as a non-root user (recommended for security):
+For better security and proper permissions, we strongly recommend running as a non-root user:
 
-1. **Create a dedicated user** as described in the prerequisites:
+1. **Create a dedicated user** with the correct UID/GID:
    ```bash
+   # Create the user group with GID 7777 (for newer 2.1+ installations)
    sudo groupadd -g 7777 pokuser
+   
+   # Create the user with matching UID
    sudo useradd -u 7777 -g 7777 -m -s /bin/bash pokuser
+   
+   # Set a password for this user
+   sudo passwd pokuser
+   # Enter and confirm a secure password when prompted
    ```
 
-2. **Switch to this user** to run commands:
+2. **Add the user to the Docker group** (so it can run Docker commands):
+   ```bash
+   sudo usermod -aG docker pokuser
+   ```
+
+3. **Switch to this user** to run commands:
    ```bash
    sudo su - pokuser
    ```
 
-3. **Files automatically have the correct ownership** when created by this user.
+4. **Files automatically have the correct ownership** when created by this user.
 
-4. **Run without sudo** when logged in as this user:
+5. **Run without sudo** when logged in as this user:
    ```bash
    ./POK-manager.sh <command>
    ```
 
-This approach provides better security while ensuring permissions are automatically correct.
+This approach provides better security while ensuring permissions are automatically correct. Most server issues are related to incorrect permissions, and using the dedicated user account prevents these problems.
 
 ## Usage
 
@@ -845,6 +890,7 @@ Follow these steps to resolve it:
    sudo groupadd -g 7777 pokuser
    sudo useradd -u 7777 -g 7777 -m -s /bin/bash pokuser
    sudo passwd pokuser  # Set a password for the user
+   # Enter and confirm a secure password when prompted
    
    # Then switch to that user
    sudo su - pokuser
@@ -875,7 +921,13 @@ Error: Server files not found. Please ensure the server is properly installed.
 
 These indicate permission problems in the container:
 
-1. **Fix File Ownership on Host**:
+1. **Check your current file ownership**:
+   ```bash
+   # See who owns your server files
+   ls -la ./ServerFiles
+   ```
+
+2. **Fix File Ownership on Host**:
    ```bash
    # For 2.1+ containers (recommended)
    sudo chown -R 7777:7777 /path/to/your/POK-manager/directory
@@ -884,28 +936,28 @@ These indicate permission problems in the container:
    sudo chown -R 1000:1000 /path/to/your/POK-manager/directory
    ```
 
-2. **Permission Issues with Root User**: If you're running as root, remember the container still needs files owned by UID 7777 or 1000:
+3. **Permission Issues with Root User**: If you're running as root, remember the container still needs files owned by UID 7777 or 1000:
    ```bash
    # Always run the script with
    sudo ./POK-manager.sh <command>
    
    # Never run with
-   ./POK-manager.sh <command>    # May cause permission issues
+   ./POK-manager.sh <command>    # May cause permission issues when running as root
    ```
 
-3. **Volume Mount Permission Issues**: If using custom volume mounts in Docker, ensure they are accessible to the container's user:
+4. **Volume Mount Permission Issues**: If using custom volume mounts in Docker, ensure they are accessible to the container's user:
    ```bash
    # For Docker volume mounts
    sudo chown -R 7777:7777 /your/custom/volume/path
    ```
 
-4. **Steam Installation Directory**: If SteamCMD fails to download or install the server, ensure these directories exist and have correct permissions:
+5. **Steam Installation Directory**: If SteamCMD fails to download or install the server, ensure these directories exist and have correct permissions:
    ```bash
    sudo mkdir -p /home/pok/.steam/steam
    sudo chown -R 7777:7777 /home/pok/.steam
    ```
 
-5. **Server Startup Issues**: If the server fails to start after installation, check permissions on the server directories:
+6. **Server Startup Issues**: If the server fails to start after installation, check permissions on the server directories:
    ```bash
    sudo chmod -R 755 /path/to/your/POK-manager/ServerFiles
    sudo chown -R 7777:7777 /path/to/your/POK-manager/ServerFiles
