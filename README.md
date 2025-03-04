@@ -4,6 +4,46 @@
 
 POK-manager.sh is a powerful and user-friendly script for managing Ark Survival Ascended Server instances using Docker. It simplifies the process of creating, starting, stopping, updating, and performing various operations on server instances, making it easy for both beginners and experienced users to manage their servers effectively.
 
+## Quick Start Guide for New Linux Users
+
+If you're new to Linux or Docker, this guide will help you get started quickly. Just copy and paste these commands:
+
+```bash
+# Install dependencies
+sudo apt-get update && sudo apt-get install -y git
+
+# Create the dedicated server user with correct permissions
+sudo groupadd -g 7777 pokuser
+sudo useradd -u 7777 -g 7777 -m -s /bin/bash pokuser
+sudo passwd pokuser  # You'll be prompted to create a password
+
+# Set required system parameters
+echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p
+
+# Switch to the pokuser account
+sudo su - pokuser
+
+# Create a directory for your server files
+mkdir -p ~/asa_server
+cd ~/asa_server
+
+# Download and set up POK-manager
+git clone https://github.com/Acekorneya/Ark-Survival-Ascended-Server.git
+mv Ark-Survival-Ascended-Server/POK-manager.sh .
+chmod +x POK-manager.sh
+mv Ark-Survival-Ascended-Server/defaults .
+rm -rf Ark-Survival-Ascended-Server
+
+# Run the setup command
+./POK-manager.sh -setup
+
+# Create your first server instance
+./POK-manager.sh -create my_server
+```
+
+After these steps, you'll have a working Ark Survival Ascended server setup. See the detailed [Installation](#installation) section for more information.
+
 ## Table of Contents
 
 - [Introduction](#introduction)
@@ -49,37 +89,71 @@ Before using POK-manager.sh, ensure that you have the following prerequisites in
 
 ## Installation
 
-1. Create or modify a user for the container:
-   - For a new user named `pokuser` with the new default UID/GID (7777):
-     ```bash
-     sudo groupadd -g 7777 pokuser
-     sudo useradd -u 7777 -g 7777 -m -s /bin/bash pokuser
-     ```
-   - For backward compatibility with earlier versions (UID/GID 1000):
-     ```bash
-     sudo groupadd -g 1000 pokuser
-     sudo useradd -u 1000 -g 1000 -m -s /bin/bash pokuser
-     ```
-   - See [Upgrading to Version 2.1+](#upgrading-to-version-21) for more details on PUID/PGID changes.
+### Beginner-Friendly Installation Guide (Recommended)
 
-2. Configure system settings:
-   - Set `vm.max_map_count` temporarily:
-     ```bash
-     sudo sysctl -w vm.max_map_count=262144
-     ```
-   - For permanent setup, add `vm.max_map_count=262144` to `/etc/sysctl.conf`, save, and apply changes:
-     ```bash
-     echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf
-     sudo sysctl -p
-     ```
+If you're new to Linux, follow these step-by-step instructions for a smooth setup:
 
-3. (Optional) Adjust folder permissions if not using a separate user:
+1. **Create a dedicated user** with the correct UID/GID for the server:
    ```bash
-   sudo chown -R 7777:7777 /path/to/your/POK-manager/directory
+   # Create the user group with GID 7777
+   sudo groupadd -g 7777 pokuser
+   
+   # Create the user with UID 7777
+   sudo useradd -u 7777 -g 7777 -m -s /bin/bash pokuser
+   
+   # Set a password for the new user (you'll need this to log in)
+   sudo passwd pokuser
    ```
 
-4. Download and set up POK-manager.sh:
-   - Option 1: Run the following command to download and set up POK-manager.sh in a single step:
+2. **Configure system settings** for Ark server:
+   ```bash
+   # Set vm.max_map_count permanently
+   echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf
+   sudo sysctl -p
+   ```
+
+3. **Switch to the pokuser account**:
+   ```bash
+   sudo su - pokuser
+   ```
+
+4. **Install Git** (if not already installed):
+   ```bash
+   # This will prompt for your password if needed
+   sudo apt-get update
+   sudo apt-get install git
+   ```
+
+5. **Create a directory for your server** (optional but recommended):
+   ```bash
+   mkdir -p ~/asa_server
+   cd ~/asa_server
+   ```
+
+6. **Download and set up POK-manager.sh**:
+   ```bash
+   git clone https://github.com/Acekorneya/Ark-Survival-Ascended-Server.git && \
+   mv Ark-Survival-Ascended-Server/POK-manager.sh . && \
+   chmod +x POK-manager.sh && \
+   mv Ark-Survival-Ascended-Server/defaults . && \
+   rm -rf Ark-Survival-Ascended-Server
+   ```
+
+7. **Run the setup command**:
+   ```bash
+   ./POK-manager.sh -setup
+   ```
+   Since you're already running as the pokuser with UID 7777, this should work without permission issues.
+
+8. **Create your first server instance**:
+   ```bash
+   ./POK-manager.sh -create my_server
+   ```
+
+### Alternative Installation Options
+
+1. **For experienced users** who want to download and set up in a single step:
+   - Option 1: Run the following command to download and set up POK-manager.sh:
      ```bash
      git clone https://github.com/Acekorneya/Ark-Survival-Ascended-Server.git && sudo chown -R 7777:7777 Ark-Survival-Ascended-Server && sudo mv Ark-Survival-Ascended-Server/POK-manager.sh . && sudo chmod +x POK-manager.sh && sudo mv Ark-Survival-Ascended-Server/defaults . && sudo rm -rf Ark-Survival-Ascended-Server
      ```
@@ -703,6 +777,56 @@ the following ports are used by RCON
 Note: The query port is not needed for Ark Ascended.
 
 ## Troubleshooting
+
+### User ID and Setup Issues
+
+If you encounter this error when running the `-setup` command:
+```
+You are not running the script as the user with the correct PUID (7777) and PGID (7777).
+Your current user has UID X and GID Y.
+Please switch to the correct user or update your current user's UID and GID to match the required values.
+```
+
+Follow these steps to resolve it:
+
+1. **Verify your current user ID**:
+   ```bash
+   id
+   ```
+   This shows your current user's UID and GID.
+
+2. **Fix by either**:
+   
+   a. **Using sudo** (quick fix, not recommended for regular use):
+   ```bash
+   sudo ./POK-manager.sh -setup
+   ```
+   
+   b. **Switching to the pokuser account** (preferred):
+   ```bash
+   # First make sure the user exists with correct ID
+   sudo groupadd -g 7777 pokuser
+   sudo useradd -u 7777 -g 7777 -m -s /bin/bash pokuser
+   sudo passwd pokuser  # Set a password for the user
+   
+   # Then switch to that user
+   sudo su - pokuser
+   
+   # Navigate to your POK-manager directory
+   cd /path/to/your/POK-manager
+   
+   # Run the setup
+   ./POK-manager.sh -setup
+   ```
+
+3. **Verifying your pokuser has access to docker**:
+   ```bash
+   # Add pokuser to the docker group
+   sudo usermod -aG docker pokuser
+   
+   # Log out and back in, or run:
+   newgrp docker
+   ```
 
 ### Common Permission Issues
 
