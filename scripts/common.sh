@@ -343,6 +343,18 @@ install_ark_server_api() {
 
   echo "---- Installing/Updating AsaApi ----"
   
+  # New first-launch message
+  local first_install=false
+  if [ ! -f "${ASA_DIR}/ShooterGame/Binaries/Win64/AsaApiLoader.exe" ]; then
+    first_install=true
+    echo ""
+    echo "⚠️ FIRST-TIME SETUP DETECTED: AsaApi installation may take 5-10 minutes"
+    echo "📋 This is normal and will only happen on first launch"
+    echo "🔄 If the first launch fails, the system will automatically restart"
+    echo "   and complete the setup on the second attempt"
+    echo ""
+  fi
+  
   # Ensure Proton environment is properly initialized before proceeding
   if [ ! -f "${STEAM_COMPAT_DATA_PATH}/tracked_files" ] || [ ! -d "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c" ]; then
     echo "Proton environment not fully initialized. Initializing before AsaApi installation..."
@@ -439,21 +451,72 @@ install_ark_server_api() {
   fi
   
   # Install Microsoft Visual C++ 2019 Redistributable using multiple methods for reliability
-  echo "Installing Microsoft Visual C++ 2019 Redistributable..."
+  if [ "$first_install" = "true" ]; then
+    echo ""
+    echo "⏳ Installing Microsoft Visual C++ 2019 Redistributable (this may take a while)..."
+    echo "⚠️ This is the longest part of first-time setup and normal to see many Wine warnings"
+    echo ""
+    
+    # Display a text-based progress indicator
+    (
+      local spin=('.' '..' '...')
+      local i=0
+      local start_time=$(date +%s)
+      
+      echo -n "Setting up Visual C++ environment "
+      
+      while true; do
+        printf "\b%s" "${spin[i]}"
+        i=$(( (i+1) % 3 ))
+        sleep 0.3
+        
+        # Display elapsed time every 10 seconds
+        local current_time=$(date +%s)
+        local elapsed=$((current_time - start_time))
+        
+        if [ $((elapsed % 10)) -eq 0 ] && [ $elapsed -gt 0 ]; then
+          printf "\r                                                         "
+          printf "\rSetting up Visual C++ environment %s (${elapsed}s elapsed)" "${spin[i]}"
+        fi
+        
+        # Break if installation is done (check for a marker file)
+        if [ -f "/tmp/vc_install_complete" ]; then
+          printf "\r                                                         "
+          printf "\r✅ Visual C++ setup completed after ${elapsed} seconds!      \n"
+          rm -f "/tmp/vc_install_complete"
+          break
+        fi
+        
+        # Give up after 5 minutes to prevent infinite loop
+        if [ $elapsed -gt 300 ]; then
+          printf "\r                                                         "
+          printf "\r⚠️ Visual C++ setup timed out after ${elapsed} seconds, continuing anyway\n"
+          break
+        fi
+      done
+    ) &
+    PROGRESS_PID=$!
+  fi
   
   # Method 1: Use winetricks
-  echo "Trying winetricks method first..."
+  if [ "$first_install" = "true" ]; then
+    echo ">> Trying winetricks method first..."
+  fi
   WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" winetricks -q vcrun2019 || true
   
   # Method 2: Direct installation
-  echo "Trying direct installation method..."
+  if [ "$first_install" = "true" ]; then
+    echo ">> Trying direct installation method..."
+  fi
   
   # Create a directory for the VC++ redistributable
   local vcredist_dir="/tmp/vcredist"
   mkdir -p "$vcredist_dir"
   
   # Download both x86 and x64 redistributables for maximum compatibility
-  echo "Downloading VC++ redistributables..."
+  if [ "$first_install" = "true" ]; then
+    echo ">> Downloading VC++ redistributables..."
+  fi
   curl -L -o "$vcredist_dir/vc_redist.x64.exe" "https://aka.ms/vs/16/release/vc_redist.x64.exe" || true
   curl -L -o "$vcredist_dir/vc_redist.x86.exe" "https://aka.ms/vs/16/release/vc_redist.x86.exe" || true
   
@@ -468,12 +531,16 @@ install_ark_server_api() {
   sleep 2
   
   # Method 2a: Use WINEPREFIX with wine command directly
-  echo "Running VC++ installer with Wine directly..."
+  if [ "$first_install" = "true" ]; then
+    echo ">> Running VC++ installer with Wine directly..."
+  fi
   WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine "$proton_drive_c/temp/vc_redist.x64.exe" /quiet /norestart || true
   WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine "$proton_drive_c/temp/vc_redist.x86.exe" /quiet /norestart || true
   
   # Method 2b: Use Proton directly
-  echo "Running VC++ installer with Proton directly..."
+  if [ "$first_install" = "true" ]; then
+    echo ">> Running VC++ installer with Proton directly..."
+  fi
   if [ -d "/home/pok/.steam/steam/compatibilitytools.d/GE-Proton8-21" ]; then
     STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam" \
     STEAM_COMPAT_DATA_PATH="${STEAM_COMPAT_DATA_PATH}" \
@@ -487,12 +554,26 @@ install_ark_server_api() {
   # Allow more time for the installation to complete
   sleep 10
   
-  echo "VC++ redistributable installation attempts completed."
+  # Create a marker file to signal the progress display to stop
+  touch "/tmp/vc_install_complete"
+  
+  # Wait for the progress display to finish
+  if [ "$first_install" = "true" ] && [ -n "$PROGRESS_PID" ]; then
+    wait $PROGRESS_PID 2>/dev/null || true
+  fi
+  
+  if [ "$first_install" = "true" ]; then
+    echo "VC++ redistributable installation attempts completed."
+  fi
   
   # Create registry entries to fake successful VC++ installation if needed
-  echo "Checking if we need to manually create registry entries for VC++..."
+  if [ "$first_install" = "true" ]; then
+    echo "Checking if we need to manually create registry entries for VC++..."
+  fi
   if ! grep -q "vcrun2019" "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg" 2>/dev/null; then
-    echo "Creating manual registry entries to fake VC++ installation..."
+    if [ "$first_install" = "true" ]; then
+      echo "Creating manual registry entries to fake VC++ installation..."
+    fi
     # Append minimal registry entries that make AsaApi believe VC++ is installed
     echo "[Software\\\\Wine\\\\DllOverrides]" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
     echo "\"vcrun2019\"=\"native,builtin\"" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
@@ -510,6 +591,14 @@ install_ark_server_api() {
   if [ -f "${bin_dir}/AsaApiLoader.exe" ]; then
     echo "AsaApi $latest_version installed successfully. AsaApiLoader.exe found."
     chmod +x "${bin_dir}/AsaApiLoader.exe"
+    
+    if [ "$first_install" = "true" ]; then
+      echo ""
+      echo "✅ FIRST-TIME SETUP COMPLETE: AsaApi installation successful!"
+      echo "🚀 Server should start much faster on subsequent launches"
+      echo ""
+    fi
+    
     return 0
   else
     echo "WARNING: AsaApi installation appears incomplete. AsaApiLoader.exe not found."
@@ -530,7 +619,16 @@ install_ark_server_api() {
       fi
     fi
     
-    echo "Unable to complete AsaApi installation. Please check the logs for errors."
+    if [ "$first_install" = "true" ]; then
+      echo ""
+      echo "⚠️ Unable to complete AsaApi installation on first attempt."
+      echo "🔄 This is expected behavior - system will restart automatically"
+      echo "   and installation will complete on second launch."
+      echo ""
+    else
+      echo "Unable to complete AsaApi installation. Please check the logs for errors."
+    fi
+    
     return 1
   fi
 }

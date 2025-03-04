@@ -1,0 +1,14 @@
+# POK-Manager Changelog
+
+## Latest Version
+- Added `-changelog` command to view change history
+- The changelog file will be automatically updated during `-upgrade` operations
+- Changelog is stored in the config/POK-manager/ directory
+
+## Previous Updates
+- Added permission fix operations to address file ownership issues
+- Improved Docker image handling and compatibility
+- Enhanced API functionality and server management
+- Various bug fixes and performance improvements
+
+Note: This is an initial changelog template. Future updates will provide more detailed information about changes. 

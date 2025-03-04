@@ -384,6 +384,28 @@ start_server() {
     sync
     sleep 2
     
+    # Add first-time launch detection and notification
+    local first_launch_file="/home/pok/.first_launch_completed"
+    local container_launch_file="/home/pok/.container_launched"
+    local is_first_launch=false
+    
+    # Only show first launch message if both conditions are true:
+    # 1. First time running the server (no .first_launch_completed file)
+    # 2. First time in this container instance (no .container_launched file)
+    if [ ! -f "$first_launch_file" ] && [ ! -f "$container_launch_file" ]; then
+      is_first_launch=true
+      echo ""
+      echo "🔍 FIRST-TIME LAUNCH DETECTED"
+      echo "⚠️ The first server launch may take longer and could potentially fail"
+      echo "🔄 If the first launch fails, the system will automatically restart"
+      echo "   and complete setup on the second attempt (this is normal behavior)"
+      echo "⏱️ Please be patient during the first launch process"
+      echo ""
+    fi
+    
+    # Always create the container_launched file to mark this container as having been run before
+    touch "$container_launch_file"
+    
     # Define a function to make a launch attempt
     attempt_launch() {
       local method="$1"
@@ -392,79 +414,205 @@ start_server() {
       
       echo "Attempting launch using method: $method"
       
-      case "$method" in
-        "proton_direct")
-          if [ -f "$PROTON_EXECUTABLE" ]; then
-            # Set DISPLAY variable to prevent X server errors
-            export DISPLAY=:0.0
-            # Method 1: Direct Proton launch using found executable
-            "$PROTON_EXECUTABLE" run "$binary" $params &
-          else
-            echo "Proton executable not found, skipping this method."
-            return 1
-          fi
-          ;;
-        "proton_fallback")
-          # Method 2: Fallback to fixed path
-          export DISPLAY=:0.0
-          if [ -f "${STEAM_COMPAT_DIR}/GE-Proton8-21/proton" ]; then
-            echo "Using GE-Proton8-21 for fallback launch"
-            "${STEAM_COMPAT_DIR}/GE-Proton8-21/proton" run "$binary" $params &
-          elif [ -f "${STEAM_COMPAT_DIR}/GE-Proton9-25/proton" ]; then
-            echo "Using GE-Proton9-25 for fallback launch"
-            "${STEAM_COMPAT_DIR}/GE-Proton9-25/proton" run "$binary" $params &
-          else
-            # Last resort: check for any available GE-Proton directory
-            local ANY_PROTON=$(find "${STEAM_COMPAT_DIR}" -name "GE-Proton*" -type d | head -1)
-            if [ -n "$ANY_PROTON" ] && [ -f "$ANY_PROTON/proton" ]; then
-              echo "Using $ANY_PROTON for fallback launch"
-              "$ANY_PROTON/proton" run "$binary" $params &
+      if [ "$is_first_launch" = "true" ]; then
+        local spinner=('.' '..' '...' '.' '..' '...')
+        local i=0
+        local start_time=$(date +%s)
+        
+        # Start the launch process in background
+        case "$method" in
+          "proton_direct")
+            if [ -f "$PROTON_EXECUTABLE" ]; then
+              # Set DISPLAY variable to prevent X server errors
+              export DISPLAY=:0.0
+              # Method 1: Direct Proton launch using found executable
+              "$PROTON_EXECUTABLE" run "$binary" $params > /tmp/launch_output.log 2>&1 &
             else
-              echo "Fallback Proton paths not found, skipping this method."
+              echo "Proton executable not found, skipping this method."
               return 1
             fi
+            ;;
+          "proton_fallback")
+            # Method 2: Fallback to fixed path
+            export DISPLAY=:0.0
+            if [ -f "${STEAM_COMPAT_DIR}/GE-Proton8-21/proton" ]; then
+              echo "Using GE-Proton8-21 for fallback launch"
+              "${STEAM_COMPAT_DIR}/GE-Proton8-21/proton" run "$binary" $params > /tmp/launch_output.log 2>&1 &
+            elif [ -f "${STEAM_COMPAT_DIR}/GE-Proton9-25/proton" ]; then
+              echo "Using GE-Proton9-25 for fallback launch"
+              "${STEAM_COMPAT_DIR}/GE-Proton9-25/proton" run "$binary" $params > /tmp/launch_output.log 2>&1 &
+            else
+              # Last resort: check for any available GE-Proton directory
+              local ANY_PROTON=$(find "${STEAM_COMPAT_DIR}" -name "GE-Proton*" -type d | head -1)
+              if [ -n "$ANY_PROTON" ] && [ -f "$ANY_PROTON/proton" ]; then
+                echo "Using $ANY_PROTON for fallback launch"
+                "$ANY_PROTON/proton" run "$binary" $params > /tmp/launch_output.log 2>&1 &
+              else
+                echo "Fallback Proton paths not found, skipping this method."
+                return 1
+              fi
+            fi
+            ;;
+          "proton_command")
+            # Method 3: System proton command
+            STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam" \
+            STEAM_COMPAT_DATA_PATH="${STEAM_COMPAT_DATA_PATH}" \
+            proton run "$binary" $params > /tmp/launch_output.log 2>&1 &
+            ;;
+          "wine_direct")
+            # Method 4: Direct Wine launch with virtual display
+            export DISPLAY=:0.0
+            # Create virtual display with Xvfb if available
+            if command -v Xvfb >/dev/null 2>&1; then
+              # Create .X11-unix directory first to avoid errors
+              mkdir -p /tmp/.X11-unix 2>/dev/null || true
+              chmod 1777 /tmp/.X11-unix 2>/dev/null || true
+              
+              # Start Xvfb with error output suppressed
+              Xvfb :0 -screen 0 1024x768x16 2>/dev/null &
+              XVFB_PID=$!
+              sleep 2  # Give Xvfb time to start
+            fi
+            # Add environment variables to help wine find libraries
+            export WINEDLLOVERRIDES="*version=n,b;vcrun2019=n,b"
+            export WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx"
+            WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine "$binary" $params > /tmp/launch_output.log 2>&1 &
+            ;;
+        esac
+        
+        local pid=$!
+        echo "Launch attempt PID: $pid"
+        
+        # Show animated progress indicator for up to 30 seconds
+        local max_wait=30
+        local waited=0
+        local spinner=('.' '..' '...' '.' '..' '...')
+        local i=0
+        
+        while [ $waited -lt $max_wait ]; do
+          # Print spinner - don't clear the line with a separate printf, do it in one command
+          printf "\r%s Waiting for server startup... (%s seconds elapsed)      " "${spinner[i]}" "$waited"
+          i=$(( (i+1) % ${#spinner[@]} ))
+          sleep 0.2  # Medium speed for spinner animation
+          
+          # Only increment wait time every 1 second (5 spinner frames)
+          if [ $((i % 5)) -eq 0 ]; then
+            waited=$((waited + 1))
           fi
-          ;;
-        "proton_command")
-          # Method 3: System proton command
-          STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam" \
-          STEAM_COMPAT_DATA_PATH="${STEAM_COMPAT_DATA_PATH}" \
-          proton run "$binary" $params &
-          ;;
-        "wine_direct")
-          # Method 4: Direct Wine launch with virtual display
-          export DISPLAY=:0.0
-          # Create virtual display with Xvfb if available
-          if command -v Xvfb >/dev/null 2>&1; then
-            # Create .X11-unix directory first to avoid errors
-            mkdir -p /tmp/.X11-unix 2>/dev/null || true
-            chmod 1777 /tmp/.X11-unix 2>/dev/null || true
-            
-            # Start Xvfb with error output suppressed
-            Xvfb :0 -screen 0 1024x768x16 2>/dev/null &
-            XVFB_PID=$!
-            sleep 2  # Give Xvfb time to start
+          
+          # Check if process is still running
+          if ! kill -0 $pid 2>/dev/null; then
+            # Process exited early
+            break
           fi
-          # Add environment variables to help wine find libraries
-          export WINEDLLOVERRIDES="*version=n,b;vcrun2019=n,b"
-          export WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx"
-          WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine "$binary" $params &
-          ;;
-      esac
-      
-      local pid=$!
-      echo "Launch attempt PID: $pid"
-      
-      # Wait a moment to see if the process starts
-      sleep 5
-      
-      # Check if process is still running
-      if kill -0 $pid 2>/dev/null; then
-        echo "Launch successful using method: $method"
-        return 0
+        done
+        
+        # Wait a moment to see if the process starts
+        sleep 5
+        
+        # Check if process is still running
+        if kill -0 $pid 2>/dev/null; then
+          echo "✅ Launch successful using method: $method (${waited}s)"
+          # Create the first launch completed file to skip this next time
+          touch "$first_launch_file"
+          return 0
+        else
+          echo "❌ Launch failed using method: $method after ${waited}s"
+          # Check if this was a MSVCP140.dll error
+          if grep -q "err:module:import_dll Loading library MSVCP140.dll.*failed" /tmp/launch_output.log 2>/dev/null; then
+            echo "DETECTED MSVCP140.dll LOADING ERROR:"
+            echo "This is a common first-launch error that should resolve on restart"
+            # Create a flag file so monitor can detect this specific error
+            echo "MSVCP140.dll loading error detected on first launch" > /home/pok/.first_launch_msvcp140_error
+          else
+            # Show the last few lines of output for debugging
+            echo "Last output from launch attempt:"
+            tail -5 /tmp/launch_output.log 2>/dev/null
+          fi
+          return 1
+        fi
       else
-        echo "Launch failed using method: $method"
-        return 1
+        # Non-first launch - use the original code without progress indicator
+        case "$method" in
+          "proton_direct")
+            if [ -f "$PROTON_EXECUTABLE" ]; then
+              # Set DISPLAY variable to prevent X server errors
+              export DISPLAY=:0.0
+              # Method 1: Direct Proton launch using found executable
+              "$PROTON_EXECUTABLE" run "$binary" $params &
+            else
+              echo "Proton executable not found, skipping this method."
+              return 1
+            fi
+            ;;
+          "proton_fallback")
+            # Method 2: Fallback to fixed path
+            export DISPLAY=:0.0
+            if [ -f "${STEAM_COMPAT_DIR}/GE-Proton8-21/proton" ]; then
+              echo "Using GE-Proton8-21 for fallback launch"
+              "${STEAM_COMPAT_DIR}/GE-Proton8-21/proton" run "$binary" $params &
+            elif [ -f "${STEAM_COMPAT_DIR}/GE-Proton9-25/proton" ]; then
+              echo "Using GE-Proton9-25 for fallback launch"
+              "${STEAM_COMPAT_DIR}/GE-Proton9-25/proton" run "$binary" $params &
+            else
+              # Last resort: check for any available GE-Proton directory
+              local ANY_PROTON=$(find "${STEAM_COMPAT_DIR}" -name "GE-Proton*" -type d | head -1)
+              if [ -n "$ANY_PROTON" ] && [ -f "$ANY_PROTON/proton" ]; then
+                echo "Using $ANY_PROTON for fallback launch"
+                "$ANY_PROTON/proton" run "$binary" $params &
+              else
+                echo "Fallback Proton paths not found, skipping this method."
+                return 1
+              fi
+            fi
+            ;;
+          "proton_command")
+            # Method 3: System proton command
+            STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam" \
+            STEAM_COMPAT_DATA_PATH="${STEAM_COMPAT_DATA_PATH}" \
+            proton run "$binary" $params &
+            ;;
+          "wine_direct")
+            # Method 4: Direct Wine launch with virtual display
+            export DISPLAY=:0.0
+            # Create virtual display with Xvfb if available
+            if command -v Xvfb >/dev/null 2>&1; then
+              # Create .X11-unix directory first to avoid errors
+              mkdir -p /tmp/.X11-unix 2>/dev/null || true
+              chmod 1777 /tmp/.X11-unix 2>/dev/null || true
+              
+              # Start Xvfb with error output suppressed
+              Xvfb :0 -screen 0 1024x768x16 2>/dev/null &
+              XVFB_PID=$!
+              sleep 2  # Give Xvfb time to start
+            fi
+            # Add environment variables to help wine find libraries
+            export WINEDLLOVERRIDES="*version=n,b;vcrun2019=n,b"
+            export WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx"
+            WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine "$binary" $params 2>&1 | tee -a /home/pok/logs/wine_launch.log &
+            ;;
+        esac
+        
+        local pid=$!
+        echo "Launch attempt PID: $pid"
+        
+        # Wait a moment to see if the process starts
+        sleep 5
+        
+        # Check if process is still running
+        if kill -0 $pid 2>/dev/null; then
+          echo "Launch successful using method: $method"
+          return 0
+        else
+          echo "Launch failed using method: $method"
+          # Check if this was a MSVCP140.dll error
+          if grep -q "err:module:import_dll Loading library MSVCP140.dll.*failed" /home/pok/logs/wine_launch.log 2>/dev/null; then
+            echo "DETECTED MSVCP140.dll LOADING ERROR - Flagging for automatic restart"
+            # Create a flag file so monitor can detect this specific error
+            echo "MSVCP140.dll loading error detected on first launch" > /home/pok/.first_launch_msvcp140_error
+          fi
+          return 1
+        fi
       fi
     }
     
@@ -495,6 +643,10 @@ start_server() {
         SERVER_PID=$!
       else
         echo "ERROR: All launch attempts failed! Server could not be started."
+        echo "This is likely a first boot issue. The monitor process will automatically restart the server."
+        echo "Please wait for the automatic restart to complete."
+        # Create a flag file to indicate this is the first launch error
+        echo "First launch error detected at $(date)" > /home/pok/.first_launch_error
         exit 1
       fi
     fi
@@ -599,8 +751,20 @@ start_server() {
       
       # First, check and display AsaApi logs (priority)
       echo "🔍 Looking for AsaApi logs (API is enabled)..."
+      
+      # Define spinner characters - spinning dots animation
+      local spinner=('.' '..' '...' '.' '..' '...')
+      local spinner_idx=0
+      local spinner_check_count=0
+      
       while [ $elapsed -lt $max_wait ]; do
+        # Update spinner
+        local current_spinner=${spinner[$spinner_idx]}
+        spinner_idx=$(( (spinner_idx + 1) % ${#spinner[@]} ))
+      
         if [ -f "$api_log" ]; then
+          # Clear the spinner line before displaying completion message
+          printf "\r                                                               \r"
           found_api_log="$api_log"
           echo "✅ Found AsaApi logs: $api_log"
           break
@@ -608,16 +772,24 @@ start_server() {
           # If AsaApi.log doesn't exist but other logs exist in the folder
           local other_api_log=$(ls -t $api_folder/*.log 2>/dev/null | head -1)
           if [ -n "$other_api_log" ]; then
+            # Clear the spinner line before displaying completion message
+            printf "\r                                                               \r"
             found_api_log="$other_api_log"
             echo "✅ Found alternative API log: $(basename $other_api_log)"
             break
           fi
         fi
         
-        sleep $check_interval
-        elapsed=$((elapsed + check_interval))
-        if [ $((elapsed % 10)) -eq 0 ]; then
-          echo "⏳ Still waiting for AsaApi logs... ($elapsed seconds elapsed)"
+        # Display status with spinner (on a single line)
+        printf "\r%s Looking for AsaApi logs... (%s seconds elapsed)      " "${current_spinner}" "$elapsed"
+        
+        sleep 0.2  # Medium speed for spinner animation
+        
+        # Increment elapsed time every 10 spinner updates (2 seconds)
+        spinner_check_count=$((spinner_check_count + 1))
+        if [ $spinner_check_count -ge 10 ]; then
+          elapsed=$((elapsed + check_interval))
+          spinner_check_count=0
         fi
       done
       
@@ -643,6 +815,8 @@ start_server() {
           while IFS= read -r line; do
             if echo "$line" | grep -q "SERVER ID:"; then
               server_id_detected=true
+              # Extract and save SERVER ID to a file for later use
+              echo "$line" | grep -o "SERVER ID: [0-9]*" | cut -d' ' -f3 > /tmp/ark_server_id
               # Wait a bit more for subsequent logs after SERVER ID
               sleep 2
               # Kill the API log tail
@@ -666,8 +840,19 @@ start_server() {
           local shooter_wait=60
           local shooter_elapsed=0
           
+          # Define spinner characters - spinning dots animation
+          local spinner=('.' '..' '...' '.' '..' '...')
+          local spinner_idx=0
+          local spinner_check_count=0
+          
           while [ $shooter_elapsed -lt $shooter_wait ]; do
+            # Update spinner
+            local current_spinner=${spinner[$spinner_idx]}
+            spinner_idx=$(( (spinner_idx + 1) % ${#spinner[@]} ))
+            
             if [ -f "$game_log" ]; then
+              # Clear the spinner line before displaying completion message
+              printf "\r                                                               \r"
               echo ""
               echo "✅ Found ShooterGame logs: $game_log"
               echo "---------------------------------------------"
@@ -690,11 +875,22 @@ start_server() {
               break
             fi
             
-            sleep $check_interval
-            shooter_elapsed=$((shooter_elapsed + check_interval))
+            # Display status with spinner (on a single line)
+            printf "\r%s Looking for ShooterGame logs... (%s seconds elapsed)      " "${current_spinner}" "$shooter_elapsed"
+            
+            sleep 0.2  # Medium speed for spinner animation
+            
+            # Increment elapsed time every 10 spinner updates (2 seconds)
+            spinner_check_count=$((spinner_check_count + 1))
+            if [ $spinner_check_count -ge 10 ]; then
+              shooter_elapsed=$((shooter_elapsed + check_interval))
+              spinner_check_count=0
+            fi
           done
           
           if [ $shooter_elapsed -ge $shooter_wait ] && [ ! -f "$game_log" ]; then
+            # Clear the spinner line before showing message
+            printf "\r                                                               \r"
             echo "⚠️ No ShooterGame logs found after waiting. Server might still be starting up."
           fi
         ) &
@@ -724,8 +920,19 @@ start_server() {
     
     echo "🔍 Looking for ShooterGame logs..."
     
+    # Define spinner characters - spinning dots animation
+    local spinner=('.' '..' '...' '.' '..' '...')
+    local spinner_idx=0
+    local spinner_check_count=0
+    
     while [ $elapsed -lt $max_wait ]; do
+      # Update spinner
+      local current_spinner=${spinner[$spinner_idx]}
+      spinner_idx=$(( (spinner_idx + 1) % ${#spinner[@]} ))
+      
       if [ -f "$game_log" ]; then
+        # Clear the spinner line before displaying completion message
+        printf "\r                                                               \r"
         echo "✅ Found ShooterGame logs: $game_log"
         echo "---------------------------------------------"
         echo "📋 ARK SERVER LOG OUTPUT (FULL LOG):"
@@ -747,14 +954,22 @@ start_server() {
         break
       fi
       
-      sleep $check_interval
-      elapsed=$((elapsed + check_interval))
-      if [ $((elapsed % 10)) -eq 0 ]; then
-        echo "⏳ Still waiting for ShooterGame logs... ($elapsed seconds elapsed)"
+      # Display status with spinner (on a single line)
+      printf "\r%s Looking for ShooterGame logs... (%s seconds elapsed)      " "${current_spinner}" "$elapsed"
+      
+      sleep 0.2  # Medium speed for spinner animation
+      
+      # Increment elapsed time every 10 spinner updates (2 seconds)
+      spinner_check_count=$((spinner_check_count + 1))
+      if [ $spinner_check_count -ge 10 ]; then
+        elapsed=$((elapsed + check_interval))
+        spinner_check_count=0
       fi
     done
     
     if [ $elapsed -ge $max_wait ] && [ ! -f "$game_log" ]; then
+      # Clear the spinner line before showing message
+      printf "\r                                                               \r"
       echo "⚠️ No ShooterGame logs found after $max_wait seconds. Server might still be starting up."
       echo "  → Once available, logs will be located at: $game_log"
     fi
@@ -785,12 +1000,55 @@ start_server() {
   local max_wait_time=600  # 10 minutes maximum wait time (increased from 300 to ensure we catch the log message)
   local wait_time=0
   local startup_message_displayed=false
+  local logs_shown_timestamp=0
+  local logs_display_interval=60  # Show logs every 60 seconds
+  local server_id=""
+  
+  # Check for SERVER ID in API logs if API is enabled
+  if [ "${API}" = "TRUE" ]; then
+    local api_log_dir="${ASA_DIR}/ShooterGame/Binaries/Win64/logs"
+    if [ -d "$api_log_dir" ]; then
+      # Find the most recent API log file
+      local latest_api_log=$(find "$api_log_dir" -name "ArkApi_*.log" -type f -printf "%T@ %p\n" 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2-)
+      if [ -n "$latest_api_log" ] && [ -f "$latest_api_log" ]; then
+        # Set up a background process to check for SERVER ID
+        (
+          local max_check_time=300  # 5 minutes
+          local check_interval=5
+          local elapsed=0
+          
+          while [ $elapsed -lt $max_check_time ]; do
+            if grep -q "SERVER ID:" "$latest_api_log"; then
+              # Extract SERVER ID and save it
+              server_id=$(grep "SERVER ID:" "$latest_api_log" | head -1 | grep -o "SERVER ID: [0-9]*" | cut -d' ' -f3)
+              if [ -n "$server_id" ]; then
+                echo "$server_id" > /tmp/ark_server_id
+                break
+              fi
+            fi
+            sleep $check_interval
+            elapsed=$((elapsed + check_interval))
+          done
+        ) &
+        SERVER_ID_CHECK_PID=$!
+      fi
+    fi
+  fi
   
   # Initial delay to give the server time to start creating logs
   sleep 10
   
+  # Define spinner characters - spinning dots animation
+  local spinner=('.' '..' '...' '.' '..' '...')
+  local spinner_idx=0
+  local spinner_update_count=0
+  
   # Retry loop for server verification
   while [ $wait_time -lt $max_wait_time ]; do
+    # Update spinner
+    local current_spinner=${spinner[$spinner_idx]}
+    spinner_idx=$(( (spinner_idx + 1) % ${#spinner[@]} ))
+    
     # Check if server process is running
     if ! ps -p $SERVER_PID > /dev/null; then
       echo "ERROR: Server process ($SERVER_PID) is no longer running!"
@@ -804,18 +1062,50 @@ start_server() {
       exit 1
     fi
     
+    # Display status with spinner (on a single line)
+    if [ "$startup_message_displayed" = "false" ]; then
+      printf "\r%s Waiting for server startup... (%s seconds elapsed)      " "${current_spinner}" "$wait_time"
+    fi
+    
     # Check for successful server startup in logs
     if [ -f "$LOG_FILE" ]; then
       if grep -q "Server has completed startup and is now advertising for join" "$LOG_FILE"; then
         if [ "$startup_message_displayed" = "false" ]; then
-          echo ""
+          # Clear the spinner line before displaying completion message
+          printf "\r                                                               \r"
           echo "✅ Found the 'Server has completed startup and is now advertising for join' message!"
           echo "$(grep "Server has completed startup and is now advertising for join" "$LOG_FILE" | tail -1)"
           echo ""
           echo "🎮 ====== SERVER FULLY STARTED ====== 🎮"
           echo "Server started successfully. PID: $SERVER_PID"
           echo "Server is now advertising for join and ready to accept connections!"
+          
+          # Display SERVER ID if available
+          if [ "${API}" = "TRUE" ]; then
+            # First check if we already have the ID from the background process
+            if [ -f "/tmp/ark_server_id" ]; then
+              server_id=$(cat /tmp/ark_server_id)
+            else
+              # If not, try to grab it directly from API logs
+              local api_log_dir="${ASA_DIR}/ShooterGame/Binaries/Win64/logs"
+              if [ -d "$api_log_dir" ]; then
+                local latest_api_log=$(find "$api_log_dir" -name "ArkApi_*.log" -type f -printf "%T@ %p\n" 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2-)
+                if [ -n "$latest_api_log" ] && [ -f "$latest_api_log" ]; then
+                  server_id=$(grep "SERVER ID:" "$latest_api_log" 2>/dev/null | head -1 | grep -o "SERVER ID: [0-9]*" | cut -d' ' -f3)
+                fi
+              fi
+            fi
+            
+            # Display the server ID if we found it
+            if [ -n "$server_id" ]; then
+              echo "🆔 SERVER ID: $server_id"
+            fi
+          fi
+          
           startup_message_displayed=true
+          
+          # Create the first_launch_completed file to mark that the server has launched successfully
+          touch "$first_launch_file"
         fi
         
         # Double verify correct PID file
@@ -829,27 +1119,44 @@ start_server() {
         break
       else
         if [ "$startup_message_displayed" = "false" ]; then
-          echo "Server still starting up... (waited ${wait_time}s)"
-          # Provide more details every 60 seconds about what we're looking for
-          if [ $((wait_time % 60)) -eq 0 ] && [ $wait_time -gt 0 ]; then
-            echo "Waiting for log message: 'Server has completed startup and is now advertising for join'"
+          # Server still starting up, status already shown by spinner
+          # Only show log messages on regular intervals
+          if [ $((wait_time % logs_display_interval)) -eq 0 ] && [ $wait_time -gt 0 ] && [ $wait_time -ne $logs_shown_timestamp ]; then
+            # Clear the spinner line before showing logs
+            printf "\r                                                               \r"
+            echo -e "\nWaiting for log message: 'Server has completed startup and is now advertising for join'"
             echo "Last few lines of log file:"
             tail -n 5 "$LOG_FILE"
             echo ""
+            logs_shown_timestamp=$wait_time
           fi
         fi
       fi
     else
       if [ "$startup_message_displayed" = "false" ]; then
-        echo "Waiting for server log file to be created... (waited ${wait_time}s)"
+        # Use the same spinner style and format as other messages
+        printf "\r%s Waiting for server startup... (%s seconds elapsed)      " "${current_spinner}" "$wait_time"
       fi
     fi
     
-    sleep 10
-    wait_time=$((wait_time + 10))
+    # Sleep for a shorter time to get smoother spinner animation
+    sleep 0.2
+    
+    # Every 50 spinner updates (10 seconds) increment the wait_time counter
+    spinner_update_count=$((spinner_update_count + 1))
+    if [ $spinner_update_count -ge 50 ]; then
+      wait_time=$((wait_time + 10))
+      spinner_update_count=0
+    fi
   done
   
+  # If we reached the timeout but didn't find the completion message
   if [ $wait_time -ge $max_wait_time ]; then
+    # Make sure we end with a newline before displaying warning
+    if [ "$startup_message_displayed" = "false" ]; then
+      printf "\r                                                               \r"
+    fi
+    
     echo "WARNING: Server verification timed out after ${max_wait_time}s, but process with PID $SERVER_PID is still running."
     echo "Considering server as started, but it may not be fully operational yet."
     echo "Updating PID file anyway to prevent unnecessary restart attempts."
@@ -880,6 +1187,14 @@ start_server() {
     kill $API_CHECK_PID 2>/dev/null || true
     echo "Stopped API log check process."
   fi
+  
+  if [ -n "$SERVER_ID_CHECK_PID" ]; then
+    kill $SERVER_ID_CHECK_PID 2>/dev/null || true
+    echo "Stopped SERVER ID check process."
+  fi
+  
+  # Clean up temporary files
+  rm -f /tmp/ark_server_id 2>/dev/null || true
 }
 
 

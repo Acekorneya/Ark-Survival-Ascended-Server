@@ -589,13 +589,15 @@ fi
     sleep 10
     elapsed=$((elapsed + 10))
     if [ "$startup_message_displayed" = "false" ]; then
-      echo "Waiting for server startup... ($elapsed seconds elapsed)"
+      # Simple animation pattern that works better in container logs
+      local dots=$(printf "%s" "..." | cut -c1-$((elapsed % 3 + 1)))
+      printf "\rWaiting for server startup%s (%s seconds elapsed)      " "$dots" "$elapsed"
     fi
   done
   
   # Final status check
   if [ $elapsed -ge $timeout ]; then
-    echo "⚠️ Timeout reached while waiting for server startup."
+    echo -e "\n⚠️ Timeout reached while waiting for server startup."
     if [ "$SCREEN_AVAILABLE" = true ]; then
       echo "Server may still be starting. Check logs with: screen -r ark_server"
     else

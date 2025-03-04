@@ -149,6 +149,235 @@ recover_server() {
   return 0
 }
 
+# Function to check if the server is running
+is_process_running() {
+  local display_message=${1:-false} # Default to not displaying the message
+
+  # First check PID file
+  if [ -f "$PID_FILE" ]; then
+    local pid=$(cat "$PID_FILE")
+    
+    # Check if the process with this PID is running
+    if ps -p $pid >/dev/null 2>&1; then
+      # Verify that this PID is actually an ARK server process
+      if ps -p $pid -o cmd= | grep -q -E "ArkAscendedServer.exe|AsaApiLoader.exe"; then
+        if [ "$display_message" = "true" ] && [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
+          echo "ARK server process (PID: $pid) is running."
+        fi
+        return 0
+      else
+        # PID exists but it's not an ARK server process - stale PID file
+        if [ "$display_message" = "true" ] && [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
+          echo "PID file contains process ID $pid which is not an ARK server process."
+        fi
+      fi
+    fi
+  fi
+  
+  # If we got here, either PID file doesn't exist or PID is not valid
+  # Try to find ARK server processes directly
+  
+  # First look for AsaApiLoader.exe if API=TRUE
+  if [ "${API}" = "TRUE" ]; then
+    local api_pid=$(pgrep -f "AsaApiLoader.exe" | head -1)
+    if [ -n "$api_pid" ]; then
+      if [ "$display_message" = "true" ] && [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
+        echo "AsaApiLoader process found with PID: $api_pid. Updating PID file."
+      fi
+      echo "$api_pid" > "$PID_FILE"
+      return 0
+    fi
+  fi
+  
+  # Then look for the main server executable
+  local server_pid=$(pgrep -f "ArkAscendedServer.exe" | head -1)
+  if [ -n "$server_pid" ]; then
+    if [ "$display_message" = "true" ] && [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
+      echo "ArkAscendedServer process found with PID: $server_pid. Updating PID file."
+    fi
+    echo "$server_pid" > "$PID_FILE"
+    return 0
+  fi
+  
+  # If we get here, no server process was found
+  if [ "$display_message" = "true" ]; then
+    echo "No ARK server processes found running."
+  fi
+  
+  # Clean up stale PID file if it exists
+  if [ -f "$PID_FILE" ]; then
+    rm -f "$PID_FILE"
+  fi
+  
+  return 1
+}
+
+# Function to check if this is a first-launch Wine/MSVCP140.dll error
+check_for_first_launch_error() {
+  local log_file="/home/pok/logs/server_console.log"
+  local server_log="${ASA_DIR}/ShooterGame/Saved/Logs/ShooterGame.log"
+  local wine_log_file="/home/pok/logs/wine_launch.log"
+  
+  # Check if first-launch has already been attempted and completed successfully
+  if [ -f "/home/pok/.first_launch_completed" ]; then
+    return 1
+  fi
+  
+  # Check for the specific flag files created by launch_ASA.sh
+  if [ -f "/home/pok/.first_launch_msvcp140_error" ]; then
+    echo ""
+    echo "========================================================================="
+    echo "⚠️ DETECTED FIRST-LAUNCH MSVCP140.DLL ERROR"
+    echo "-------------------------------------------------------------------------"
+    echo "This is a NORMAL and EXPECTED issue during the first launch when using API"
+    echo "mode. The Windows/Wine environment needs additional initialization that"
+    echo "can only be completed after a restart."
+    echo ""
+    echo "The server will now automatically restart to resolve this issue."
+    echo "This process will ONLY happen once during the initial setup."
+    echo "========================================================================="
+    echo ""
+    return 0
+  fi
+  
+  if [ -f "/home/pok/.first_launch_error" ]; then
+    echo ""
+    echo "========================================================================="
+    echo "⚠️ DETECTED FIRST-LAUNCH ERROR"
+    echo "-------------------------------------------------------------------------"
+    echo "A general first-launch error was detected. This is normal behavior"
+    echo "for the first run of ARK with API mode enabled."
+    echo ""
+    echo "The server will now automatically restart to resolve this issue."
+    echo "This process will ONLY happen once during the initial setup."
+    echo "========================================================================="
+    echo ""
+    return 0
+  fi
+  
+  # Check wine log for MSVCP140.dll errors
+  if [ -f "$wine_log_file" ] && grep -q "err:module:import_dll Loading library MSVCP140.dll.*failed" "$wine_log_file"; then
+    echo ""
+    echo "========================================================================="
+    echo "⚠️ DETECTED MSVCP140.DLL LOADING ERROR IN WINE LOG"
+    echo "-------------------------------------------------------------------------"
+    echo "This is a common issue during first launch with API enabled. The Wine"
+    echo "environment needs to initialize Visual C++ libraries."
+    echo ""
+    echo "The server will now automatically restart to resolve this issue."
+    echo "Subsequent launches will be much faster after this one-time setup."
+    echo "========================================================================="
+    echo ""
+    return 0
+  fi
+  
+  # Check for the specific Wine/MSVCP140.dll error pattern in server console logs
+  if [ -f "$log_file" ] && grep -q "err:module:import_dll Loading library MSVCP140.dll.*failed" "$log_file"; then
+    echo ""
+    echo "========================================================================="
+    echo "⚠️ DETECTED MSVCP140.DLL LOADING ERROR IN CONSOLE LOG"
+    echo "-------------------------------------------------------------------------"
+    echo "This error commonly occurs during the first launch with API mode enabled."
+    echo "It's related to the Visual C++ initialization process in Wine."
+    echo ""
+    echo "The server will automatically restart to complete the initialization."
+    echo "This is a ONE-TIME process that ensures stable operation going forward."
+    echo "========================================================================="
+    echo ""
+    return 0
+  fi
+  
+  # Check if AsaApiLoader.exe crashed without creating logs
+  if [ "${API}" = "TRUE" ] && [ ! -f "$server_log" ] && [ ! -d "${ASA_DIR}/ShooterGame/Binaries/Win64/logs" ]; then
+    # If server process is not running and no logs were created after 5 minutes from start
+    local container_uptime=$(awk '{print int($1)}' /proc/uptime)
+    if [ $container_uptime -gt 300 ] && ! is_process_running; then
+      echo ""
+      echo "========================================================================="
+      echo "⚠️ POTENTIAL FIRST-LAUNCH FAILURE DETECTED"
+      echo "-------------------------------------------------------------------------"
+      echo "The server seems to have failed without creating log files. This can"
+      echo "happen during the first launch with API mode when the Windows/Wine"
+      echo "environment is still initializing."
+      echo ""
+      echo "The server will automatically restart to attempt recovery."
+      echo "This is normal behavior and will typically resolve after one restart."
+      echo "========================================================================="
+      echo ""
+      return 0
+    fi
+  fi
+  
+  return 1
+}
+
+# Function to handle first launch error recovery
+handle_first_launch_recovery() {
+  echo "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
+  echo "┃                AUTOMATIC FIRST-LAUNCH RECOVERY                    ┃"
+  echo "┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫"
+  echo "┃ A common first-launch error was detected with the                 ┃"
+  echo "┃ Windows/Wine environment and missing MSVCP140.dll.                ┃"
+  echo "┃                                                                   ┃"
+  echo "┃ ✅ This is EXPECTED during first run with API mode                ┃"
+  echo "┃ ✅ The system will AUTOMATICALLY fix this issue                   ┃"
+  echo "┃ ✅ This ONE-TIME process only happens on first launch             ┃"
+  echo "┃ ✅ Second launch will be MUCH FASTER and stable                   ┃"
+  echo "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
+  echo ""
+  echo "🔄 Performing first-launch recovery procedure..."
+  
+  # Create a flag to indicate we've handled the first launch issue
+  touch "/home/pok/.first_launch_completed"
+  
+  # Special log for first-launch recovery
+  echo "$(date) - Performing automatic first-launch recovery due to MSVCP140.dll/Wine issues" > /home/pok/first_launch_recovery.log
+  
+  # Clean up error flag files
+  rm -f "/home/pok/.first_launch_msvcp140_error" 2>/dev/null || true
+  rm -f "/home/pok/.first_launch_error" 2>/dev/null || true
+  
+  # Terminate any running processes
+  echo "⏳ Stopping any running server processes..."
+  pkill -9 -f "AsaApiLoader.exe" >/dev/null 2>&1 || true
+  pkill -9 -f "ArkAscendedServer.exe" >/dev/null 2>&1 || true
+  pkill -9 -f "wine" >/dev/null 2>&1 || true
+  pkill -9 -f "wineserver" >/dev/null 2>&1 || true
+  
+  # Clean up the Wine prefix to force re-initialization
+  echo "⏳ Cleaning up Wine/Proton environment..."
+  rm -f "/home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/user.reg.bak" 2>/dev/null || true
+  
+  # Create the restart flag
+  echo "API_RESTART" > /home/pok/restart_reason.flag
+  
+  # Remove the PID file if it exists
+  if [ -f "$PID_FILE" ]; then
+    rm -f "$PID_FILE"
+  fi
+  
+  # Allow monitor process to continue (don't exit the container)
+  echo "⏳ Requesting server restart..."
+  echo "true" > "/home/pok/.first_launch_restart_requested"
+  
+  # Now restart the server using restart_server.sh
+  if [ -x "/home/pok/scripts/restart_server.sh" ]; then
+    echo "⏳ Running restart script with immediate parameter..."
+    /home/pok/scripts/restart_server.sh immediate
+  else
+    echo "WARNING: restart_server.sh not found or not executable"
+    # Fallback to direct server launch
+    nohup /home/pok/scripts/init.sh --from-restart > /home/pok/logs/restart_console.log 2>&1 &
+  fi
+  
+  # Sleep to give restart time to initialize
+  sleep 30
+  
+  echo "✅ First-launch recovery completed. Server should restart automatically."
+  echo "🚀 The server should be much faster and more stable after this restart."
+  return 0
+}
+
 # Wait for the initial startup before monitoring
 sleep $INITIAL_STARTUP_DELAY
 
@@ -190,6 +419,30 @@ while true; do
       sleep 15
       continue
     fi
+  fi
+  
+  # NEW: Check for first-launch error and handle recovery if needed
+  if check_for_first_launch_error; then
+    handle_first_launch_recovery
+    # After recovery attempt, sleep for a bit to let the server restart
+    sleep 60
+    continue
+  fi
+  
+  # Check for first-launch restart in progress
+  if [ -f "/home/pok/.first_launch_restart_requested" ] && [ ! -f "/home/pok/.first_launch_restart_completed" ]; then
+    echo "First-launch restart in progress, monitoring..."
+    
+    # Check if server is now running after the restart
+    if is_process_running; then
+      echo "Server is now running after first-launch restart. Recovery was successful."
+      touch "/home/pok/.first_launch_restart_completed"
+      rm -f "/home/pok/.first_launch_restart_requested"
+    fi
+    
+    # Don't do other checks while in this recovery mode
+    sleep 30
+    continue
   fi
   
   if [ "${UPDATE_SERVER}" = "TRUE" ]; then

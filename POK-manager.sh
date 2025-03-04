@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.48"
+POK_MANAGER_VERSION="2.1.49"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -3554,6 +3554,9 @@ manage_service() {
     
     configure_api "$api_state" "$instance_name"
     ;;
+  -changelog)
+    display_changelog
+    ;;
   *)
     echo "Invalid action. Usage: $0 {action} [additional_args...] {instance_name}"
     echo "Actions include: -start, -stop, -update, -create, -setup, -status, -restart, -saveworld, -chat, -custom, -backup, -restore"
@@ -3563,7 +3566,7 @@ manage_service() {
 }
 # Define valid actions
 declare -a valid_actions
-valid_actions=("-create" "-start" "-stop" "-saveworld" "-shutdown" "-restart" "-status" "-update" "-list" "-beta" "-stable" "-version" "-upgrade" "-logs" "-backup" "-restore" "-migrate" "-setup" "-edit" "-custom" "-chat" "-clearupdateflag" "-API" "-validate_update" "-force-restore" "-emergency-restore" "-fix" "-api-recovery")
+valid_actions=("-create" "-start" "-stop" "-saveworld" "-shutdown" "-restart" "-status" "-update" "-list" "-beta" "-stable" "-version" "-upgrade" "-logs" "-backup" "-restore" "-migrate" "-setup" "-edit" "-custom" "-chat" "-clearupdateflag" "-API" "-validate_update" "-force-restore" "-emergency-restore" "-fix" "-api-recovery" "-changelog")
 
 display_usage() {
   echo "Usage: $0 {action} [instance_name|-all] [additional_args...]"
@@ -3582,7 +3585,7 @@ display_usage() {
   echo "  -status <instance_name|-all>              Show the status of an instance or all instances"
   echo "  -restart [minutes] <instance_name|-all>   Restart an instance or all instances"
   echo "  -saveworld <instance_name|-all>           Save the world of an instance or all instances"
-  echo "  -chat \"<message>\" <instance_name|-all>    Send a chat message to an instance or all instances"
+  echo "  -chat \"<message>\" <instance_name|-all>  Send a chat message to an instance or all instances"
   echo "  -custom <command> <instance_name|-all>    Execute a custom command on an instance or all instances"
   echo "  -backup [instance_name|-all]              Backup an instance or all instances (defaults to all if not specified)"
   echo "  -restore [instance_name]                  Restore an instance from a backup"
@@ -3595,6 +3598,7 @@ display_usage() {
   echo "  -fix                                      Fix permissions on files owned by root (0:0) that could cause container issues"
   echo "  -version                                  Display the current version of POK-manager"
   echo "  -api-recovery                             Check and recover API instances with container restart"
+  echo "  -changelog                                Display the changelog"
 }
 
 # Display version information
@@ -3813,6 +3817,42 @@ upgrade_pok_manager() {
     fi
   fi
   
+  # Download the changelog file
+  local changelog_dir="${BASE_DIR}/config/POK-manager"
+  local changelog_file="${changelog_dir}/changelog.txt"
+  mkdir -p "$changelog_dir"
+  
+  # Generate changelog URL based on branch
+  local changelog_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/$branch/changelog.txt?nocache=${timestamp}_${random_str}"
+  local temp_changelog_file="${changelog_dir}/changelog.txt.new"
+  
+  echo "Downloading changelog..."
+  local changelog_download_success=false
+  if command -v wget &>/dev/null; then
+    if wget -q --no-cache -O "$temp_changelog_file" "$changelog_url"; then
+      changelog_download_success=true
+    fi
+  else
+    if curl -s -H "Cache-Control: no-cache, no-store" -H "Pragma: no-cache" -o "$temp_changelog_file" "$changelog_url"; then
+      changelog_download_success=true
+    fi
+  fi
+  
+  if [ "$changelog_download_success" = "true" ] && [ -s "$temp_changelog_file" ]; then
+    # Replace the current changelog file
+    mv -f "$temp_changelog_file" "$changelog_file"
+    echo "Changelog updated successfully."
+  else
+    echo "Could not download changelog. The file may not exist or there may be connectivity issues."
+    # If no changelog exists yet, create a simple placeholder
+    if [ ! -f "$changelog_file" ]; then
+      echo "POK-Manager Changelog" > "$changelog_file"
+      echo "===================" >> "$changelog_file"
+      echo "" >> "$changelog_file"
+      echo "This changelog will be populated during the next successful upgrade." >> "$changelog_file"
+    fi
+  fi
+  
   if [ "$download_success" = "true" ] && [ -s "$temp_file" ]; then
     # Make sure the downloaded file is valid by checking key elements
     if grep -q "POK_MANAGER_VERSION=" "$temp_file" && grep -q "upgrade_pok_manager" "$temp_file"; then
@@ -3986,6 +4026,7 @@ force_restore_from_backup() {
       rm -f "${BASE_DIR%/}/config/POK-manager/upgraded_version" 2>/dev/null
       rm -f "${BASE_DIR%/}/config/POK-manager/just_upgraded" 2>/dev/null
       rm -f "${BASE_DIR%/}/config/POK-manager/rollback_source" 2>/dev/null
+      rm -f "${BASE_DIR%/}/config/POK-manager/branch_switched" 2>/dev/null
       
       # Read the version from the restored script for display
       local restored_version=$(grep -m 1 "POK_MANAGER_VERSION=" "$0" | cut -d'"' -f2)
@@ -5047,352 +5088,6 @@ get_docker_image_tag() {
 configure_api() {
   local api_state="$1"
   local instance_name="$2"
-  local action_description=""
-  
-  # Check for empty state
-  if [ -z "$api_state" ]; then
-    echo "❌ Error: API state (TRUE or FALSE) is required."
-    echo "Usage: ./POK-manager.sh -API TRUE|FALSE <instance_name|-all>"
-    return 1
-  fi
-  
-  # Auto-correct common misspellings
-  api_state="${api_state^^}" # Convert to uppercase
-  case "$api_state" in
-    "T" | "Y" | "YES" | "ENABLE" | "ENABLED" | "ON" | "1" | "TURE" | "TRU" | "TTRUE" | "TRRUE" | "TRUEE")
-      echo "ℹ️ Interpreting '$api_state' as 'TRUE'"
-      api_state="TRUE"
-      ;;
-    "F" | "N" | "NO" | "DISABLE" | "DISABLED" | "OFF" | "0" | "FLASE" | "FASLE" | "FALS" | "FFALSE" | "FALLSE" | "FALSEE")
-      echo "ℹ️ Interpreting '$api_state' as 'FALSE'"
-      api_state="FALSE"
-      ;;
-  esac
-  
-  # Final validation (non-interactive safe)
-  if [[ ! "$api_state" =~ ^(TRUE|FALSE)$ ]]; then
-    echo "❌ Error: Invalid API state '$api_state'. Please use TRUE or FALSE."
-    echo "Usage: ./POK-manager.sh -API TRUE|FALSE <instance_name|-all>"
-    return 1
-  fi
-  
-  # Set action description based on validated state
-  if [ "$api_state" = "TRUE" ]; then
-    action_description="Enabling"
-  else
-    action_description="Disabling"
-  fi
-
-  # Check if the user is trying to ENABLE API with 1000:1000 permissions
-  if [ "$api_state" = "TRUE" ]; then
-    # Check ServerFiles ownership to determine if they are using 1000:1000
-    local server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
-    if [ -d "$server_files_dir" ]; then
-      local file_ownership=$(stat -c '%u:%g' "$server_files_dir")
-      
-      # If files are owned by 1000:1000 and they're trying to enable API
-      if [ "$file_ownership" = "1000:1000" ]; then
-        echo ""
-        echo "⚠️ IMPORTANT API COMPATIBILITY NOTICE ⚠️"
-        echo "You're trying to enable AsaApi with the legacy 1000:1000 file ownership."
-        echo "For optimal compatibility, AsaApi works best with the newer 7777:7777 permissions."
-        echo ""
-        echo "Detected file ownership: 1000:1000 (using 2_0_latest image)"
-        echo "Recommended for API:    7777:7777 (using 2_1_latest image)"
-        echo ""
-        
-        # Check if they're trying to enable it on just a specific instance (not -all)
-        # while potentially having multiple instances with different image versions
-        if [ "$instance_name" != "-all" ]; then
-          local all_instances=($(list_instances))
-          
-          if [ ${#all_instances[@]} -gt 1 ]; then
-            # We have multiple instances, check if any are currently running with 2_0_latest
-            local has_legacy_instances=false
-            local running_instances=()
-            
-            for instance in "${all_instances[@]}"; do
-              # Skip the current instance being configured
-              if [ "$instance" = "$instance_name" ]; then
-                continue
-              fi
-              
-              # Check if this instance is using the 2_0_latest image
-              local instance_compose_file="./Instance_${instance}/docker-compose-${instance}.yaml"
-              if [ -f "$instance_compose_file" ] && grep -q "image:.*2_0_latest" "$instance_compose_file"; then
-                has_legacy_instances=true
-                running_instances+=("$instance")
-              fi
-            done
-            
-            if [ "$has_legacy_instances" = "true" ]; then
-              echo "⚠️ IMPORTANT: You have multiple server instances sharing the same server files:"
-              echo ""
-              echo "Instance you're enabling API on: $instance_name"
-              echo "Other instances that use 2_0_latest image:"
-              for instance in "${running_instances[@]}"; do
-                echo "  - $instance"
-              done
-              echo ""
-              echo "Since all instances share the same server files, you cannot have different"
-              echo "permission structures for different instances. If you enable AsaApi"
-              echo "on $instance_name and migrate to 7777:7777 permissions, ALL your other"
-              echo "instances will also need to be updated to use the 2_1_latest image."
-              echo ""
-              echo "To solve this, you have two options:"
-              echo ""
-              echo "1. Migrate ALL instances to 7777:7777 permissions (recommended):"
-              echo "   This upgrades all your servers to use the 2_1_latest image"
-              echo "   with the optimal 7777:7777 permission structure."
-              echo ""
-              echo "2. Do not use AsaApi on any instance:"
-              echo "   Keep all your servers using the 2_0_latest image with 1000:1000 permissions."
-              echo ""
-              
-              # Only offer interactive migration if appropriate
-              if [ -t 0 ]; then
-                echo "Would you like to migrate ALL instances to the recommended 7777:7777"
-                echo "ownership structure? This is required for AsaApi to work properly."
-                echo ""
-                read -p "Perform migration for ALL instances? (Strongly Recommended) [Y/n]: " perform_migration
-                
-                # Default to yes if nothing entered
-                if [[ -z "$perform_migration" || "$perform_migration" =~ ^[Yy]$ ]]; then
-                  echo ""
-                  echo "🔄 Starting migration to 7777:7777 ownership for ALL instances..."
-                  
-                  # We need to run migration with sudo
-                  if ! is_sudo; then
-                    echo "Migration requires sudo privileges. Please enter your password when prompted."
-                    
-                    # Execute the migration command with sudo
-                    if sudo "$0" -migrate; then
-                      echo "✅ Migration completed successfully."
-                      echo ""
-                      echo "Now continuing with API configuration for ALL instances..."
-                      
-                      # Ask if they want to enable API for all instances now
-                      echo "Since all instances now use the same permission structure,"
-                      echo "would you like to enable API on ALL instances instead of just $instance_name?"
-                      read -p "Enable API on all instances? [y/N]: " enable_all
-                      
-                      if [[ "$enable_all" =~ ^[Yy]$ ]]; then
-                        # Use sudo to enable API on all instances
-                        sudo "$0" -API TRUE -all
-                        exit 0
-                      else
-                        # Continue with just the original instance
-                        sudo "$0" -API TRUE "$instance_name"
-                        exit 0
-                      fi
-                    else
-                      echo "❌ Migration failed. API cannot be safely enabled."
-                      echo "Consider running the migration manually with sudo ./POK-manager.sh -migrate"
-                      return 1
-                    fi
-                  else
-                    # Already running with sudo, so directly call migrate_file_ownership
-                    if migrate_file_ownership; then
-                      echo "✅ Migration completed successfully."
-                      echo ""
-                      
-                      # Ask if they want to enable API for all instances now
-                      echo "Since all instances now use the same permission structure,"
-                      echo "would you like to enable API on ALL instances instead of just $instance_name?"
-                      read -p "Enable API on all instances? [y/N]: " enable_all
-                      
-                      if [[ "$enable_all" =~ ^[Yy]$ ]]; then
-                        # Change the instance_name to -all to process all instances
-                        instance_name="-all"
-                      fi
-                      # Continue with normal flow - the rest of the function will handle it
-                    else
-                      echo "❌ Migration failed. API cannot be safely enabled."
-                      echo "Please try again or check for any errors in the migration process."
-                      return 1
-                    fi
-                  fi
-                else
-                  echo ""
-                  echo "❌ Migration cancelled. AsaApi cannot be safely enabled without migration."
-                  echo "Consider migrating ALL instances if you wish to use AsaApi in the future."
-                  return 1
-                fi
-              else
-                # Non-interactive mode - we can't proceed safely
-                echo "When running in non-interactive mode, we cannot safely enable AsaApi"
-                echo "on just one instance when multiple instances with different permission"
-                echo "structures exist."
-                echo ""
-                echo "Please first run: sudo ./POK-manager.sh -migrate"
-                echo "Then retry enabling AsaApi after all instances are migrated."
-                return 1
-              fi
-            fi
-          fi
-        fi
-        
-        # Only ask for migration if running interactively
-        if [ -t 0 ]; then
-          echo "Would you like to migrate to the recommended 7777:7777 ownership now?"
-          echo "This process will:"
-          echo "  1. Stop all running server instances"
-          echo "  2. Change file ownership from 1000:1000 to 7777:7777"
-          echo "  3. Update to use the 2_1_latest image which is optimized for AsaApi"
-          echo "  4. Restart your servers with API enabled"
-          echo ""
-          read -p "Perform migration before enabling API? (Strongly Recommended) [Y/n]: " perform_migration
-          
-          # Default to yes if nothing entered
-          if [[ -z "$perform_migration" || "$perform_migration" =~ ^[Yy]$ ]]; then
-            echo ""
-            echo "🔄 Starting migration to 7777:7777 ownership..."
-            
-            # We need to run migration with sudo
-            if ! is_sudo; then
-              echo "Migration requires sudo privileges. Please enter your password when prompted."
-              
-              # Store all arguments to pass to sudo
-              local all_args="-migrate"
-              
-              # Execute the same script with sudo and the migrate option
-              if sudo "$0" $all_args; then
-                echo "✅ Migration completed successfully."
-                echo ""
-                echo "Now continuing with API configuration..."
-                
-                # Migration successful, now we need to run the API configuration again
-                # Use sudo in case permissions are not properly applied yet
-                sudo "$0" -API "$api_state" "$instance_name"
-                
-                # Exit because the above command will handle everything from here
-                exit 0
-              else
-                echo "❌ Migration failed. API will still be enabled but may not work correctly."
-                echo "Consider running the migration manually later with sudo ./POK-manager.sh -migrate"
-                echo ""
-              fi
-            else
-              # Already running with sudo, so directly call migrate_file_ownership
-              if migrate_file_ownership; then
-                echo "✅ Migration completed successfully."
-                echo ""
-                echo "Now continuing with API configuration..."
-                
-                # Take no special action here, continue with the normal flow
-                # but recognize that file ownership should now be 7777:7777
-              else
-                echo "❌ Migration failed. API will still be enabled but may not work correctly."
-                echo "Consider troubleshooting the migration issues before proceeding."
-                echo ""
-              fi
-            fi
-          else
-            echo ""
-            echo "⚠️ Migration skipped. API will still be enabled but may not work correctly."
-            echo "Consider running the migration later with sudo ./POK-manager.sh -migrate"
-            echo ""
-          fi
-        else
-          # Running non-interactively, just warn but proceed
-          echo "When running in non-interactive mode, migration is not performed automatically."
-          echo "Consider running './POK-manager.sh -migrate' manually before enabling API."
-          echo "Proceeding with API configuration as requested..."
-          echo ""
-        fi
-      fi
-    fi
-  fi
-  
-  # Handle all instances if specified
-  if [ "${instance_name,,}" = "-all" ]; then
-    echo "🔄 $action_description ArkServerAPI for all instances..."
-    local instances=($(list_instances))
-    if [ ${#instances[@]} -eq 0 ]; then
-      echo "❌ No instances found. Please create an instance first with './POK-manager.sh -create <instance_name>'."
-      return 1
-    fi
-    
-    local successful_instances=()
-    for instance in "${instances[@]}"; do
-      echo "  Processing instance: $instance"
-      if configure_api_for_instance "$api_state" "$instance"; then
-        successful_instances+=("$instance")
-      else
-        echo "  ❌ Failed to configure API for instance: $instance"
-      fi
-    done
-    
-    if [ ${#successful_instances[@]} -gt 0 ]; then
-      echo "✅ ArkServerAPI has been $( [ "$api_state" = "TRUE" ] && echo "enabled" || echo "disabled" ) for these instances:"
-      for instance in "${successful_instances[@]}"; do
-        echo "  - $instance"
-      done
-      
-      echo ""
-      echo "To apply these changes, restart the instances:"
-      echo "./POK-manager.sh -stop -all"
-      echo "./POK-manager.sh -start -all"
-      
-      # Ask if user wants to restart instances now - only in interactive mode
-      if [ -t 0 ]; then
-        read -p "Would you like to restart these instances now? (y/N): " restart_now
-        if [[ "$restart_now" =~ ^[Yy] ]]; then
-          echo "Restarting instances..."
-          for instance in "${successful_instances[@]}"; do
-            stop_instance "$instance"
-            start_instance "$instance"
-          done
-          echo "✅ All instances restarted with new API settings."
-        fi
-      else
-        echo "Running in non-interactive mode. Please restart instances manually to apply changes."
-      fi
-    else
-      echo "❌ Failed to configure API for any instances."
-      return 1
-    fi
-  else
-    # Handle single instance
-    if [ -z "$instance_name" ]; then
-      echo "❌ Instance name is required. Usage: ./POK-manager.sh -API TRUE|FALSE <instance_name|-all>"
-      return 1
-    fi
-    
-    echo "🔄 $action_description ArkServerAPI for instance: $instance_name"
-    if configure_api_for_instance "$api_state" "$instance_name"; then
-      echo "✅ ArkServerAPI has been $( [ "$api_state" = "TRUE" ] && echo "enabled" || echo "disabled" ) for instance: $instance_name"
-      
-      echo ""
-      echo "To apply these changes, restart the instance:"
-      echo "./POK-manager.sh -stop $instance_name"
-      echo "./POK-manager.sh -start $instance_name"
-      
-      # Ask if user wants to restart instance now - only in interactive mode
-      if [ -t 0 ]; then
-        read -p "Would you like to restart this instance now? (y/N): " restart_now
-        if [[ "$restart_now" =~ ^[Yy] ]]; then
-          echo "Restarting instance..."
-          stop_instance "$instance_name"
-          start_instance "$instance_name"
-          echo "✅ Instance '$instance_name' restarted with new API settings."
-        fi
-      else
-        echo "Running in non-interactive mode. Please restart the instance manually to apply changes."
-      fi
-    else
-      echo "❌ Failed to configure API for instance: $instance_name"
-      return 1
-    fi
-  fi
-  
-  return 0
-}
-
-# Function to configure API for a specific instance
-configure_api_for_instance() {
-  local api_state="$1"
-  local instance_name="$2"
   local base_dir=$(dirname "$(realpath "$0")")
   local docker_compose_file="${base_dir}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
   local instance_dir="${base_dir}/Instance_${instance_name}"
@@ -6015,9 +5710,6 @@ enhanced_restart_command() {
   exit 0  # Add explicit exit with success status to ensure function terminates
 }
 
-# Original api_restart_instance function stays the same
-# Note: This comment is just a marker - the real api_restart_instance function remains unchanged
-
 # Function for enhanced shutdown command with better visuals (similar to restart)
 enhanced_shutdown_command() {
   local minutes_arg="$1"
@@ -6158,6 +5850,27 @@ enhanced_shutdown_command() {
   
   # Exit gracefully
   exit 0
+}
+
+# Function to display the changelog
+display_changelog() {
+  local changelog_file="${BASE_DIR}/config/POK-manager/changelog.txt"
+  
+  # Check if changelog file exists
+  if [ ! -f "$changelog_file" ]; then
+    echo "Changelog file not found. It will be created during the next upgrade."
+    echo "Please run './POK-manager.sh -upgrade' to download the latest changelog."
+    return 1
+  fi
+  
+  # Display the changelog with nice formatting
+  echo "======================================================="
+  echo "                 POK-MANAGER CHANGELOG                 "
+  echo "======================================================="
+  echo ""
+  cat "$changelog_file"
+  echo ""
+  echo "======================================================="
 }
 
 # Invoke the main function with all passed arguments
