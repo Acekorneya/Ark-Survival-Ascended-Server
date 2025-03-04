@@ -566,31 +566,31 @@ if command -v screen >/dev/null 2>&1; then
   SCREEN_AVAILABLE=true
 else
   # Try to install screen but don't fail if it doesn't work
-  echo "Attempting to install screen for better log visibility (optional)..."
+  echo "[INFO] Attempting to install screen for better log visibility (optional)..."
   { apt-get update -qq && apt-get install -y screen; } >/dev/null 2>&1
   # Check if installation succeeded
   if command -v screen >/dev/null 2>&1; then
     SCREEN_AVAILABLE=true
-    echo "✅ Screen installed successfully!"
+    echo "[SUCCESS] Screen installed successfully!"
   else
-    echo "ℹ️ Screen not available. Using fallback method instead."
+    echo "[INFO] Screen not available. Using fallback method instead."
   fi
 fi
 
 # Launch the server differently based on whether screen is available
 if [ "$SCREEN_AVAILABLE" = true ]; then
   # Use screen for better log management and visibility
-  echo "Starting server in screen session..."
+  echo "[INFO] Starting server in screen session..."
   screen -dmS ark_server bash -c "/home/pok/scripts/launch_ASA.sh 2>&1 | tee -a /home/pok/launch_output.log; exec bash"
-  echo "ARK server launched in screen session. View logs with: screen -r ark_server"
+  echo "[INFO] ARK server launched in screen session. View logs with: screen -r ark_server"
 else
   # Fallback method - use nohup to run in background while still capturing logs
-  echo "Starting server with fallback method (nohup)..."
+  echo "[INFO] Starting server with fallback method (nohup)..."
   mkdir -p /home/pok/logs
   nohup /home/pok/scripts/launch_ASA.sh > /home/pok/logs/server_console.log 2>&1 &
   SERVER_PID=$!
-  echo "ARK server launched with PID: $SERVER_PID"
-  echo "View logs with: tail -f /home/pok/logs/server_console.log"
+  echo "[INFO] ARK server launched with PID: $SERVER_PID"
+  echo "[INFO] View logs with: tail -f /home/pok/logs/server_console.log"
   
   # Start a background process to tail the log file to console
   # This will show logs in the container's output while allowing the server to run in background
@@ -611,13 +611,13 @@ fi
     server_pid=$(ps aux | grep -v grep | grep -E "AsaApiLoader.exe|ArkAscendedServer.exe" | awk '{print $2}' | head -1)
     if [ -n "$server_pid" ]; then
       if [ "$startup_message_displayed" = "false" ]; then
-        echo "✅ ARK Server process detected with PID: $server_pid"
+        echo "[SUCCESS] ARK Server process detected with PID: $server_pid"
       fi
       # If using screen, try to check for startup complete message
       if [ "$SCREEN_AVAILABLE" = true ]; then
         if screen -S ark_server -X hardcopy /tmp/ark_screen.log 2>/dev/null && grep -q "Server has completed startup and is now advertising for join" /tmp/ark_screen.log; then
           if [ "$startup_message_displayed" = "false" ]; then
-            echo "🎮 SERVER STARTUP COMPLETE: Server is now advertising for join!"
+            echo "[SUCCESS] SERVER STARTUP COMPLETE: Server is now advertising for join!"
             startup_message_displayed=true
           fi
           break
@@ -626,7 +626,7 @@ fi
         # For fallback method, check log file
         if grep -q "Server has completed startup and is now advertising for join" /home/pok/logs/server_console.log 2>/dev/null; then
           if [ "$startup_message_displayed" = "false" ]; then
-            echo "🎮 SERVER STARTUP COMPLETE: Server is now advertising for join!"
+            echo "[SUCCESS] SERVER STARTUP COMPLETE: Server is now advertising for join!"
             startup_message_displayed=true
           fi
           break
@@ -635,7 +635,7 @@ fi
     else
       # Only display status message every 30 seconds to reduce log spam
       if [ $elapsed -eq 0 ] || [ $((elapsed - last_status_time)) -ge 30 ]; then
-        echo "⏳ SERVER STARTING: No server process detected yet. Waiting for startup... ($elapsed seconds elapsed)"
+        echo "[INFO] SERVER STARTING: No server process detected yet. Waiting for startup... (${elapsed}s elapsed)"
         last_status_time=$elapsed
       fi
     fi
@@ -645,17 +645,17 @@ fi
     
     # Only show progress messages at reasonable intervals to avoid log spam
     if [ "$startup_message_displayed" = "false" ] && [ $((elapsed % 30)) -eq 0 ]; then
-      echo "⏳ SERVER STARTING: In progress... ($elapsed seconds elapsed)"
+      echo "[INFO] SERVER STARTING: In progress... (${elapsed}s elapsed)"
     fi
   done
   
   # Final status check
   if [ $elapsed -ge $timeout ]; then
-    echo -e "\n⚠️ Timeout reached while waiting for server startup."
+    echo -e "\n[WARNING] Timeout reached while waiting for server startup."
     if [ "$SCREEN_AVAILABLE" = true ]; then
-      echo "Server may still be starting. Check logs with: screen -r ark_server"
+      echo "[INFO] Server may still be starting. Check logs with: screen -r ark_server"
     else
-      echo "Server may still be starting. Check logs with: tail -f /home/pok/logs/server_console.log"
+      echo "[INFO] Server may still be starting. Check logs with: tail -f /home/pok/logs/server_console.log"
     fi
   fi
 } &
@@ -667,7 +667,7 @@ MONITOR_PID=$!
   # Give the server time to fully start before monitoring
   sleep 60
   
-  echo "🔍 Starting server restart detection..."
+  echo "[INFO] Starting server restart detection..."
   
   # Keep checking if the server process is running
   while true; do
@@ -675,46 +675,46 @@ MONITOR_PID=$!
     if ! pgrep -f "AsaApiLoader.exe" >/dev/null 2>&1 && ! pgrep -f "ArkAscendedServer.exe" >/dev/null 2>&1; then
       # Server process not found, check if this is a deliberate shutdown
       if [ -f "/home/pok/shutdown.flag" ]; then
-        echo "🛑 Detected shutdown flag. Not restarting server."
+        echo "[INFO] Detected shutdown flag. Not restarting server."
         break
       else
         # This might be a server-initiated restart, wait a moment to be sure
-        echo "⚠️ Server process not found. Waiting to confirm if this is a restart..."
+        echo "[WARNING] Server process not found. Waiting to confirm if this is a restart..."
         sleep 10
         
         # Check again to make sure the server is really gone
         if ! pgrep -f "AsaApiLoader.exe" >/dev/null 2>&1 && ! pgrep -f "ArkAscendedServer.exe" >/dev/null 2>&1; then
-          echo "🔄 Detected server self-restart. Initiating simplified restart process..."
+          echo "[INFO] Detected server self-restart. Initiating simplified restart process..."
           
           # If in API mode and EXIT_ON_API_RESTART is enabled, trigger container restart
           if [ "${API}" = "TRUE" ] && [ "${EXIT_ON_API_RESTART:-TRUE}" = "TRUE" ]; then
-            echo "🔄 API mode detected - using container restart strategy for self-restart"
+            echo "[INFO] API mode detected - using container restart strategy for self-restart"
             
             # Create flag files for container restart detection
             echo "$(date) - Container exiting for automatic restart due to server self-restart" > /home/pok/container_restart.log
             echo "API_RESTART" > /home/pok/restart_reason.flag
             
             # Perform basic cleanup
-            echo "Cleaning up processes before container restart..."
+            echo "[INFO] Cleaning up processes before container restart..."
             pkill -9 -f "wine" >/dev/null 2>&1 || true
             pkill -9 -f "wineserver" >/dev/null 2>&1 || true
             
             # Remove PID file if it exists
             if [ -f "$PID_FILE" ]; then
-              echo "- Removing stale PID file..."
+              echo "[INFO] Removing stale PID file..."
               rm -f "$PID_FILE"
             fi
             
-            echo "🔄 Exiting container for automatic restart..."
+            echo "[INFO] Exiting container for automatic restart..."
             sleep 3
             exit 0
           else
             # Perform basic cleanup - but don't handle Xvfb, let restart_server.sh do that
-            echo "Performing basic process cleanup..."
+            echo "[INFO] Performing basic process cleanup..."
             
             # Kill any Wine/Proton processes
             if pgrep -f "wine" >/dev/null 2>&1 || pgrep -f "wineserver" >/dev/null 2>&1; then
-              echo "- Cleaning up Wine/Proton processes..."
+              echo "[INFO] Cleaning up Wine/Proton processes..."
               pkill -9 -f "wine" >/dev/null 2>&1 || true
               pkill -9 -f "wineserver" >/dev/null 2>&1 || true
               sleep 2
@@ -722,16 +722,16 @@ MONITOR_PID=$!
             
             # Remove PID file if it exists
             if [ -f "$PID_FILE" ]; then
-              echo "- Removing stale PID file..."
+              echo "[INFO] Removing stale PID file..."
               rm -f "$PID_FILE"
             fi
             
-            echo "Process cleanup completed. Running restart_server.sh immediate..."
+            echo "[INFO] Process cleanup completed. Running restart_server.sh immediate..."
             
             # Use the restart_server.sh script with the restart flag
             /home/pok/scripts/restart_server.sh immediate
             
-            echo "🔄 Restart command issued. Exiting monitoring loop."
+            echo "[INFO] Restart command issued. Exiting monitoring loop."
             break
           fi
         fi

@@ -420,14 +420,54 @@ start_server() {
       local binary="$2"
       local params="$3"
       
-      echo "Attempting launch using method: $method"
+      echo "[INFO] Attempting launch using method: $method"
+      
+      # Check for persistent first-launch completed marker
+      # Create a permanent config directory that persists across container restarts
+      local config_dir="${ASA_DIR}/ShooterGame/Saved/Config/FirstLaunchFlags"
+      local api_first_launch_file="${config_dir}/api_first_launch_completed"
+      local standard_first_launch_file="${config_dir}/standard_first_launch_completed"
+      
+      # Create config directory if it doesn't exist
+      mkdir -p "$config_dir" 2>/dev/null || true
+      
+      # Determine if this is genuinely a first launch
+      local is_first_launch=false
+      if [ "${API}" = "TRUE" ] && [ ! -f "$api_first_launch_file" ]; then
+        is_first_launch=true
+      elif [ "${API}" != "TRUE" ] && [ ! -f "$standard_first_launch_file" ]; then
+        is_first_launch=true
+      fi
+      
+      # Only show first launch message if this is genuinely a first launch
+      if [ "$is_first_launch" = "true" ]; then
+        echo ""
+        echo "🔍 FIRST-TIME LAUNCH DETECTED"
+        echo "⚠️ The first server launch may take longer and could potentially fail"
+        echo "🔄 If the first launch fails, the system will automatically restart"
+        echo "   and complete setup on the second attempt (this is normal behavior)"
+        echo "⏱️ Please be patient during the first launch process"
+        echo ""
+      fi
+      
+      # Define a function to mark first launch as completed
+      mark_first_launch_completed() {
+        if [ "${API}" = "TRUE" ]; then
+          touch "$api_first_launch_file"
+        else
+          touch "$standard_first_launch_file"
+        fi
+        # Also maintain backward compatibility with the home directory flag
+        touch "/home/pok/.first_launch_completed"
+      }
       
       if [ "$is_first_launch" = "true" ]; then
-        local spinner=('.' '..' '...' '.' '..' '...')
-        local i=0
+        # Define status variables
         local start_time=$(date +%s)
+        local max_wait=30
+        local waited=0
         
-        # Start the launch process in background
+        # Launch with background process to allow monitoring
         case "$method" in
           "proton_direct")
             if [ -f "$PROTON_EXECUTABLE" ]; then
@@ -436,7 +476,7 @@ start_server() {
               # Method 1: Direct Proton launch using found executable
               "$PROTON_EXECUTABLE" run "$binary" $params > /tmp/launch_output.log 2>&1 &
             else
-              echo "Proton executable not found, skipping this method."
+              echo "[WARNING] Proton executable not found, skipping this method."
               return 1
             fi
             ;;
@@ -444,19 +484,19 @@ start_server() {
             # Method 2: Fallback to fixed path
             export DISPLAY=:0.0
             if [ -f "${STEAM_COMPAT_DIR}/GE-Proton8-21/proton" ]; then
-              echo "Using GE-Proton8-21 for fallback launch"
+              echo "[INFO] Using GE-Proton8-21 for fallback launch"
               "${STEAM_COMPAT_DIR}/GE-Proton8-21/proton" run "$binary" $params > /tmp/launch_output.log 2>&1 &
             elif [ -f "${STEAM_COMPAT_DIR}/GE-Proton9-25/proton" ]; then
-              echo "Using GE-Proton9-25 for fallback launch"
+              echo "[INFO] Using GE-Proton9-25 for fallback launch"
               "${STEAM_COMPAT_DIR}/GE-Proton9-25/proton" run "$binary" $params > /tmp/launch_output.log 2>&1 &
             else
               # Last resort: check for any available GE-Proton directory
               local ANY_PROTON=$(find "${STEAM_COMPAT_DIR}" -name "GE-Proton*" -type d | head -1)
               if [ -n "$ANY_PROTON" ] && [ -f "$ANY_PROTON/proton" ]; then
-                echo "Using $ANY_PROTON for fallback launch"
+                echo "[INFO] Using $ANY_PROTON for fallback launch"
                 "$ANY_PROTON/proton" run "$binary" $params > /tmp/launch_output.log 2>&1 &
               else
-                echo "Fallback Proton paths not found, skipping this method."
+                echo "[WARNING] Fallback Proton paths not found, skipping this method."
                 return 1
               fi
             fi
@@ -489,67 +529,68 @@ start_server() {
         esac
         
         local pid=$!
-        echo "Launch attempt PID: $pid"
+        echo "[INFO] Launch attempt started with PID: $pid"
         
-        # Show animated progress indicator for up to 30 seconds
-        local max_wait=30
-        local waited=0
-        local spinner=('.' '..' '...' '.' '..' '...')
-        local i=0
+        # Wait for process to start - use less frequent status updates with cleaner format
+        echo "[INFO] Waiting up to ${max_wait} seconds for server process to initialize..."
         
         while [ $waited -lt $max_wait ]; do
-          # Print spinner - don't clear the line with a separate printf, do it in one command
-          printf "\r%s Waiting for server startup... (%s seconds elapsed)      " "${spinner[i]}" "$waited"
-          i=$(( (i+1) % ${#spinner[@]} ))
-          sleep 0.2  # Medium speed for spinner animation
+          # Check every 5 seconds without a spinner animation
+          sleep 5
+          waited=$((waited + 5))
           
-          # Only increment wait time every 1 second (5 spinner frames)
-          if [ $((i % 5)) -eq 0 ]; then
-            waited=$((waited + 1))
+          # Only log status at specific intervals
+          if [ $((waited % 10)) -eq 0 ]; then
+            echo "[INFO] Waiting for server initialization... (${waited}s elapsed)"
           fi
           
           # Check if process is still running
           if ! kill -0 $pid 2>/dev/null; then
             # Process exited early
+            echo "[ERROR] Server process exited unexpectedly after ${waited}s"
+            break
+          fi
+          
+          # Check for ARK processes which indicate successful launch
+          if pgrep -f "AsaApiLoader.exe" >/dev/null 2>&1 || pgrep -f "ArkAscendedServer.exe" >/dev/null 2>&1; then
+            echo "[SUCCESS] ARK Server process detected with PID: $(pgrep -f "AsaApiLoader.exe|ArkAscendedServer.exe" | head -1)"
             break
           fi
         done
         
-        # Wait a moment to see if the process starts
-        sleep 5
-        
         # Check if process is still running
         if kill -0 $pid 2>/dev/null; then
-          echo "✅ Launch successful using method: $method (${waited}s)"
+          echo "[SUCCESS] Launch successful using method: $method (${waited}s)"
           # Create the first launch completed file to skip this next time
-          touch "$first_launch_file"
+          mark_first_launch_completed
           return 0
         else
-          echo "❌ Launch failed using method: $method after ${waited}s"
+          echo "[ERROR] Launch failed using method: $method after ${waited}s"
           # Check if this was a MSVCP140.dll error
           if grep -q "err:module:import_dll Loading library MSVCP140.dll.*failed" /tmp/launch_output.log 2>/dev/null; then
-            echo "DETECTED MSVCP140.dll LOADING ERROR:"
-            echo "This is a common first-launch error that should resolve on restart"
+            echo "[WARNING] DETECTED MSVCP140.dll LOADING ERROR:"
+            echo "[INFO] This is a common first-launch error that should resolve on restart"
             # Create a flag file so monitor can detect this specific error
             echo "MSVCP140.dll loading error detected on first launch" > /home/pok/.first_launch_msvcp140_error
           else
             # Show the last few lines of output for debugging
-            echo "Last output from launch attempt:"
+            echo "[INFO] Last output from launch attempt:"
             tail -5 /tmp/launch_output.log 2>/dev/null
           fi
           return 1
         fi
       else
-        # Non-first launch - use the original code without progress indicator
+        # Non-first launch - use cleaner progress updates without spinners
+        # Launch with the chosen method
         case "$method" in
           "proton_direct")
             if [ -f "$PROTON_EXECUTABLE" ]; then
               # Set DISPLAY variable to prevent X server errors
               export DISPLAY=:0.0
               # Method 1: Direct Proton launch using found executable
-              "$PROTON_EXECUTABLE" run "$binary" $params &
+              "$PROTON_EXECUTABLE" run "$binary" $params > /tmp/launch_output.log 2>&1 &
             else
-              echo "Proton executable not found, skipping this method."
+              echo "[WARNING] Proton executable not found, skipping this method."
               return 1
             fi
             ;;
@@ -557,19 +598,19 @@ start_server() {
             # Method 2: Fallback to fixed path
             export DISPLAY=:0.0
             if [ -f "${STEAM_COMPAT_DIR}/GE-Proton8-21/proton" ]; then
-              echo "Using GE-Proton8-21 for fallback launch"
-              "${STEAM_COMPAT_DIR}/GE-Proton8-21/proton" run "$binary" $params &
+              echo "[INFO] Using GE-Proton8-21 for fallback launch"
+              "${STEAM_COMPAT_DIR}/GE-Proton8-21/proton" run "$binary" $params > /tmp/launch_output.log 2>&1 &
             elif [ -f "${STEAM_COMPAT_DIR}/GE-Proton9-25/proton" ]; then
-              echo "Using GE-Proton9-25 for fallback launch"
-              "${STEAM_COMPAT_DIR}/GE-Proton9-25/proton" run "$binary" $params &
+              echo "[INFO] Using GE-Proton9-25 for fallback launch"
+              "${STEAM_COMPAT_DIR}/GE-Proton9-25/proton" run "$binary" $params > /tmp/launch_output.log 2>&1 &
             else
               # Last resort: check for any available GE-Proton directory
               local ANY_PROTON=$(find "${STEAM_COMPAT_DIR}" -name "GE-Proton*" -type d | head -1)
               if [ -n "$ANY_PROTON" ] && [ -f "$ANY_PROTON/proton" ]; then
-                echo "Using $ANY_PROTON for fallback launch"
-                "$ANY_PROTON/proton" run "$binary" $params &
+                echo "[INFO] Using $ANY_PROTON for fallback launch"
+                "$ANY_PROTON/proton" run "$binary" $params > /tmp/launch_output.log 2>&1 &
               else
-                echo "Fallback Proton paths not found, skipping this method."
+                echo "[WARNING] Fallback Proton paths not found, skipping this method."
                 return 1
               fi
             fi
@@ -578,7 +619,7 @@ start_server() {
             # Method 3: System proton command
             STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam" \
             STEAM_COMPAT_DATA_PATH="${STEAM_COMPAT_DATA_PATH}" \
-            proton run "$binary" $params &
+            proton run "$binary" $params > /tmp/launch_output.log 2>&1 &
             ;;
           "wine_direct")
             # Method 4: Direct Wine launch with virtual display
@@ -597,25 +638,33 @@ start_server() {
             # Add environment variables to help wine find libraries
             export WINEDLLOVERRIDES="*version=n,b;vcrun2019=n,b"
             export WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx"
-            WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine "$binary" $params 2>&1 | tee -a /home/pok/logs/wine_launch.log &
+            WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine "$binary" $params > /tmp/launch_output.log 2>&1 &
             ;;
         esac
         
         local pid=$!
-        echo "Launch attempt PID: $pid"
+        echo "[INFO] Launch attempt started with PID: $pid"
         
-        # Wait a moment to see if the process starts
+        # Wait a moment to see if the process starts, with minimal status updates
+        echo "[INFO] Waiting for server initialization..."
         sleep 5
+        
+        # Check for ARK process
+        if pgrep -f "AsaApiLoader.exe" >/dev/null 2>&1 || pgrep -f "ArkAscendedServer.exe" >/dev/null 2>&1; then
+          echo "[SUCCESS] ARK Server process detected with PID: $(pgrep -f "AsaApiLoader.exe|ArkAscendedServer.exe" | head -1)"
+        fi
         
         # Check if process is still running
         if kill -0 $pid 2>/dev/null; then
-          echo "Launch successful using method: $method"
+          echo "[SUCCESS] Launch successful using method: $method"
+          # Mark first launch as completed (just in case)
+          mark_first_launch_completed
           return 0
         else
-          echo "Launch failed using method: $method"
+          echo "[ERROR] Launch failed using method: $method"
           # Check if this was a MSVCP140.dll error
-          if grep -q "err:module:import_dll Loading library MSVCP140.dll.*failed" /home/pok/logs/wine_launch.log 2>/dev/null; then
-            echo "DETECTED MSVCP140.dll LOADING ERROR - Flagging for automatic restart"
+          if grep -q "err:module:import_dll Loading library MSVCP140.dll.*failed" /tmp/launch_output.log 2>/dev/null; then
+            echo "[WARNING] DETECTED MSVCP140.dll LOADING ERROR - Flagging for automatic restart"
             # Create a flag file so monitor can detect this specific error
             echo "MSVCP140.dll loading error detected on first launch" > /home/pok/.first_launch_msvcp140_error
           fi
@@ -1003,7 +1052,7 @@ start_server() {
   # Wait for the server to fully start, monitoring the log file
   echo ""
   echo "====== VERIFYING SERVER STARTUP ======"
-  echo "Waiting for server to become fully operational..."
+  echo "[INFO] Waiting for server to become fully operational..."
   local LOG_FILE="$ASA_DIR/ShooterGame/Saved/Logs/ShooterGame.log"
   local max_wait_time=600  # 10 minutes maximum wait time (increased from 300 to ensure we catch the log message)
   local wait_time=0
@@ -1050,24 +1099,24 @@ start_server() {
   local last_status_time=0
   local status_interval=30
   
-  # Retry loop for server verification
+  # Retry loop for server verification - with cleaner status updates
   while [ $wait_time -lt $max_wait_time ]; do
     # Check if server process is running
     if ! ps -p $SERVER_PID > /dev/null; then
-      echo "ERROR: Server process ($SERVER_PID) is no longer running!"
-      echo "Server failed to start properly. Check logs for errors."
+      echo "[ERROR] Server process ($SERVER_PID) is no longer running!"
+      echo "[ERROR] Server failed to start properly. Check logs for errors."
       
       # If log file exists, show the last 20 lines
       if [ -f "$LOG_FILE" ]; then
-        echo "Last 20 lines of log file:"
+        echo "[INFO] Last 20 lines of log file:"
         tail -n 20 "$LOG_FILE"
       fi
       exit 1
     fi
     
-    # Display status only at regular intervals to avoid log spam
+    # Display status only at regular intervals in a more monitoring-friendly format
     if [ "$startup_message_displayed" = "false" ] && { [ $wait_time -eq 0 ] || [ $((wait_time - last_status_time)) -ge $status_interval ]; }; then
-      echo "⏳ SERVER VERIFICATION: Waiting for server startup... ($wait_time seconds elapsed)"
+      echo "[INFO] SERVER STARTUP: Waiting for server to complete initialization (${wait_time}s elapsed)"
       last_status_time=$wait_time
     fi
     
@@ -1075,14 +1124,13 @@ start_server() {
     if [ -f "$LOG_FILE" ]; then
       if grep -q "Server has completed startup and is now advertising for join" "$LOG_FILE"; then
         if [ "$startup_message_displayed" = "false" ]; then
-          # Use a clear message rather than clearing the line with \r
+          # Use a clear message format that works well in all monitoring tools
           echo "=========================================================="
-          echo "✅ Found the 'Server has completed startup and is now advertising for join' message!"
-          echo "$(grep "Server has completed startup and is now advertising for join" "$LOG_FILE" | tail -1)"
+          echo "[SUCCESS] Server has completed startup and is now advertising for join!"
           echo ""
           echo "🎮 ====== SERVER FULLY STARTED ====== 🎮"
-          echo "Server started successfully. PID: $SERVER_PID"
-          echo "Server is now advertising for join and ready to accept connections!"
+          echo "[INFO] Server started successfully. PID: $SERVER_PID"
+          echo "[INFO] Server is now advertising for join and ready to accept connections!"
           
           # Display SERVER ID if available
           if [ "${API}" = "TRUE" ]; then
@@ -1102,34 +1150,43 @@ start_server() {
             
             # Display the server ID if we found it
             if [ -n "$server_id" ]; then
-              echo "🆔 SERVER ID: $server_id"
+              echo "[INFO] SERVER ID: $server_id"
             fi
           fi
           
           startup_message_displayed=true
           
           # Create the first_launch_completed file to mark that the server has launched successfully
-          touch "$first_launch_file"
+          if [ "${API}" = "TRUE" ]; then
+            # Create a persistent flag in the config directory
+            mkdir -p "${ASA_DIR}/ShooterGame/Saved/Config/FirstLaunchFlags" 2>/dev/null
+            touch "${ASA_DIR}/ShooterGame/Saved/Config/FirstLaunchFlags/api_first_launch_completed"
+          else
+            # Create a persistent flag in the config directory
+            mkdir -p "${ASA_DIR}/ShooterGame/Saved/Config/FirstLaunchFlags" 2>/dev/null
+            touch "${ASA_DIR}/ShooterGame/Saved/Config/FirstLaunchFlags/standard_first_launch_completed"
+          fi
+          
+          # Maintain backward compatibility
+          touch "/home/pok/.first_launch_completed"
         fi
         
         # Double verify correct PID file
         get_server_process_id
         
         # Update PID file with proper value
-        echo "Ensuring PID file is up-to-date with server PID: $SERVER_PID"
+        echo "[INFO] Ensuring PID file is up-to-date with server PID: $SERVER_PID"
         echo "$SERVER_PID" > "$PID_FILE"
         
-        echo "Server monitoring is now active."
+        echo "[INFO] Server monitoring is now active."
         break
       else
         if [ "$startup_message_displayed" = "false" ]; then
-          # Server still starting up, status already shown by spinner
-          # Only show log messages on regular intervals
+          # Server still starting up, only show log content at regular intervals using a monitoring-friendly format
           if [ $((wait_time % logs_display_interval)) -eq 0 ] && [ $wait_time -gt 0 ] && [ $wait_time -ne $logs_shown_timestamp ]; then
-            # Use a simple newline instead of carriage return
-            echo "⏳ SERVER VERIFICATION: Checking log file for startup message"
-            echo "Waiting for log message: 'Server has completed startup and is now advertising for join'"
-            echo "Last few lines of log file:"
+            echo "[INFO] Server initialization in progress (${wait_time}s elapsed)"
+            echo "[INFO] Waiting for: 'Server has completed startup and is now advertising for join'"
+            echo "[INFO] Recent log entries:"
             tail -n 5 "$LOG_FILE"
             echo ""
             logs_shown_timestamp=$wait_time
@@ -1138,23 +1195,23 @@ start_server() {
       fi
     else
       if [ "$startup_message_displayed" = "false" ]; then
-        # Only log messages at regular intervals to reduce log spam
+        # Only log messages at regular intervals to reduce log spam, using a format that works well in monitoring tools
         if [ $wait_time -eq 0 ] || [ $((wait_time % status_interval)) -eq 0 ]; then
-          echo "⏳ SERVER VERIFICATION: Log file not found yet. Waiting for server startup... ($wait_time seconds elapsed)"
+          echo "[INFO] Server log file not created yet. Initialization in progress... (${wait_time}s elapsed)"
         fi
       fi
     fi
     
-    # Use a simpler sleep approach instead of spinner animation
+    # Use a simpler sleep approach with less frequent updates
     sleep 10
     wait_time=$((wait_time + 10))
   done
   
   # If we reached the timeout but didn't find the completion message
   if [ $wait_time -ge $max_wait_time ]; then
-    echo "WARNING: Server verification timed out after ${max_wait_time}s, but process with PID $SERVER_PID is still running."
-    echo "Considering server as started, but it may not be fully operational yet."
-    echo "Updating PID file anyway to prevent unnecessary restart attempts."
+    echo "[WARNING] Server verification timed out after ${max_wait_time}s, but process with PID $SERVER_PID is still running."
+    echo "[INFO] Considering server as started, but it may not be fully operational yet."
+    echo "[INFO] Updating PID file to prevent unnecessary restart attempts."
     echo "$SERVER_PID" > "$PID_FILE"
   fi
 
