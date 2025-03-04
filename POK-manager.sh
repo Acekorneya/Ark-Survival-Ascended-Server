@@ -80,6 +80,8 @@ else
   # For new installations, default to 7777:7777 (new recommended default)
   # Only use 1000:1000 if server files exist and are owned by 1000:1000
   server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
+  
+  # First, check if server files directory exists
   if [ -d "$server_files_dir" ]; then
     file_ownership=$(stat -c '%u:%g' "$server_files_dir")
     
@@ -88,14 +90,31 @@ else
       PUID=${CONTAINER_PUID:-1000}
       PGID=${CONTAINER_PGID:-1000}
     else
-      # For all other cases, use the new default
+      # For all other cases, use the new default or match existing ownership
+      PUID=${CONTAINER_PUID:-$(echo "$file_ownership" | cut -d: -f1)}
+      PGID=${CONTAINER_PGID:-$(echo "$file_ownership" | cut -d: -f2)}
+    fi
+  else
+    # No server files yet - check script ownership as fallback
+    script_ownership=$(stat -c '%u:%g' "$0")
+    
+    # If script is owned by 1000:1000, use legacy values
+    if [ "$script_ownership" = "1000:1000" ]; then
+      PUID=${CONTAINER_PUID:-1000}
+      PGID=${CONTAINER_PGID:-1000}
+    # If script is owned by 7777:7777, use those values
+    elif [ "$script_ownership" = "7777:7777" ]; then
+      PUID=${CONTAINER_PUID:-7777}
+      PGID=${CONTAINER_PGID:-7777}
+    # For new installations with any other ownership, use current user's UID/GID if it's 7777 or 1000
+    elif [ "$(id -u)" -eq 7777 ] || [ "$(id -u)" -eq 1000 ]; then
+      PUID=${CONTAINER_PUID:-$(id -u)}
+      PGID=${CONTAINER_PGID:-$(id -g)}
+    else
+      # Use the new recommended default
       PUID=${CONTAINER_PUID:-7777}
       PGID=${CONTAINER_PGID:-7777}
     fi
-  else
-    # No server files yet - use the new recommended default
-    PUID=${CONTAINER_PUID:-7777}
-    PGID=${CONTAINER_PGID:-7777}
   fi
 fi
 
@@ -589,33 +608,46 @@ check_puid_pgid_user() {
   local current_gid=$(id -g)
   local current_user=$(id -un)
   
-  # If the -setup command is being run, offer to create the appropriate user
-  if [[ "$original_command" == *"-setup"* ]] && [ "$current_uid" -ne "$puid" ] && [ "$current_uid" -ne 0 ]; then
-    echo "⚠️ You are setting up a new server but not running as user with UID $puid."
-    echo "Creating a user with the correct UID/GID is recommended for proper permissions."
-    echo ""
-    read -r -p "Would you like to create a user with UID/GID $puid:$pgid for managing your server? [y/N] " create_user
-    if [[ "$create_user" =~ ^[Yy]$ ]]; then
-      echo "Creating user 'pokuser' with UID/GID $puid:$pgid..."
-      echo "This command requires sudo permissions."
-      echo ""
-      local command_sudo="sudo groupadd -g $pgid pokuser && sudo useradd -u $puid -g $pgid -m -s /bin/bash pokuser"
-      echo "Running: $command_sudo"
-      eval "$command_sudo"
+  # If the -setup command is being run, check if user is either 7777:7777 (new default) or 1000:1000 (legacy)
+  if [[ "$original_command" == *"-setup"* ]]; then
+    # If user is running as either the new default (7777) or legacy (1000) UID, allow setup to proceed
+    if [ "$current_uid" -eq 7777 ] || [ "$current_uid" -eq 1000 ]; then
+      # Update PUID/PGID to match current user for this execution
+      PUID=$current_uid
+      PGID=$current_gid
+      echo "Using UID:GID ${PUID}:${PGID} for server setup."
       
-      if [ $? -eq 0 ]; then
-        echo "✅ User created successfully!"
-        echo "To use this user, run:"
-        echo "sudo su - pokuser"
-        echo "cd $(pwd) && ./POK-manager.sh $original_command"
-        exit 0
-      else
-        echo "❌ Failed to create user. You may need to run the commands manually:"
-        echo "sudo groupadd -g $pgid pokuser"
-        echo "sudo useradd -u $puid -g $pgid -m -s /bin/bash pokuser"
+      # Create a flag file to prevent showing migration messages during setup
+      mkdir -p "${BASE_DIR}/config/POK-manager"
+      touch "$user_info_flag_file"
+      return
+    elif [ "$current_uid" -ne "$puid" ] && [ "$current_uid" -ne 0 ]; then
+      echo "⚠️ You are setting up a new server but not running as user with UID $puid."
+      echo "Creating a user with the correct UID/GID is recommended for proper permissions."
+      echo ""
+      read -r -p "Would you like to create a user with UID/GID $puid:$pgid for managing your server? [y/N] " create_user
+      if [[ "$create_user" =~ ^[Yy]$ ]]; then
+        echo "Creating user 'pokuser' with UID/GID $puid:$pgid..."
+        echo "This command requires sudo permissions."
         echo ""
-        echo "You can continue with the current user, but you might encounter permission issues."
-        echo "To bypass permission checks, run with sudo: sudo ./POK-manager.sh $original_command"
+        local command_sudo="sudo groupadd -g $pgid pokuser && sudo useradd -u $puid -g $pgid -m -s /bin/bash pokuser"
+        echo "Running: $command_sudo"
+        eval "$command_sudo"
+        
+        if [ $? -eq 0 ]; then
+          echo "✅ User created successfully!"
+          echo "To use this user, run:"
+          echo "sudo su - pokuser"
+          echo "cd $(pwd) && ./POK-manager.sh $original_command"
+          exit 0
+        else
+          echo "❌ Failed to create user. You may need to run the commands manually:"
+          echo "sudo groupadd -g $pgid pokuser"
+          echo "sudo useradd -u $puid -g $pgid -m -s /bin/bash pokuser"
+          echo ""
+          echo "You can continue with the current user, but you might encounter permission issues."
+          echo "To bypass permission checks, run with sudo: sudo ./POK-manager.sh $original_command"
+        fi
       fi
     fi
   fi
@@ -802,6 +834,11 @@ check_puid_pgid_user() {
     echo "⚠️ PERMISSION MISMATCH: You are not running the script as the user with the correct PUID (${puid}) and PGID (${pgid})."
     echo "Your current user '${current_user}' has UID ${current_uid} and GID ${current_gid}."
     echo "This can cause permission issues between the host and container for save data and server files."
+    echo ""
+    echo "The script supports both legacy (1000:1000) and new (7777:7777) user configurations:"
+    echo "- If your files are owned by 1000:1000, the script will use those values"
+    echo "- If your files are owned by 7777:7777, the script will use those values"
+    echo "- For new installations, 7777:7777 is recommended to avoid conflicts with system users"
     echo ""
     echo "You have these options:"
     echo ""
