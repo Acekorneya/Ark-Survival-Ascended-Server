@@ -555,19 +555,20 @@ fi
   timeout=300  # 5 minutes timeout
   elapsed=0
   startup_message_displayed=false
+  last_status_time=0
   
   while [ $elapsed -lt $timeout ]; do
     # Check if server process is running
     server_pid=$(ps aux | grep -v grep | grep -E "AsaApiLoader.exe|ArkAscendedServer.exe" | awk '{print $2}' | head -1)
     if [ -n "$server_pid" ]; then
       if [ "$startup_message_displayed" = "false" ]; then
-        echo "✅ Server is starting with PID: $server_pid"
+        echo "✅ ARK Server process detected with PID: $server_pid"
       fi
       # If using screen, try to check for startup complete message
       if [ "$SCREEN_AVAILABLE" = true ]; then
         if screen -S ark_server -X hardcopy /tmp/ark_screen.log 2>/dev/null && grep -q "Server has completed startup and is now advertising for join" /tmp/ark_screen.log; then
           if [ "$startup_message_displayed" = "false" ]; then
-            echo "🎮 Server reported as fully started!"
+            echo "🎮 SERVER STARTUP COMPLETE: Server is now advertising for join!"
             startup_message_displayed=true
           fi
           break
@@ -576,22 +577,26 @@ fi
         # For fallback method, check log file
         if grep -q "Server has completed startup and is now advertising for join" /home/pok/logs/server_console.log 2>/dev/null; then
           if [ "$startup_message_displayed" = "false" ]; then
-            echo "🎮 Server reported as fully started!"
+            echo "🎮 SERVER STARTUP COMPLETE: Server is now advertising for join!"
             startup_message_displayed=true
           fi
           break
         fi
       fi
     else
-      echo "⚠️ No server process detected yet. Still starting up..."
+      # Only display status message every 30 seconds to reduce log spam
+      if [ $elapsed -eq 0 ] || [ $((elapsed - last_status_time)) -ge 30 ]; then
+        echo "⏳ SERVER STARTING: No server process detected yet. Waiting for startup... ($elapsed seconds elapsed)"
+        last_status_time=$elapsed
+      fi
     fi
     
     sleep 10
     elapsed=$((elapsed + 10))
-    if [ "$startup_message_displayed" = "false" ]; then
-      # Simple animation pattern that works better in container logs
-      local dots=$(printf "%s" "..." | cut -c1-$((elapsed % 3 + 1)))
-      printf "\rWaiting for server startup%s (%s seconds elapsed)      " "$dots" "$elapsed"
+    
+    # Only show progress messages at reasonable intervals to avoid log spam
+    if [ "$startup_message_displayed" = "false" ] && [ $((elapsed % 30)) -eq 0 ]; then
+      echo "⏳ SERVER STARTING: In progress... ($elapsed seconds elapsed)"
     fi
   done
   

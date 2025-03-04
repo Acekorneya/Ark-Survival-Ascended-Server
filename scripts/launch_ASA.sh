@@ -1038,17 +1038,12 @@ start_server() {
   # Initial delay to give the server time to start creating logs
   sleep 10
   
-  # Define spinner characters - spinning dots animation
-  local spinner=('.' '..' '...' '.' '..' '...')
-  local spinner_idx=0
-  local spinner_update_count=0
+  # Log status variables
+  local last_status_time=0
+  local status_interval=30
   
   # Retry loop for server verification
   while [ $wait_time -lt $max_wait_time ]; do
-    # Update spinner
-    local current_spinner=${spinner[$spinner_idx]}
-    spinner_idx=$(( (spinner_idx + 1) % ${#spinner[@]} ))
-    
     # Check if server process is running
     if ! ps -p $SERVER_PID > /dev/null; then
       echo "ERROR: Server process ($SERVER_PID) is no longer running!"
@@ -1062,17 +1057,18 @@ start_server() {
       exit 1
     fi
     
-    # Display status with spinner (on a single line)
-    if [ "$startup_message_displayed" = "false" ]; then
-      printf "\r%s Waiting for server startup... (%s seconds elapsed)      " "${current_spinner}" "$wait_time"
+    # Display status only at regular intervals to avoid log spam
+    if [ "$startup_message_displayed" = "false" ] && { [ $wait_time -eq 0 ] || [ $((wait_time - last_status_time)) -ge $status_interval ]; }; then
+      echo "⏳ SERVER VERIFICATION: Waiting for server startup... ($wait_time seconds elapsed)"
+      last_status_time=$wait_time
     fi
     
     # Check for successful server startup in logs
     if [ -f "$LOG_FILE" ]; then
       if grep -q "Server has completed startup and is now advertising for join" "$LOG_FILE"; then
         if [ "$startup_message_displayed" = "false" ]; then
-          # Clear the spinner line before displaying completion message
-          printf "\r                                                               \r"
+          # Use a clear message rather than clearing the line with \r
+          echo "=========================================================="
           echo "✅ Found the 'Server has completed startup and is now advertising for join' message!"
           echo "$(grep "Server has completed startup and is now advertising for join" "$LOG_FILE" | tail -1)"
           echo ""
@@ -1122,9 +1118,9 @@ start_server() {
           # Server still starting up, status already shown by spinner
           # Only show log messages on regular intervals
           if [ $((wait_time % logs_display_interval)) -eq 0 ] && [ $wait_time -gt 0 ] && [ $wait_time -ne $logs_shown_timestamp ]; then
-            # Clear the spinner line before showing logs
-            printf "\r                                                               \r"
-            echo -e "\nWaiting for log message: 'Server has completed startup and is now advertising for join'"
+            # Use a simple newline instead of carriage return
+            echo "⏳ SERVER VERIFICATION: Checking log file for startup message"
+            echo "Waiting for log message: 'Server has completed startup and is now advertising for join'"
             echo "Last few lines of log file:"
             tail -n 5 "$LOG_FILE"
             echo ""
@@ -1134,29 +1130,20 @@ start_server() {
       fi
     else
       if [ "$startup_message_displayed" = "false" ]; then
-        # Use the same spinner style and format as other messages
-        printf "\r%s Waiting for server startup... (%s seconds elapsed)      " "${current_spinner}" "$wait_time"
+        # Only log messages at regular intervals to reduce log spam
+        if [ $wait_time -eq 0 ] || [ $((wait_time % status_interval)) -eq 0 ]; then
+          echo "⏳ SERVER VERIFICATION: Log file not found yet. Waiting for server startup... ($wait_time seconds elapsed)"
+        fi
       fi
     fi
     
-    # Sleep for a shorter time to get smoother spinner animation
-    sleep 0.2
-    
-    # Every 50 spinner updates (10 seconds) increment the wait_time counter
-    spinner_update_count=$((spinner_update_count + 1))
-    if [ $spinner_update_count -ge 50 ]; then
-      wait_time=$((wait_time + 10))
-      spinner_update_count=0
-    fi
+    # Use a simpler sleep approach instead of spinner animation
+    sleep 10
+    wait_time=$((wait_time + 10))
   done
   
   # If we reached the timeout but didn't find the completion message
   if [ $wait_time -ge $max_wait_time ]; then
-    # Make sure we end with a newline before displaying warning
-    if [ "$startup_message_displayed" = "false" ]; then
-      printf "\r                                                               \r"
-    fi
-    
     echo "WARNING: Server verification timed out after ${max_wait_time}s, but process with PID $SERVER_PID is still running."
     echo "Considering server as started, but it may not be fully operational yet."
     echo "Updating PID file anyway to prevent unnecessary restart attempts."
