@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.46"
+POK_MANAGER_VERSION="2.1.47"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -77,20 +77,25 @@ if [ "$POK_MANAGER_BRANCH" = "beta" ]; then
   PGID=${CONTAINER_PGID:-7777}
 else
   # For stable branch, determine the appropriate PUID:PGID based on file ownership
-  # Default to 2_0_latest values
-  PUID=${CONTAINER_PUID:-1000}
-  PGID=${CONTAINER_PGID:-1000}
-  
-  # Check if server files exist and determine ownership
+  # For new installations, default to 7777:7777 (new recommended default)
+  # Only use 1000:1000 if server files exist and are owned by 1000:1000
   server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
   if [ -d "$server_files_dir" ]; then
     file_ownership=$(stat -c '%u:%g' "$server_files_dir")
     
-    # If files are NOT owned by 1000:1000, we're using 2_1_latest
-    if [ "$file_ownership" != "1000:1000" ]; then
+    # If files are owned by 1000:1000, use legacy values for compatibility
+    if [ "$file_ownership" = "1000:1000" ]; then
+      PUID=${CONTAINER_PUID:-1000}
+      PGID=${CONTAINER_PGID:-1000}
+    else
+      # For all other cases, use the new default
       PUID=${CONTAINER_PUID:-7777}
       PGID=${CONTAINER_PGID:-7777}
     fi
+  else
+    # No server files yet - use the new recommended default
+    PUID=${CONTAINER_PUID:-7777}
+    PGID=${CONTAINER_PGID:-7777}
   fi
 fi
 
@@ -583,7 +588,38 @@ check_puid_pgid_user() {
   local current_uid=$(id -u)
   local current_gid=$(id -g)
   local current_user=$(id -un)
-
+  
+  # If the -setup command is being run, offer to create the appropriate user
+  if [[ "$original_command" == *"-setup"* ]] && [ "$current_uid" -ne "$puid" ] && [ "$current_uid" -ne 0 ]; then
+    echo "⚠️ You are setting up a new server but not running as user with UID $puid."
+    echo "Creating a user with the correct UID/GID is recommended for proper permissions."
+    echo ""
+    read -r -p "Would you like to create a user with UID/GID $puid:$pgid for managing your server? [y/N] " create_user
+    if [[ "$create_user" =~ ^[Yy]$ ]]; then
+      echo "Creating user 'pokuser' with UID/GID $puid:$pgid..."
+      echo "This command requires sudo permissions."
+      echo ""
+      local command_sudo="sudo groupadd -g $pgid pokuser && sudo useradd -u $puid -g $pgid -m -s /bin/bash pokuser"
+      echo "Running: $command_sudo"
+      eval "$command_sudo"
+      
+      if [ $? -eq 0 ]; then
+        echo "✅ User created successfully!"
+        echo "To use this user, run:"
+        echo "sudo su - pokuser"
+        echo "cd $(pwd) && ./POK-manager.sh $original_command"
+        exit 0
+      else
+        echo "❌ Failed to create user. You may need to run the commands manually:"
+        echo "sudo groupadd -g $pgid pokuser"
+        echo "sudo useradd -u $puid -g $pgid -m -s /bin/bash pokuser"
+        echo ""
+        echo "You can continue with the current user, but you might encounter permission issues."
+        echo "To bypass permission checks, run with sudo: sudo ./POK-manager.sh $original_command"
+      fi
+    fi
+  fi
+  
   # Skip showing migration info if migration is complete
   if [ -f "$migration_complete_file" ]; then
     # Still use the correct PUID/PGID values, but don't show the info message
