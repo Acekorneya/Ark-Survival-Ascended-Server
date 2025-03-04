@@ -758,7 +758,7 @@ start_server() {
   echo "====== VERIFYING SERVER STARTUP ======"
   echo "Waiting for server to become fully operational..."
   local LOG_FILE="$ASA_DIR/ShooterGame/Saved/Logs/ShooterGame.log"
-  local max_wait_time=300  # 5 minutes maximum wait time
+  local max_wait_time=600  # 10 minutes maximum wait time (increased from 300 to ensure we catch the log message)
   local wait_time=0
   
   # Initial delay to give the server time to start creating logs
@@ -781,7 +781,10 @@ start_server() {
     
     # Check for successful server startup in logs
     if [ -f "$LOG_FILE" ]; then
-      if grep -q "Server started" "$LOG_FILE" || grep -q "Server has completed startup and is now advertising for join" "$LOG_FILE"; then
+      if grep -q "Server has completed startup and is now advertising for join" "$LOG_FILE"; then
+        echo ""
+        echo "✅ Found the 'Server has completed startup and is now advertising for join' message!"
+        echo "$(grep "Server has completed startup and is now advertising for join" "$LOG_FILE" | tail -1)"
         echo ""
         echo "🎮 ====== SERVER FULLY STARTED ====== 🎮"
         echo "Server started successfully. PID: $SERVER_PID"
@@ -798,6 +801,13 @@ start_server() {
         break
       else
         echo "Server still starting up... (waited ${wait_time}s)"
+        # Provide more details every 60 seconds about what we're looking for
+        if [ $((wait_time % 60)) -eq 0 ] && [ $wait_time -gt 0 ]; then
+          echo "Waiting for log message: 'Server has completed startup and is now advertising for join'"
+          echo "Last few lines of log file:"
+          tail -n 5 "$LOG_FILE"
+          echo ""
+        fi
       fi
     else
       echo "Waiting for server log file to be created... (waited ${wait_time}s)"

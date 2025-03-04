@@ -540,13 +540,13 @@ fi
       echo "✅ Server is starting with PID: $server_pid"
       # If using screen, try to check for startup complete message
       if [ "$SCREEN_AVAILABLE" = true ]; then
-        if screen -S ark_server -X hardcopy /tmp/ark_screen.log 2>/dev/null && grep -q "SERVER FULLY STARTED\|Server started successfully" /tmp/ark_screen.log; then
+        if screen -S ark_server -X hardcopy /tmp/ark_screen.log 2>/dev/null && grep -q "Server has completed startup and is now advertising for join" /tmp/ark_screen.log; then
           echo "🎮 Server reported as fully started!"
           break
         fi
       else
         # For fallback method, check log file
-        if grep -q "SERVER FULLY STARTED\|Server started successfully" /home/pok/logs/server_console.log 2>/dev/null; then
+        if grep -q "Server has completed startup and is now advertising for join" /home/pok/logs/server_console.log 2>/dev/null; then
           echo "🎮 Server reported as fully started!"
           break
         fi
