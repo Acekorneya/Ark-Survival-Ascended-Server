@@ -1048,7 +1048,7 @@ read_docker_compose_config() {
     "UPDATE_WINDOW_MAXIMUM_TIME") config_key="Update Window End" ;;
     "RESTART_NOTICE_MINUTES") config_key="Restart Notice" ;;
     "ENABLE_MOTD") config_key="MOTD Enabled" ;;
-    "MOTD") config_key="MOTD" ;;
+    "MOTD") config_key="MOTD" ;; 
     "MOTD_DURATION") config_key="MOTD Duration" ;; 
     "MAP_NAME") config_key="Map Name" ;;
     "SESSION_NAME") config_key="Session Name" ;;
@@ -1057,7 +1057,7 @@ read_docker_compose_config() {
     "ASA_PORT") config_key="ASA Port" ;;
     "RCON_PORT") config_key="RCON Port" ;;
     "MAX_PLAYERS") config_key="Max Players" ;;
-    "SHOW_ADMIN_COMMANDS_IN_CHAT") config_key="Show Admin Commands In Chat" ;;
+    "SHOW_ADMIN_COMMANDS_IN_CHAT") config_key="Show Admin Commands In Chat" ;;      
     "CLUSTER_ID") config_key="Cluster ID" ;;
     "MOD_IDS") config_key="Mod IDs" ;;
     "PASSIVE_MODS") config_key="Passive Mods" ;;
@@ -2443,7 +2443,7 @@ execute_rcon_command() {
   else
     # Handle single instance
     # Check if the instance name starts with a dash but isn't a valid command flag
-    if [[ "$instance_name" == -* ]] && ! [[ "$instance_name" == "-all" ]]; then
+    if [[ "$instance_name" == -* ]] && ! [[ "${instance_name,,}" == "-all" ]]; then
       echo "Warning: '$instance_name' appears to be an invalid flag or typo."
       echo "If you meant to target all instances, use '-all' instead."
       echo "Otherwise, instance names shouldn't start with a dash (-)"
@@ -3346,7 +3346,7 @@ validate_instance() {
   fi
   
   # Check if instance name starts with a dash but isn't -all
-  if [[ "$instance_name" == -* ]] && [[ "$instance_name" != "-all" ]]; then
+  if [[ "$instance_name" == -* ]] && [[ "${instance_name,,}" != "-all" ]]; then
     echo "Error: '$instance_name' appears to be an invalid flag."
     echo "Instance names shouldn't start with a dash (-). If you meant to target all instances, use '-all'."
     return 1
@@ -3419,7 +3419,7 @@ manage_service() {
   esac
 
   # Special handling for -start all and -stop all actions
-  if [[ "$action" == "-start" || "$action" == "-stop" ]] && [[ "$instance_name" == "-all" ]]; then
+  if [[ "$action" == "-start" || "$action" == "-stop" ]] && [[ "${instance_name,,}" == "-all" ]]; then
     perform_action_on_all_instances "$action"
     return
   fi
@@ -3452,7 +3452,7 @@ manage_service() {
     if [[ -z "$instance_name" ]]; then
       echo "No instance name or '-all' flag specified. Defaulting to backing up all instances."
       backup_instance "-all"
-    elif [[ "$instance_name" == "-all" ]]; then
+    elif [[ "${instance_name,,}" == "-all" ]]; then
       backup_instance "-all"
     else
       backup_instance "$instance_name"
@@ -3519,7 +3519,7 @@ manage_service() {
     display_logs "$instance_name" "$live"
     ;;
   -clearupdateflag)
-    if [ -z "$instance_name" ] || [ "$instance_name" == "-all" ]; then
+    if [ -z "$instance_name" ] || [ "${instance_name,,}" == "-all" ]; then
       echo "Clearing update flags for all instances..."
       for instance in $(list_instances); do
         echo "Processing instance: $instance"
@@ -4058,122 +4058,222 @@ update_server_files_and_docker() {
   echo "----- Checking for ARK server files & Docker image updates -----"
   echo "Note: This WILL update server files and Docker images, but NOT the script itself"
 
-  # Rest of the function remains unchanged
-  # Pull the latest image - detect from any running instance or from file ownership
-  # If there are running instances, use the first one's image
+  # Pull the latest Docker image
   local running_instances=($(list_running_instances))
+  local image_tag=""
+  local instance_for_update=""
+  local need_to_start_temp_container=true
+  
+  # First, pull the latest Docker image to ensure we have the latest version
   if [ ${#running_instances[@]} -gt 0 ]; then
     local instance_name="${running_instances[0]}"
     echo "Using instance '$instance_name' to determine appropriate Docker image"
-    local image_tag=$(get_docker_image_tag "$instance_name")
+    image_tag=$(get_docker_image_tag "$instance_name")
     echo "Using Docker image tag: ${image_tag}"
     pull_docker_image "$instance_name"
+    instance_for_update="$instance_name"
+    need_to_start_temp_container=false
   else 
     # No running instances, determine from file ownership
     echo "Determining Docker image based on file ownership"
-    local image_tag=$(get_docker_image_tag "")
+    image_tag=$(get_docker_image_tag "")
     echo "Using Docker image tag: ${image_tag}"
     pull_docker_image ""
   fi
 
-  # Check if SteamCMD is installed, and install it if necessary
-  install_steamcmd
+  # Create a temporary container for update if no running instances
+  local temp_container_id=""
+  if [ "$need_to_start_temp_container" = true ]; then
+    echo "No running instances found. Creating a temporary container for update..."
+    
+    # Create environment variables array for the container
+    local env_vars=(
+      "-e TZ=UTC"
+      "-e API=TRUE"  # Enable API to ensure proper setup inside container
+      "-e INSTANCE_NAME=pok_update_temp"
+    )
+    
+    temp_container_id=$(sudo docker run -d --rm \
+      -v "${BASE_DIR%/}/ServerFiles/arkserver:/home/pok/arkserver" \
+      ${env_vars[@]} \
+      --name "pok_update_temp_container" \
+      "acekorneya/asa_server:${image_tag}" \
+      sleep infinity)
+    
+    if [ -z "$temp_container_id" ]; then
+      echo "Failed to create temporary container for update. Aborting."
+      exit 1
+    fi
+    
+    echo "Temporary container created with ID: $temp_container_id"
+    echo "Waiting for container initialization..."
+    sleep 5  # Allow container to initialize
+    
+    instance_for_update="pok_update_temp_container"
+    
+    # Initialize the container environment properly, particularly for API mode
+    echo "Initializing container environment..."
+    sudo docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Binaries/Win64/logs' || true
+    sudo docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Saved/Config/WindowsServer' || true
+    sudo docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Saved/SavedArks' || true
+  fi
 
+  # Check current and latest build IDs
+  echo "Checking for server updates..."
+  local current_build_id=$(get_build_id_from_acf)
+  local latest_build_id=$(get_current_build_id)
+  
   # Check if the server files are installed
   if [ ! -f "${BASE_DIR%/}/ServerFiles/arkserver/appmanifest_2430930.acf" ]; then
-    echo "---- ARK server files not found. Installing server files using SteamCMD -----"
-    ensure_steamcmd_executable # Make sure SteamCMD is executable
-    if "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +login anonymous +app_update 2430930 +quit; then
+    echo "---- ARK server files not found. Installing server files using container's SteamCMD -----"
+    
+    if sudo docker exec "$instance_for_update" /opt/steamcmd/steamcmd.sh +force_install_dir "/home/pok/arkserver" +login anonymous +app_update 2430930 +quit; then
       echo "----- ARK server files installed successfully -----"
-      # Move the appmanifest_2430930.acf file to the correct location
-      if [ -f "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" ]; then
-        cp "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" "${BASE_DIR%/}/ServerFiles/arkserver/"
-        echo "Copied appmanifest_2430930.acf to the correct location."
+      # Make sure the appmanifest file is properly copied
+      if sudo docker exec "$instance_for_update" bash -c '[ -f "/home/pok/arkserver/steamapps/appmanifest_2430930.acf" ] && cp "/home/pok/arkserver/steamapps/appmanifest_2430930.acf" "/home/pok/arkserver/"'; then
+        echo "Copied appmanifest_2430930.acf to the correct location inside container."
       else
-        echo "appmanifest_2430930.acf not found in steamapps directory. Skipping move."
+        echo "Warning: appmanifest_2430930.acf not found in steamapps directory or could not be copied."
       fi
     else
-      echo "Failed to install ARK server files using SteamCMD. Please check the logs for more information."
-  exit 1
-fi
-  else
-    # Check for updates to the ARK server files
-    local current_build_id=$(get_build_id_from_acf)
-    local latest_build_id=$(get_current_build_id)
-
-    if [ "$current_build_id" != "$latest_build_id" ]; then
-      echo "---- New server build available: $latest_build_id (current: $current_build_id) -----"
-      echo "Update required. Checking for running instances..."
+      echo "Failed to install ARK server files using SteamCMD from container. Please check the logs for more information."
       
-      # Get list of running instances
-      local running_instances=($(list_running_instances))
+      # Clean up temporary container if we created one
+      if [ -n "$temp_container_id" ]; then
+        echo "Removing temporary update container..."
+        sudo docker rm -f "$temp_container_id" > /dev/null 2>&1
+      fi
       
-      # Stop all running instances if any are found
-      if [ ${#running_instances[@]} -gt 0 ]; then
-        echo "----- Stopping all running instances before update -----"
-        echo "Found ${#running_instances[@]} running instances that need to be stopped:"
-        
-        for instance in "${running_instances[@]}"; do
-          echo "- $instance"
-        done
-        
-        echo "Stopping all instances..."
-        for instance in "${running_instances[@]}"; do
+      exit 1
+    fi
+  elif [ "$current_build_id" != "$latest_build_id" ]; then
+    echo "---- New server build available: $latest_build_id (current: $current_build_id) -----"
+    echo "Update required. Checking for running instances..."
+    
+    # Get list of running instances (excluding our temp container)
+    local instances_to_stop=()
+    for inst in "${running_instances[@]}"; do
+      if [ "$inst" != "pok_update_temp_container" ]; then
+        instances_to_stop+=("$inst")
+      fi
+    done
+    
+    # Check for API-enabled instances that need special handling
+    local api_instances=()
+    for instance in "${instances_to_stop[@]}"; do
+      local docker_compose_file="${BASE_DIR}/Instance_${instance}/docker-compose-${instance}.yaml"
+      if [ -f "$docker_compose_file" ] && (grep -q "^ *- API=TRUE" "$docker_compose_file" || grep -q "^ *- API:TRUE" "$docker_compose_file"); then
+        echo "Detected API=TRUE for instance $instance - will use special shutdown process"
+        api_instances+=("$instance")
+      fi
+    done
+    
+    # Stop all running instances if any are found
+    if [ ${#instances_to_stop[@]} -gt 0 ]; then
+      echo "----- Stopping all running instances before update -----"
+      echo "Found ${#instances_to_stop[@]} running instances that need to be stopped:"
+      
+      for instance in "${instances_to_stop[@]}"; do
+        echo "- $instance"
+      done
+      
+      echo "Stopping all instances..."
+      for instance in "${instances_to_stop[@]}"; do
+        # Check if this is an API instance
+        if [[ " ${api_instances[*]} " =~ " ${instance} " ]]; then
+          echo "Stopping API-enabled instance: $instance with special handling"
+          # First, perform a normal stop
+          stop_instance "$instance"
+          
+          # Then ensure all container processes are completely killed
+          local container_name="asa_${instance}"
+          if docker ps -a -q -f name=^/${container_name}$ > /dev/null; then
+            echo "Forcing complete removal of API container: $container_name"
+            sudo docker rm -f "$container_name" > /dev/null 2>&1 || true
+          fi
+          
+          # Make sure there are no leftover processes
+          echo "Ensuring no leftover processes remain..."
+          sleep 3
+        else
           echo "Stopping instance: $instance"
           stop_instance "$instance"
-        done
-        
-        echo "----- All instances have been stopped. Proceeding with update... -----"
-      else
-        echo "No running instances found. Proceeding with update..."
-      fi
-
-      # Now perform the update with SteamCMD
-      echo "Updating server files using SteamCMD..."
-      ensure_steamcmd_executable # Make sure SteamCMD is executable
-      if "${BASE_DIR%/}/config/POK-manager/steamcmd/steamcmd.sh" +force_install_dir "${BASE_DIR%/}/ServerFiles/arkserver" +login anonymous +app_update 2430930 +quit; then
-        echo "SteamCMD update completed successfully."
-        # Move the appmanifest_2430930.acf file to the correct location
-        if [ -f "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" ]; then
-          cp "${BASE_DIR%/}/ServerFiles/arkserver/steamapps/appmanifest_2430930.acf" "${BASE_DIR%/}/ServerFiles/arkserver/"
-          echo "Copied appmanifest_2430930.acf to the correct location."
-        else
-          echo "appmanifest_2430930.acf not found in steamapps directory. Skipping move."
         fi
-      else
-        echo "SteamCMD update failed. Please check the logs for more information."
-        exit 1
-      fi
+      done
+      
+      echo "----- All instances have been stopped. Proceeding with update... -----"
+      # Add a brief delay to ensure all containers are fully stopped
+      sleep 5
+    else
+      echo "No additional running instances found. Proceeding with update..."
+    fi
 
-      # Check if the server files were updated successfully
-      local updated_build_id=$(get_build_id_from_acf)
-      if [ "$updated_build_id" == "$latest_build_id" ]; then
-        echo "----- ARK server files updated successfully to build id: $latest_build_id -----"
-        
-        # If instances were running before, notify the user they need to restart them
-        if [ ${#running_instances[@]} -gt 0 ]; then
-          echo ""
-          echo "----- IMPORTANT: Server instances were stopped for the update -----"
-          echo "The following instances were running before the update:"
-          for instance in "${running_instances[@]}"; do
-            echo "- $instance"
-          done
-          echo ""
-          echo "You can restart them with:"
-          echo "./POK-manager.sh -start -all"
-          echo ""
-          echo "Or start them individually with:"
-          for instance in "${running_instances[@]}"; do
-            echo "./POK-manager.sh -start $instance"
-          done
-        fi
+    # Now perform the update using the container's steamcmd
+    echo "Updating server files using container's SteamCMD..."
+    
+    # Execute steamcmd inside the container to update server files
+    if sudo docker exec "$instance_for_update" /opt/steamcmd/steamcmd.sh +force_install_dir "/home/pok/arkserver" +login anonymous +app_update 2430930 +quit; then
+      echo "SteamCMD update completed successfully inside container."
+      
+      # Make sure the appmanifest file is properly copied
+      if sudo docker exec "$instance_for_update" bash -c '[ -f "/home/pok/arkserver/steamapps/appmanifest_2430930.acf" ] && cp "/home/pok/arkserver/steamapps/appmanifest_2430930.acf" "/home/pok/arkserver/"'; then
+        echo "Copied appmanifest_2430930.acf to the correct location inside container."
       else
-        echo "----- Failed to update ARK server files to the latest build. Current build id: $updated_build_id -----"
-        exit 1
+        echo "Warning: appmanifest_2430930.acf not found in steamapps directory or could not be copied."
       fi
     else
-      echo "----- ARK server files are already up to date with build id: $current_build_id -----"
+      echo "SteamCMD update failed inside container. Please check the logs for more information."
+      
+      # Clean up temporary container if we created one
+      if [ -n "$temp_container_id" ]; then
+        echo "Removing temporary update container..."
+        sudo docker rm -f "$temp_container_id" > /dev/null 2>&1
+      fi
+      
+      exit 1
     fi
+
+    # Check if the server files were updated successfully
+    local updated_build_id=$(get_build_id_from_acf)
+    if [ "$updated_build_id" == "$latest_build_id" ]; then
+      echo "----- ARK server files updated successfully to build id: $latest_build_id -----"
+      
+      # If instances were stopped, notify the user they need to restart them
+      if [ ${#instances_to_stop[@]} -gt 0 ]; then
+        echo ""
+        echo "----- IMPORTANT: Server instances were stopped for the update -----"
+        echo "The following instances were running before the update:"
+        for instance in "${instances_to_stop[@]}"; do
+          echo "- $instance"
+        done
+        echo ""
+        echo "You can restart them with:"
+        echo "./POK-manager.sh -start -all"
+        echo ""
+        echo "Or start them individually with:"
+        for instance in "${instances_to_stop[@]}"; do
+          echo "./POK-manager.sh -start $instance"
+        done
+      fi
+    else
+      echo "----- Failed to update ARK server files to the latest build. Current build id: $updated_build_id -----"
+      
+      # Clean up temporary container if we created one
+      if [ -n "$temp_container_id" ]; then
+        echo "Removing temporary update container..."
+        sudo docker rm -f "$temp_container_id" > /dev/null 2>&1
+      fi
+      
+      exit 1
+    fi
+  else
+    echo "----- ARK server files are already up to date with build id: $current_build_id -----"
+  fi
+  
+  # Clean up temporary container if we created one
+  if [ -n "$temp_container_id" ]; then
+    echo "Removing temporary update container..."
+    sudo docker rm -f "$temp_container_id" > /dev/null 2>&1
   fi
 
   echo "----- Update process completed -----"
@@ -5205,7 +5305,7 @@ configure_api() {
   fi
   
   # Handle all instances if specified
-  if [ "$instance_name" = "-all" ]; then
+  if [ "${instance_name,,}" = "-all" ]; then
     echo "🔄 $action_description ArkServerAPI for all instances..."
     local instances=($(list_instances))
     if [ ${#instances[@]} -eq 0 ]; then
@@ -5332,7 +5432,8 @@ configure_api_for_instance() {
         local abs_instance_dir=$(realpath "$instance_dir")
         
         # Use sed to add the API_Logs volume after the Saved volume with absolute path
-        sed -e "/Saved:.*ShooterGame\/Saved/ a\\      - \"$abs_instance_dir/API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs" "$docker_compose_file" > "$tmp_file"
+        # Fix: Add closing double quote at the end of the path
+        sed -e "/Saved:.*ShooterGame\/Saved/ a\\      - \"$abs_instance_dir/API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs\"" "$docker_compose_file" > "$tmp_file"
         
         # Replace the original file with the updated one
         mv -f "$tmp_file" "$docker_compose_file"
@@ -5485,6 +5586,9 @@ fix_root_owned_files() {
   fi
   
   # Ensure config/POK-manager directory is included
+  if [ -d "${base_dir}/config" ]; then
+    dirs_to_fix+=("${base_dir}/config")
+  fi
   if [ -d "${base_dir}/config/POK-manager" ]; then
     dirs_to_fix+=("${base_dir}/config/POK-manager")
   fi
@@ -5645,7 +5749,7 @@ enhanced_restart_command() {
   local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
   
   # Determine which instances to process
-  if [[ "$instance_arg" == "-all" ]]; then
+  if [[ "${instance_arg,,}" == "-all" ]]; then
     # Get all running instances
     instances_to_process=($(list_running_instances))
     if [ ${#instances_to_process[@]} -eq 0 ]; then
@@ -5941,7 +6045,7 @@ enhanced_shutdown_command() {
   # Determine which instances to process
   local instances_to_process=()
   
-  if [[ "$instance_arg" == "-all" ]]; then
+  if [[ "${instance_arg,,}" == "-all" ]]; then
     # Get all running instances
     instances_to_process=($(list_running_instances))
     if [ ${#instances_to_process[@]} -eq 0 ]; then

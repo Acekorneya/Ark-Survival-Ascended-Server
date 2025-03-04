@@ -36,8 +36,7 @@ RUN set -ex; \
     libldap-2.5-0:i386 libldap-2.5-0 libgnutls30:i386 libgnutls30 \
     libxml2:i386 libxml2 libasound2:i386 libasound2 libpulse0:i386 libpulse0 \
     libopenal1:i386 libopenal1 libncurses6:i386 libncurses6 \
-    # Add screen for better log visibility
-    screen \
+    # DO NOT ENABLE screen package - causes log display issues which is needed by the POK-manager.sh script
     # cabextract is essential for winetricks vcrun2019 installation
     cabextract winbind; \
     # Setup WineHQ repository

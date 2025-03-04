@@ -449,6 +449,27 @@ echo "🔍 Running environment checks..."
 # Run comprehensive pre-launch environment check
 chmod +x /home/pok/scripts/prelaunch_check.sh
 /home/pok/scripts/prelaunch_check.sh
+PRELAUNCH_CHECK_RESULT=$?
+
+# Check if server files exist, install them if not
+if [ $PRELAUNCH_CHECK_RESULT -ne 0 ] || [ ! -f "/home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.exe" ]; then
+  echo ""
+  echo "🔍 First-time setup: ARK server files will now be downloaded..."
+  echo "⏳ This may take some time depending on your internet connection speed (15-30+ minutes)"
+  echo "☕ Feel free to grab a coffee while waiting - download progress will be displayed below"
+  echo ""
+  chmod +x /home/pok/scripts/install_server.sh
+  /home/pok/scripts/install_server.sh
+  
+  # Verify installation was successful
+  if [ ! -f "/home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.exe" ]; then
+    echo "❌ ERROR: Server installation failed! Please check logs for details."
+    exit 1
+  else
+    echo "✅ Server files downloaded successfully!"
+    echo "🚀 Proceeding with server startup..."
+  fi
+fi
 
 # Set essential Proton/Wine environment variables regardless of API setting
 # These need to be set for both API=TRUE and API=FALSE cases

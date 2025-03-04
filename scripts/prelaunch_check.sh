@@ -25,7 +25,11 @@ check_critical_file() {
   
   if [ ! -f "$file_path" ]; then
     if [ "$optional" = "true" ]; then
-      echo "WARNING: Optional file not found: $file_path"
+      echo "NOTICE: Optional file not found: $file_path"
+      return 1
+    elif [[ "$file_path" == *"ArkAscendedServer.exe"* ]]; then
+      # Special case for server executable - don't show as error
+      # We'll handle this message in check_server_files instead
       return 1
     else
       echo "ERROR: Critical file not found: $file_path"
@@ -239,8 +243,9 @@ check_server_files() {
   # Check server binaries
   local server_binary="${ASA_DIR}/ShooterGame/Binaries/Win64/ArkAscendedServer.exe"
   if ! check_critical_file "$server_binary"; then
-    echo "ERROR: Server binary not found! Please ensure the server is properly installed."
-    echo "Server files check: FAILED"
+    echo "ℹ️ Server binary not found - this is normal on first run."
+    echo "ℹ️ The server files will be downloaded automatically in the next step."
+    echo "Server files check: PENDING DOWNLOAD"
     return 1
   fi
   
@@ -254,11 +259,11 @@ check_server_files() {
     chmod -R 755 "${ASA_DIR}/ShooterGame/Binaries/Win64"
     
     if ! check_critical_file "$api_binary" "true"; then
-      echo "WARNING: AsaApi binary not found. Attempting installation..."
+      echo "NOTICE: AsaApi binary not found. Attempting installation..."
       install_ark_server_api
       if ! check_critical_file "$api_binary" "true"; then
-        echo "ERROR: Failed to install AsaApi."
-        echo "AsaApi check: FAILED"
+        echo "NOTICE: Failed to install AsaApi. Will retry later."
+        echo "AsaApi check: PENDING"
       else
         echo "AsaApi installation successful."
         echo "AsaApi check: PASSED"
