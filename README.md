@@ -17,7 +17,11 @@ sudo groupadd -g 7777 pokuser
 sudo useradd -u 7777 -g 7777 -m -s /bin/bash pokuser
 sudo passwd pokuser  # You'll be prompted to create a password
 
-# Set required system parameters
+# CRITICAL: Set required system parameters
+# Method 1: Temporary setting (will reset after reboot)
+sudo sysctl -w vm.max_map_count=262144
+
+# Method 2: Permanent setting (recommended)
 echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf
 sudo sysctl -p
 
@@ -29,10 +33,10 @@ mkdir -p ~/asa_server
 cd ~/asa_server
 
 # Download and set up POK-manager
-git clone https://github.com/Acekorneya/Ark-Survival-Ascended-Server.git
-mv Ark-Survival-Ascended-Server/POK-manager.sh .
-chmod +x POK-manager.sh
-mv Ark-Survival-Ascended-Server/defaults .
+git clone https://github.com/Acekorneya/Ark-Survival-Ascended-Server.git && \
+mv Ark-Survival-Ascended-Server/POK-manager.sh . && \
+chmod +x POK-manager.sh && \
+mv Ark-Survival-Ascended-Server/defaults . && \
 rm -rf Ark-Survival-Ascended-Server
 
 # Run the setup command
@@ -48,6 +52,7 @@ After these steps, you'll have a working Ark Survival Ascended server setup. See
 
 - [Introduction](#introduction)
 - [Prerequisites](#prerequisites)
+- [Critical System Requirements](#critical-system-requirements)
 - [Installation](#installation)
 - [Usage](#usage)
   - [Commands](#commands)
@@ -87,6 +92,32 @@ Before using POK-manager.sh, ensure that you have the following prerequisites in
 - 80 GB for Server data
 - Linux Host OS (Ubuntu, Debian, Arch)
 
+## Critical System Requirements
+
+### Memory Mapping Configuration
+
+ARK Survival Ascended Server has specific system requirements that **must** be met for the container to run properly:
+
+```bash
+# The vm.max_map_count parameter MUST be increased to at least 262144
+```
+
+You have two methods to apply this setting:
+
+1. **Temporary Setting** (resets after system reboot):
+   ```bash
+   sudo sysctl -w vm.max_map_count=262144
+   ```
+   Use this if you're on a hosting provider that doesn't allow permanent changes.
+
+2. **Permanent Setting** (recommended):
+   ```bash
+   echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf
+   sudo sysctl -p
+   ```
+
+⚠️ **IMPORTANT NOTE**: Without this setting, your ARK server container WILL crash or fail to start, typically with "Allocator Stats" errors in the logs. This is a host-level requirement that cannot be fixed within the container itself.
+
 ## Installation
 
 ### Beginner-Friendly Installation Guide (Recommended)
@@ -107,10 +138,16 @@ If you're new to Linux, follow these step-by-step instructions for a smooth setu
 
 2. **Configure system settings** for Ark server:
    ```bash
-   # Set vm.max_map_count permanently
+   # CRITICAL REQUIREMENT - The ARK server container will not work properly without this setting
+   
+   # Method 1: Temporary setting (will reset after reboot)
+   sudo sysctl -w vm.max_map_count=262144
+   
+   # Method 2: Permanent setting (recommended)
    echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf
    sudo sysctl -p
    ```
+   > ⚠️ **IMPORTANT**: This step is absolutely necessary. The ARK server container will fail to run properly without this system parameter adjustment. If you're on a hosting provider that doesn't allow editing sysctl.conf, use Method 1 but note you'll need to reapply it after each system reboot.
 
 3. **Switch to the pokuser account**:
    ```bash
@@ -883,16 +920,22 @@ If you encounter the following error in your logs:
 asa_pve_Server | [2023.11.06-03.55.48:449][  1]Allocator Stats for binned2 are not in this build set BINNED2_ALLOCATOR_STATS 1 in MallocBinned2.cpp
 ```
 
-Run the following command to temporarily fix the issue:
+This is caused by insufficient memory mapping limits on your system. **You must fix this for the server to run properly:**
+
+Option 1: Apply temporarily (resets after system reboot):
 ```bash
 sudo sysctl -w vm.max_map_count=262144
 ```
 
-To make the change permanent, add the following line to `/etc/sysctl.conf` and apply the changes:
+Option 2: Apply permanently (survives system reboots):
 ```bash
+# Add to system configuration
 echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf
+# Apply the changes
 sudo sysctl -p
 ```
+
+⚠️ **This setting is critical** - without it, the ARK server container will crash or fail to start properly.
 
 ## Hypervisors
 Proxmox VM
