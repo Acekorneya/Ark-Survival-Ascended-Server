@@ -4,6 +4,8 @@
 
 POK-manager.sh is a powerful and user-friendly script for managing Ark Survival Ascended Server instances using Docker. It simplifies the process of creating, starting, stopping, updating, and performing various operations on server instances, making it easy for both beginners and experienced users to manage their servers effectively.
 
+The script is designed with ease of use in mind - it will automatically check for and install most required dependencies (like Docker, Docker Compose, and yq) if they're not already present on your system. This means you only need Git initially to download the manager, and it will handle most of the complex setup steps for you.
+
 ## Quick Start Guide for New Linux Users
 
 If you're new to Linux or Docker, this guide will help you get started quickly. Just copy and paste these commands:
@@ -82,15 +84,17 @@ After these steps, you'll have a working Ark Survival Ascended server setup. See
 
 Before using POK-manager.sh, ensure that you have the following prerequisites installed on your Linux system:
 
-- [Docker](https://docs.docker.com/engine/install/)
-- [Docker Compose](https://docs.docker.com/compose/install/)
-- [Git](https://git-scm.com/downloads)
-- [yq](https://github.com/mikefarah/yq?tab=readme-ov-file#install)
+- [Docker](https://docs.docker.com/engine/install/) (POK-manager.sh will attempt to install this if not found)
+- [Docker Compose](https://docs.docker.com/compose/install/) (POK-manager.sh will attempt to install this if not found)
+- [Git](https://git-scm.com/downloads) (Required to download POK-manager)
+- [yq](https://github.com/mikefarah/yq?tab=readme-ov-file#install) (POK-manager.sh will attempt to install this if not found)
 - `sudo` access
 - CPU - FX Series AMD Or Intel Second Gen Sandy Bridge CPU
 - 16GB of RAM (or more) for each instance
 - 80 GB for Server data
 - Linux Host OS (Ubuntu, Debian, Arch)
+
+> **Note**: POK-manager.sh is designed to automatically install most required dependencies (Docker, Docker Compose, and yq) if they're not found on your system. You'll only need Git initially to download the manager.
 
 ## Critical System Requirements
 
@@ -190,7 +194,22 @@ If you're new to Linux, follow these step-by-step instructions for a smooth setu
 ### Alternative Installation Options
 
 1. **For experienced users** who want to download and set up in a single step:
-   - Option 1: Run the following command to download and set up POK-manager.sh:
+   
+   First, ensure you have a user with the correct UID/GID:
+   ```bash
+   # Create the user group with GID 7777
+   sudo groupadd -g 7777 pokuser
+   
+   # Create the user with UID 7777
+   sudo useradd -u 7777 -g 7777 -m -s /bin/bash pokuser
+   
+   # IMPORTANT: Set a password for the user (you'll need this to switch to pokuser)
+   sudo passwd pokuser
+   ```
+   
+   Then, choose one of these options:
+   
+   - Option 1: Run the following command to download and set up POK-manager.sh in a single step:
      ```bash
      git clone https://github.com/Acekorneya/Ark-Survival-Ascended-Server.git && sudo chown -R 7777:7777 Ark-Survival-Ascended-Server && sudo mv Ark-Survival-Ascended-Server/POK-manager.sh . && sudo chmod +x POK-manager.sh && sudo mv Ark-Survival-Ascended-Server/defaults . && sudo rm -rf Ark-Survival-Ascended-Server
      ```
@@ -204,6 +223,17 @@ If you're new to Linux, follow these step-by-step instructions for a smooth setu
      sudo mv Ark-Survival-Ascended-Server/defaults .
      sudo rm -rf Ark-Survival-Ascended-Server
      ```
+   
+   After setting up, switch to the pokuser account to run the script:
+   ```bash
+   sudo su - pokuser
+   
+   # Navigate to where you downloaded POK-manager (if needed)
+   cd /path/to/your/POK-manager
+   
+   # Run the setup
+   ./POK-manager.sh -setup
+   ```
 
 ### Installation Tips for Different User Types
 
@@ -234,10 +264,11 @@ If you're installing as the root user or plan to run everything with sudo, follo
 #### For Non-Root Users (Recommended)
 If you're running as a non-root user (recommended for security):
 
-1. **Create a dedicated user** as described in the prerequisites:
+1. **Create a dedicated user** with the correct UID/GID:
    ```bash
    sudo groupadd -g 7777 pokuser
    sudo useradd -u 7777 -g 7777 -m -s /bin/bash pokuser
+   sudo passwd pokuser  # Set a password for the user (IMPORTANT - don't skip this step!)
    ```
 
 2. **Switch to this user** to run commands:
@@ -839,22 +870,24 @@ Follow these steps to resolve it:
    sudo ./POK-manager.sh -setup
    ```
    
-   b. **Switching to the pokuser account** (preferred):
+   b. **Switching to the pokuser account** (preferred and recommended method):
    ```bash
    # First make sure the user exists with correct ID
    sudo groupadd -g 7777 pokuser
    sudo useradd -u 7777 -g 7777 -m -s /bin/bash pokuser
-   sudo passwd pokuser  # Set a password for the user
+   sudo passwd pokuser  # Set a password for the user - THIS STEP IS ESSENTIAL!
    
    # Then switch to that user
    sudo su - pokuser
    
-   # Navigate to your POK-manager directory
+   # Navigate to your POK-manager directory (if needed)
    cd /path/to/your/POK-manager
    
-   # Run the setup
+   # Run the setup as the pokuser (no sudo needed)
    ./POK-manager.sh -setup
    ```
+   
+   > ⚠️ **IMPORTANT NOTE**: Always remember to set a password for the pokuser account using `sudo passwd pokuser`. Without this step, you won't be able to switch to the pokuser account, and you'll encounter permission issues.
 
 3. **Verifying your pokuser has access to docker**:
    ```bash
