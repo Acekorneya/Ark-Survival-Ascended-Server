@@ -2,6 +2,52 @@
 
 source /home/pok/scripts/common.sh
 
+# Add disk space cleanup function to remove non-essential data
+cleanup_disk_space() {
+  echo "🧹 Performing disk space cleanup..."
+  
+  # Clean up old logs (keep only the 5 most recent)
+  if [ -d "${ASA_DIR}/ShooterGame/Saved/Logs" ]; then
+    echo "  - Rotating server logs..."
+    find "${ASA_DIR}/ShooterGame/Saved/Logs" -name "*.log" -type f -not -name "ShooterGame.log" | sort -r | tail -n +6 | xargs rm -f 2>/dev/null || true
+  fi
+  
+  # Clean AsaApi logs (keep only the 5 most recent)
+  if [ -d "${ASA_DIR}/ShooterGame/Binaries/Win64/logs" ]; then
+    echo "  - Rotating AsaApi logs..."
+    find "${ASA_DIR}/ShooterGame/Binaries/Win64/logs" -name "*.log" -type f | sort -r | tail -n +6 | xargs rm -f 2>/dev/null || true
+  fi
+  
+  # Clean up any temp files in Wine prefix (these are recreated as needed)
+  if [ -d "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/users/steamuser/Temp" ]; then
+    echo "  - Cleaning Wine temporary files..."
+    rm -rf "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/users/steamuser/Temp"/* 2>/dev/null || true
+  fi
+  
+  # Clean up steamcmd temp files that might be left behind
+  if [ -d "/opt/steamcmd/Steam/logs" ]; then
+    echo "  - Cleaning SteamCMD logs..."
+    rm -rf /opt/steamcmd/Steam/logs/* 2>/dev/null || true
+  fi
+  
+  # Clean up container-specific temp files
+  echo "  - Cleaning temporary files..."
+  rm -f /tmp/*.log 2>/dev/null || true
+  rm -f /tmp/ark_* 2>/dev/null || true
+  rm -f /tmp/launch_output.log 2>/dev/null || true
+  rm -f /tmp/asaapi_logs_pipe_* 2>/dev/null || true
+  
+  # Remove old PID files if present
+  if [ -f "$PID_FILE" ]; then
+    rm -f "$PID_FILE" 2>/dev/null || true
+  fi
+  
+  # Clean up any leftover Xvfb lock files
+  rm -f /tmp/.X[0-9]*-lock 2>/dev/null || true
+  
+  echo "✅ Disk space cleanup completed"
+}
+
 # Check if we're restarting from a container restart
 if [ -f "/home/pok/restart_reason.flag" ] && [ "$(cat /home/pok/restart_reason.flag)" = "API_RESTART" ]; then
   echo "🔄 Container restarted for API mode recovery"
@@ -450,6 +496,9 @@ echo "🔍 Running environment checks..."
 chmod +x /home/pok/scripts/prelaunch_check.sh
 /home/pok/scripts/prelaunch_check.sh
 PRELAUNCH_CHECK_RESULT=$?
+
+# Run disk space cleanup to ensure we're not accumulating unnecessary files
+cleanup_disk_space
 
 # Check if server files exist, install them if not
 if [ $PRELAUNCH_CHECK_RESULT -ne 0 ] || [ ! -f "/home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.exe" ]; then

@@ -13,6 +13,12 @@ cleanup() {
     rm -f "$ASA_DIR/updating.flag"
   fi
   
+  # Clean up SteamCMD temporary files to save disk space
+  echo "Cleaning up SteamCMD temporary files..."
+  rm -rf /opt/steamcmd/Steam/logs/* 2>/dev/null || true
+  rm -rf /opt/steamcmd/Steam/appcache/httpcache/* 2>/dev/null || true
+  rm -rf /tmp/SteamCMD_* 2>/dev/null || true
+  
   # Return the original exit code
   exit $exit_code
 }

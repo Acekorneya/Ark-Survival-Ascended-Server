@@ -190,6 +190,34 @@ cleanup_environment() {
     export WINEDLLOVERRIDES="version=n,b"
   fi
   
+  # Clean up temporary files to save disk space
+  echo "Cleaning up temporary files to save disk space..."
+  # Clean SteamCMD temporary files and logs
+  rm -rf /opt/steamcmd/Steam/logs/* 2>/dev/null || true
+  rm -rf /opt/steamcmd/Steam/appcache/httpcache/* 2>/dev/null || true
+  
+  # Clean Wine/Proton temporary files
+  rm -rf "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/users/steamuser/Temp"/* 2>/dev/null || true
+  
+  # Clean temporary files in /tmp
+  rm -f /tmp/*.log 2>/dev/null || true
+  rm -f /tmp/ark_* 2>/dev/null || true
+  rm -f /tmp/launch_output.log 2>/dev/null || true
+  rm -f /tmp/asaapi_logs_pipe_* 2>/dev/null || true
+  
+  # Rotate log files to prevent accumulation
+  if [ -d "${ASA_DIR}/ShooterGame/Saved/Logs" ]; then
+    echo "Rotating server logs..."
+    # Keep only the most recent 5 log files, remove the rest
+    find "${ASA_DIR}/ShooterGame/Saved/Logs" -name "*.log" -type f -not -name "ShooterGame.log" | sort -r | tail -n +6 | xargs rm -f 2>/dev/null || true
+  fi
+  
+  # Rotate AsaApi log files
+  if [ -d "${ASA_DIR}/ShooterGame/Binaries/Win64/logs" ]; then
+    echo "Rotating AsaApi logs..."
+    find "${ASA_DIR}/ShooterGame/Binaries/Win64/logs" -name "*.log" -type f | sort -r | tail -n +6 | xargs rm -f 2>/dev/null || true
+  fi
+  
   echo "Environment cleanup completed."
 }
 

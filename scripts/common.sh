@@ -263,6 +263,62 @@ clean_format_mod_ids() {
   fi
 }
 
+# Function to rotate log files and prevent disk space issues
+rotate_log_files() {
+  local max_logs=${1:-5}  # Default to keeping 5 most recent logs
+  local log_dir="${2:-${ASA_DIR}/ShooterGame/Saved/Logs}"
+  local pattern="${3:-*.log}"
+  local exclude="${4:-}"
+  
+  if [ ! -d "$log_dir" ]; then
+    echo "Log directory $log_dir does not exist. Skipping rotation."
+    return 1
+  fi
+  
+  echo "Rotating logs in $log_dir (keeping $max_logs most recent files)"
+  
+  if [ -n "$exclude" ]; then
+    # With exclusion pattern
+    find "$log_dir" -name "$pattern" -type f -not -name "$exclude" | sort -r | tail -n +$((max_logs + 1)) | xargs rm -f 2>/dev/null || true
+  else
+    # Without exclusion
+    find "$log_dir" -name "$pattern" -type f | sort -r | tail -n +$((max_logs + 1)) | xargs rm -f 2>/dev/null || true
+  fi
+  
+  return 0
+}
+
+# Function to clean temporary files to save disk space
+clean_temp_files() {
+  echo "Cleaning temporary files to free disk space..."
+  
+  # Clean up Wine/Proton temporary files
+  if [ -d "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/users/steamuser/Temp" ]; then
+    rm -rf "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/users/steamuser/Temp"/* 2>/dev/null || true
+  fi
+  
+  # Clean up SteamCMD temporary files
+  if [ -d "/opt/steamcmd/Steam/logs" ]; then
+    rm -rf /opt/steamcmd/Steam/logs/* 2>/dev/null || true
+  fi
+  
+  if [ -d "/opt/steamcmd/Steam/appcache/httpcache" ]; then
+    rm -rf /opt/steamcmd/Steam/appcache/httpcache/* 2>/dev/null || true
+  fi
+  
+  # Clean up temporary files in /tmp
+  rm -f /tmp/*.log 2>/dev/null || true
+  rm -f /tmp/ark_* 2>/dev/null || true
+  rm -f /tmp/launch_output.log 2>/dev/null || true
+  rm -f /tmp/asaapi_logs_pipe_* 2>/dev/null || true
+  rm -f /tmp/SteamCMD_* 2>/dev/null || true
+  
+  # Clean up stale lock files
+  rm -f /tmp/.X[0-9]*-lock 2>/dev/null || true
+  
+  echo "Temporary file cleanup completed"
+}
+
 # Function to validate SERVER_PASSWORD
 validate_server_password() {
   if [ -n "$SERVER_PASSWORD" ] && ! [[ "$SERVER_PASSWORD" =~ ^[a-zA-Z0-9]+$ ]]; then

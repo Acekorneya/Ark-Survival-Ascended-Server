@@ -1,14 +1,72 @@
 # POK-Manager Changelog
 
-## Latest Version
-- Added `-changelog` command to view change history
-- The changelog file will be automatically updated during `-upgrade` operations
-- Changelog is stored in the config/POK-manager/ directory
+## Version 2.1.51 (Latest)
+### Major Improvements
+- Added disk space management to prevent containers from consuming excessive storage
+- Automatic log rotation to limit storage consumption
+- Cleanup of temporary files during container lifecycle events (start, stop, restart)
+- Removed unnecessary data persistence between container restarts
+- Fixed issue where restarting containers could use up all available space
 
-## Previous Updates
-- Added permission fix operations to address file ownership issues
-- Improved Docker image handling and compatibility
-- Enhanced API functionality and server management
-- Various bug fixes and performance improvements
+## Version 2.1.50 (Previous)
+### Major Changes
+- Switched to new user ID system (UID 7777) for better permission handling
+- Added AsaApi (ARK Server API) integration for plugin support
+- Improved Docker image: `acekorneya/asa_server:2_1_latest` (replaces `2_0_latest`)
+- Enhanced backup and restore functionality with rotation policies
+- Added migration tools for upgrading from 2.0 to 2.1
 
-Note: This is an initial changelog template. Future updates will provide more detailed information about changes. 
+### New Commands
+- `-API <TRUE|FALSE> <instance_name|-all>`: Enable/disable ARK Server API
+- `-beta`: Switch to beta Docker images for testing new features
+- `-stable`: Switch back to stable Docker images
+- `-migrate`: Migrate from 2.0 to 2.1 with permission adjustments
+- `-changelog`: Display this change history
+- `-api-recovery`: Recover API instances with container restart
+
+### File System & Permissions
+- Changed default UID/GID from 1000:1000 to 7777:7777
+- Added migration system to handle permissions when upgrading
+- Improved file ownership checks and automatic corrections
+- Enhanced permission handling for cluster directories
+
+### Backup System Improvements
+- Added automated backup rotation based on count and size limits
+- Configurable backup policies per instance
+- Improved backup operations with better error handling
+- Enhanced restoration process with clearer user guidance
+
+### Server Management
+- Enhanced server shutdown and restart processes
+- Added support for AsaApi plugins and mods
+- Improved server initialization and startup
+- Better handling of server crashes and recovery
+- Added option for random startup delays to prevent update conflicts
+
+### User Interface
+- Added colorful ASCII logo and improved visual formatting
+- Enhanced status messages and error reporting
+- Better progress indicators for long-running operations
+- More detailed server status information
+
+### Docker Improvements
+- Added support for both 2.0 and 2.1 Docker images
+- Improved container environment setup
+- Enhanced Wine/Proton configuration for better performance
+- Added container health checks and recovery mechanisms
+
+### Documentation
+- Added extensive in-script documentation
+- Improved error messages with troubleshooting guidance
+- Added version information display
+
+## Version 2.0 (Previous)
+- Initial stable release of POK-Manager
+- Basic Docker containerization
+- Server management commands
+- Permission handling with UID/GID 1000:1000
+- Simple backup functionality
+- Basic server startup and shutdown
+
+Note: To update from version 2.0 to 2.1, run: `./POK-manager.sh -migrate`
+This will adjust file permissions and update Docker images to ensure compatibility. 

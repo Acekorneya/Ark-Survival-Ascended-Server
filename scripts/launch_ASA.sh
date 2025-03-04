@@ -187,6 +187,14 @@ start_server() {
   # Fix for Docker Compose exec / Docker exec parsing inconsistencies
   STEAM_COMPAT_DATA_PATH=$(eval echo "$STEAM_COMPAT_DATA_PATH")
 
+  # Rotate old logs to prevent disk space issues
+  echo "Performing log rotation to manage disk space..."
+  rotate_log_files 5 "${ASA_DIR}/ShooterGame/Saved/Logs" "*.log" "ShooterGame.log"
+  rotate_log_files 5 "${ASA_DIR}/ShooterGame/Binaries/Win64/logs" "*.log"
+  
+  # Clean temporary files to free up disk space
+  clean_temp_files
+
   # Check if the log file exists and rename it to archive
   local old_log_file="$ASA_DIR/ShooterGame/Saved/Logs/ShooterGame.log"
   if [ -f "$old_log_file" ]; then

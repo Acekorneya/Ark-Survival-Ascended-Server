@@ -141,6 +141,21 @@ shutdown_handler() {
       kill -9 $pid
     fi
     
+    # Clean up any Wine/Proton processes to free resources
+    pkill -9 -f "wine" >/dev/null 2>&1 || true
+    pkill -9 -f "wineserver" >/dev/null 2>&1 || true
+    
+    # Perform additional cleanup to free disk space
+    echo "Cleaning up temporary files to free disk space..."
+    # Clean SteamCMD temporary files
+    rm -rf /opt/steamcmd/Steam/logs/* 2>/dev/null || true
+    # Clean Wine/Proton temporary files
+    rm -rf "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/users/steamuser/Temp"/* 2>/dev/null || true
+    # Clean temporary files in /tmp
+    rm -f /tmp/*.log 2>/dev/null || true
+    rm -f /tmp/ark_* 2>/dev/null || true
+    rm -f /tmp/launch_output.log 2>/dev/null || true
+    
     echo "---- Server shutdown complete ----"
   else
     echo "Server appears to be not running, no shutdown action taken."
