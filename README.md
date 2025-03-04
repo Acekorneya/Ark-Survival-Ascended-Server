@@ -28,6 +28,7 @@ If you're new to Linux or Docker, this guide will help you get started quickly. 
 sudo apt-get update && sudo apt-get install -y git
 
 # Create the dedicated server user with correct permissions
+# IMPORTANT: You must create the group BEFORE creating the user
 sudo groupadd -g 7777 pokuser
 sudo useradd -u 7777 -g 7777 -m -s /bin/bash pokuser
 sudo passwd pokuser  # Create a secure password when prompted
@@ -154,6 +155,7 @@ If you're new to Linux, follow these step-by-step instructions for a smooth setu
 
 1. **Create a dedicated user** with the correct UID/GID for the server:
    ```bash
+   # IMPORTANT: You must create the group FIRST, then create the user
    # Create the user group with GID 7777
    sudo groupadd -g 7777 pokuser
    
