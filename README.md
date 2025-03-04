@@ -234,6 +234,31 @@ If you're new to Linux, follow these step-by-step instructions for a smooth setu
      sudo rm -rf Ark-Survival-Ascended-Server
      ```
 
+### Beta Branch Installation (Optional)
+
+If you want to test the latest features before they're officially released, you can install from the beta branch. Note that beta versions may contain experimental features and are not guaranteed to be stable.
+
+```bash
+# Clone from the beta branch (for testing purposes)
+git clone -b beta https://github.com/Acekorneya/Ark-Survival-Ascended-Server.git && \
+mv Ark-Survival-Ascended-Server/POK-manager.sh . && \
+chmod +x POK-manager.sh && \
+mv Ark-Survival-Ascended-Server/defaults . && \
+rm -rf Ark-Survival-Ascended-Server
+```
+
+⚠️ **WARNING**: The beta branch may contain untested code and could potentially cause issues with your server. Only use the beta branch if you're willing to troubleshoot problems and report bugs. For production servers, we recommend using the stable branch (default installation commands above).
+
+After installing from the beta branch, you can enable beta mode to receive beta updates:
+```bash
+./POK-manager.sh -beta
+```
+
+You can always switch back to the stable branch with:
+```bash
+./POK-manager.sh -stable
+```
+
 ### Installation Tips for Different User Types
 
 #### For Root Users
