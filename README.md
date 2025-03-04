@@ -64,7 +64,7 @@ mv Ark-Survival-Ascended-Server/defaults . && \
 rm -rf Ark-Survival-Ascended-Server
 
 # Run the setup command
-./POK-manager.sh -setup
+sudo ./POK-manager.sh -setup
 # NOTE: POK-manager will automatically install Docker and other dependencies if they're not found
 
 # Create your first server instance
