@@ -70,6 +70,14 @@ recover_server() {
     rm -f "$SHUTDOWN_COMPLETE_FLAG"
   fi
   
+  # Extra check: See if the server process actually disappeared temporarily but came back
+  # This prevents unnecessary restarts of healthy servers
+  sleep 5
+  if is_process_running; then
+    echo "[$current_time] Server process found running on second check. No recovery needed." | tee -a "$RECOVERY_LOG"
+    return 0
+  fi
+  
   # For API mode, use the container exit/restart strategy if enabled
   if [ "${API}" = "TRUE" ] && [ "${EXIT_ON_API_RESTART}" = "TRUE" ]; then
     echo "[$current_time] API mode recovery - using container restart strategy..." | tee -a "$RECOVERY_LOG"
@@ -97,6 +105,23 @@ recover_server() {
       echo "[$current_time] ARK server is running (PID: $server_pid)" | tee -a "$RECOVERY_LOG"
       echo "$server_pid" > "$PID_FILE"
       server_running=true
+    fi
+  fi
+  
+  # Check for Wine or Proton processes that could indicate the server is still starting up
+  if [ "$server_running" = "false" ]; then
+    if pgrep -f "wine" >/dev/null 2>&1; then
+      echo "[$current_time] Wine/Proton processes found, server might still be initializing" | tee -a "$RECOVERY_LOG"
+      # Wait a bit more to see if server processes appear
+      sleep 30
+      
+      # Check again after waiting
+      if pgrep -f "AsaApiLoader.exe" >/dev/null 2>&1 || pgrep -f "ArkAscendedServer.exe" >/dev/null 2>&1; then
+        echo "[$current_time] Server processes appeared after waiting" | tee -a "$RECOVERY_LOG"
+        server_running=true
+      else
+        echo "[$current_time] No server processes appeared after waiting 30 seconds" | tee -a "$RECOVERY_LOG"
+      fi
     fi
   fi
   

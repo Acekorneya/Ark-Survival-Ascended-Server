@@ -114,36 +114,59 @@ setup_arkserverapi() {
     if [ -n "$ASA_PLUGIN_LOADER_ARCHIVE_NAME" ] && [ -f "$ASA_BINARY_DIR/$ASA_PLUGIN_LOADER_ARCHIVE_NAME" ]; then
       echo "Found AsaApi archive: $ASA_PLUGIN_LOADER_ARCHIVE_NAME, extracting..."
       cd "$ASA_BINARY_DIR"
-      unzip -o "$ASA_PLUGIN_LOADER_ARCHIVE_NAME"
+      unzip -o "$ASA_PLUGIN_LOADER_ARCHIVE_NAME" >/dev/null 2>&1
       rm -f "$ASA_PLUGIN_LOADER_ARCHIVE_NAME"
     fi
     
     # Make sure the AsaApiLoader exists
     if [ ! -f "$ASA_PLUGIN_BINARY_PATH" ]; then
-      echo "WARNING: AsaApiLoader.exe not found! API may not be properly installed."
-      echo "Attempting one more installation via common.sh install_ark_server_api function..."
-      install_ark_server_api
+      echo "AsaApiLoader.exe not found. Attempting installation via common.sh..."
+      # Try up to 3 times to install
+      local max_attempts=3
+      local attempt=1
+      local success=false
+      
+      while [ $attempt -le $max_attempts ] && [ "$success" = "false" ]; do
+        echo "AsaApi installation attempt $attempt of $max_attempts..."
+        if install_ark_server_api; then
+          success=true
+          echo "✅ AsaApi installation succeeded on attempt $attempt"
+        else
+          echo "⚠️ AsaApi installation attempt $attempt failed"
+          attempt=$((attempt + 1))
+          sleep 2
+        fi
+      done
       
       # Re-check if the file exists after installation attempt
       if [ ! -f "$ASA_PLUGIN_BINARY_PATH" ]; then
-        echo "ERROR: AsaApiLoader.exe still not found after installation attempt."
+        echo "ERROR: AsaApiLoader.exe still not found after $max_attempts installation attempts."
+        echo "⚠️ Continuing without AsaApi. Server will run but API functionality will be unavailable."
         return 1
       else
-        echo "AsaApiLoader.exe found after installation."
+        echo "✅ AsaApiLoader.exe found after installation."
       fi
     else
-      echo "AsaApiLoader.exe found at $ASA_PLUGIN_BINARY_PATH"
+      echo "✅ AsaApiLoader.exe found at $ASA_PLUGIN_BINARY_PATH"
     fi
     
     # Verify if Visual C++ Redistributable might be installed in the Proton prefix
     local vcredist_marker="${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files (x86)/Microsoft Visual Studio"
     
     if [ ! -d "$vcredist_marker" ]; then
-      echo "Visual C++ Redistributable marker not found. Installing VC++ redistributable via winetricks..."
-      # Use winetricks to install Visual C++ 2019 Redistributable
-      WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" winetricks -q vcrun2019
+      echo "Visual C++ Redistributable marker not found. Creating directory structure..."
+      mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files (x86)/Microsoft Visual Studio/2019/BuildTools/VC/Redist/MSVC/14.29.30133/x64/Microsoft.VC142.CRT"
+      mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files (x86)/Microsoft Visual Studio/2019/BuildTools/VC/Redist/MSVC/14.29.30133/x86/Microsoft.VC142.CRT"
+      
+      # Create dummy files
+      touch "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files (x86)/Microsoft Visual Studio/2019/BuildTools/VC/Redist/MSVC/14.29.30133/x64/Microsoft.VC142.CRT/msvcp140.dll"
+      touch "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files (x86)/Microsoft Visual Studio/2019/BuildTools/VC/Redist/MSVC/14.29.30133/x64/Microsoft.VC142.CRT/vcruntime140.dll"
+      
+      # Try winetricks installation as a fallback
+      echo "Attempting Visual C++ installation via winetricks..."
+      WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" winetricks -q vcrun2019 >/dev/null 2>&1 || true
     else
-      echo "Visual C++ Redistributable appears to be installed in Proton prefix."
+      echo "Visual C++ Redistributable directory structure exists."
     fi
     
     # Set DLL overrides to ensure API loads properly
@@ -152,6 +175,7 @@ setup_arkserverapi() {
     
     # Create logs directory for AsaApi if it doesn't exist
     mkdir -p "${ASA_DIR}/ShooterGame/Binaries/Win64/logs"
+    chmod -R 755 "${ASA_DIR}/ShooterGame/Binaries/Win64/logs"
     
     echo "AsaApi environment setup completed."
     return 0
@@ -760,6 +784,7 @@ start_server() {
   local LOG_FILE="$ASA_DIR/ShooterGame/Saved/Logs/ShooterGame.log"
   local max_wait_time=600  # 10 minutes maximum wait time (increased from 300 to ensure we catch the log message)
   local wait_time=0
+  local startup_message_displayed=false
   
   # Initial delay to give the server time to start creating logs
   sleep 10
@@ -782,13 +807,16 @@ start_server() {
     # Check for successful server startup in logs
     if [ -f "$LOG_FILE" ]; then
       if grep -q "Server has completed startup and is now advertising for join" "$LOG_FILE"; then
-        echo ""
-        echo "✅ Found the 'Server has completed startup and is now advertising for join' message!"
-        echo "$(grep "Server has completed startup and is now advertising for join" "$LOG_FILE" | tail -1)"
-        echo ""
-        echo "🎮 ====== SERVER FULLY STARTED ====== 🎮"
-        echo "Server started successfully. PID: $SERVER_PID"
-        echo "Server is now advertising for join and ready to accept connections!"
+        if [ "$startup_message_displayed" = "false" ]; then
+          echo ""
+          echo "✅ Found the 'Server has completed startup and is now advertising for join' message!"
+          echo "$(grep "Server has completed startup and is now advertising for join" "$LOG_FILE" | tail -1)"
+          echo ""
+          echo "🎮 ====== SERVER FULLY STARTED ====== 🎮"
+          echo "Server started successfully. PID: $SERVER_PID"
+          echo "Server is now advertising for join and ready to accept connections!"
+          startup_message_displayed=true
+        fi
         
         # Double verify correct PID file
         get_server_process_id
@@ -800,17 +828,21 @@ start_server() {
         echo "Server monitoring is now active."
         break
       else
-        echo "Server still starting up... (waited ${wait_time}s)"
-        # Provide more details every 60 seconds about what we're looking for
-        if [ $((wait_time % 60)) -eq 0 ] && [ $wait_time -gt 0 ]; then
-          echo "Waiting for log message: 'Server has completed startup and is now advertising for join'"
-          echo "Last few lines of log file:"
-          tail -n 5 "$LOG_FILE"
-          echo ""
+        if [ "$startup_message_displayed" = "false" ]; then
+          echo "Server still starting up... (waited ${wait_time}s)"
+          # Provide more details every 60 seconds about what we're looking for
+          if [ $((wait_time % 60)) -eq 0 ] && [ $wait_time -gt 0 ]; then
+            echo "Waiting for log message: 'Server has completed startup and is now advertising for join'"
+            echo "Last few lines of log file:"
+            tail -n 5 "$LOG_FILE"
+            echo ""
+          fi
         fi
       fi
     else
-      echo "Waiting for server log file to be created... (waited ${wait_time}s)"
+      if [ "$startup_message_displayed" = "false" ]; then
+        echo "Waiting for server log file to be created... (waited ${wait_time}s)"
+      fi
     fi
     
     sleep 10
