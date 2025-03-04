@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.47"
+POK_MANAGER_VERSION="2.1.48"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -3682,6 +3682,9 @@ check_beta_mode() {
 
 # Add the upgrade function
 upgrade_pok_manager() {
+  # Store the original command arguments right at the beginning
+  local original_args=("$@")
+  
   echo "Checking for updates to POK-manager.sh..."
   
   # Create the config directory if it doesn't exist
@@ -3793,10 +3796,15 @@ upgrade_pok_manager() {
         # If running interactively, add a pause
         if [ -t 0 ]; then
           read -p "Press Enter to automatically restart with your command or Ctrl+C to cancel..."
+          # Explicitly run the original command to ensure it doesn't get lost
+          exec "$original_script" "${original_args[@]}"
+        else
+          # For non-interactive sessions, just restart with the same args
+          exec "$original_script" "${original_args[@]}"
         fi
         
-        # Execute the updated script with the same arguments
-        exec "$original_script" "$@"
+        # This line should never be reached but is kept as a fallback
+        exit 0
       else
         echo "ERROR: Couldn't determine version in the downloaded file."
         rm -f "$temp_file"
