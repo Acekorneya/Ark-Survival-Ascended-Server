@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.58"
+POK_MANAGER_VERSION="2.1.59"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -1079,7 +1079,7 @@ check_puid_pgid_user() {
 copy_default_configs() {
   # Define the directory where the configuration files will be stored
   local config_dir="${base_dir}/Instance_${instance_name}/Saved/Config/WindowsServer"
-  local base_dir=$(dirname "$(realpath "$0")")
+  local base_dir="${BASE_DIR}"
 
   # Ensure the configuration directory exists
   mkdir -p "$config_dir"
@@ -1163,7 +1163,7 @@ install_yq() {
 
 # Root tasks
 root_tasks() {
-  local base_dir=$(dirname "$(realpath "$0")")
+  local base_dir="${BASE_DIR}"
   check_vm_max_map_count
   check_puid_pgid_user "$PUID" "$PGID"
   check_dependencies
@@ -1187,7 +1187,7 @@ pull_docker_image() {
 
 read_docker_compose_config() {
   local instance_name="$1"
-  local base_dir=$(dirname "$(realpath "$0")")
+  local base_dir="${BASE_DIR}"
   local docker_compose_file="${base_dir}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
   if [ ! -f "$docker_compose_file" ]; then
     echo "Docker compose file for ${instance_name} does not exist."
@@ -1252,7 +1252,7 @@ read_docker_compose_config() {
 # Function to write Docker Compose file
 write_docker_compose_file() {
   local instance_name="$1"
-  local base_dir=$(dirname "$(realpath "$0")")
+  local base_dir="${BASE_DIR}"
   local instance_dir="${base_dir}/Instance_${instance_name}"
   local docker_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
   local image_tag=$(get_docker_image_tag "$instance_name")
@@ -1527,7 +1527,7 @@ prompt_for_instance_name() {
 # Function to perform an action on all instances
 perform_action_on_all_instances() {
   local action=$1
-  local base_dir=$(dirname "$(realpath "$0")")
+  local base_dir="${BASE_DIR}"
   echo "Performing '${action}' on all instances..."
 
   # Special case for stop action - use the optimized function
@@ -1560,7 +1560,7 @@ perform_action_on_all_instances() {
 
 # Function to stop all instances
 stop_all_instances() {
-  local base_dir=$(dirname "$(realpath "$0")")
+  local base_dir="${BASE_DIR}"
   
   echo "Stopping all running instances..."
   
@@ -1616,7 +1616,7 @@ inject_shutdown_flag_and_shutdown() {
   local message="$2"
   local wait_time="$3"
   local container_name="asa_${instance}" # Assuming container naming convention
-  local base_dir=$(dirname "$(realpath "$0")")
+  local base_dir="${BASE_DIR}"
   local instance_dir="${base_dir}/Instance_${instance}"
   local docker_compose_file="${instance_dir}/docker-compose-${instance}.yaml"
 
@@ -1769,7 +1769,7 @@ generate_docker_compose() {
   review_and_modify_configuration
 
   # Path where Docker Compose files are located
-  local base_dir=$(dirname "$(realpath "$0")")
+  local base_dir="${BASE_DIR}"
   local instance_dir="${base_dir}/Instance_${instance_name}"
   local docker_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
 
@@ -1809,7 +1809,7 @@ prompt_for_final_edit() {
 
 
 list_instances() {
-  local base_dir=$(dirname "$(realpath "$0")")
+  local base_dir="${BASE_DIR}"
   local compose_files=($(find "${base_dir}/Instance_"* -name 'docker-compose-*.yaml' 2>/dev/null || true))
   local instances=()
   for file in "${compose_files[@]}"; do
@@ -1851,7 +1851,7 @@ find_editor() {
 # Function to start an instance
 start_instance() {
   local instance_name=$1
-  local docker_compose_file="./Instance_${instance_name}/docker-compose-${instance_name}.yaml"
+  local docker_compose_file="${BASE_DIR}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
   local image_tag=$(get_docker_image_tag "$instance_name")
   
   echo "-----Starting ${instance_name} Server with image tag ${image_tag}-----"
@@ -1901,7 +1901,7 @@ start_instance() {
   fi
   
   # Ensure the API_Logs directory exists for this instance
-  local base_dir=$(dirname "$(realpath "$0")")
+  local base_dir="${BASE_DIR}"
   local instance_dir="${base_dir}/Instance_${instance_name}"
   local api_logs_dir="${instance_dir}/API_Logs"
   local api_logs_created=false
@@ -2263,7 +2263,7 @@ start_instance() {
   # If not running as sudo, check for permission mismatches
   if ! is_sudo; then
     # Get the server files directory for this instance
-    local instance_dir="./Instance_${instance_name}"
+    local instance_dir="${BASE_DIR}/Instance_${instance_name}"
     
     if [ -d "$instance_dir" ]; then
       local dir_ownership="$(stat -c '%u:%g' "$instance_dir")"
@@ -2368,7 +2368,7 @@ start_instance() {
 # Function to stop an instance
 stop_instance() {
   local instance_name=$1
-  local base_dir=$(dirname "$(realpath "$0")")
+  local base_dir="${BASE_DIR}"
   local docker_compose_file="${base_dir}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
   local container_name="asa_${instance_name}"
   
@@ -2821,7 +2821,7 @@ inject_shutdown_flag_and_shutdown() {
   local message="$2"
   local wait_time="$3"
   local container_name="asa_${instance}" # Assuming container naming convention
-  local base_dir=$(dirname "$(realpath "$0")")
+  local base_dir="${BASE_DIR}"
   local instance_dir="${base_dir}/Instance_${instance}"
   local docker_compose_file="${instance_dir}/docker-compose-${instance}.yaml"
 
@@ -2938,7 +2938,7 @@ run_in_container() {
   # If this is a restart command and the instance has API=TRUE, use our special restart function
   if [[ "$cmd" == "-restart" ]]; then
     # Get the docker-compose file path
-    local base_dir=$(dirname "$(realpath "$0")")
+    local base_dir="${BASE_DIR}"
     local docker_compose_file="${base_dir}/Instance_${instance}/docker-compose-${instance}.yaml"
     
     # Check if API=TRUE in the docker-compose file
@@ -2989,7 +2989,7 @@ run_in_container_background() {
   fi
 }
 get_build_id_from_acf() {
-  local acf_file="$BASE_DIR/ServerFiles/arkserver/appmanifest_2430930.acf"
+  local acf_file="${BASE_DIR}/ServerFiles/arkserver/appmanifest_2430930.acf"
 
   if [ -f "$acf_file" ]; then
     local build_id=$(grep -E "^\s+\"buildid\"\s+" "$acf_file" | grep -o '[[:digit:]]*')
@@ -3821,6 +3821,139 @@ manage_service() {
   -changelog)
     display_changelog
     ;;
+  -rename)
+    # Helper function to check if a container is running
+    is_container_running() {
+      local instance_name="$1"
+      local container_name="asa_${instance_name}"
+      if docker ps -q --filter "name=${container_name}" | grep -q .; then
+        return 0  # Container is running
+      else
+        return 1  # Container is not running
+      fi
+    }
+
+    # Helper function to stop a running container, rename instance, and optionally restart
+    rename_instance() {
+      local oldname="$1"
+      local newname="$2"
+      local old_folder="Instance_${oldname}"
+      local new_folder="Instance_${newname}"
+      local container_running=false
+      local restart_after=false
+      
+      # Check if container is running and stop it if needed
+      if is_container_running "$oldname"; then
+        container_running=true
+        echo "Container for '$oldname' is currently running."
+        read -p "Do you want to stop it to proceed with the rename? (y/n): " should_stop
+        if [[ "${should_stop,,}" == "y" ]]; then
+          echo "Stopping container asa_${oldname}..."
+          docker stop "asa_${oldname}"
+          read -p "Would you like to restart the container after renaming? (y/n): " should_restart
+          if [[ "${should_restart,,}" == "y" ]]; then
+            restart_after=true
+          fi
+        else
+          echo "Cannot rename a running container. Operation cancelled."
+          return 1
+        fi
+      fi
+      
+      # Perform the rename operation
+      mv "$old_folder" "$new_folder"
+      [ "$(id -u)" -eq 0 ] && chown -R $PUID:$PGID "$new_folder" || sudo chown -R $PUID:$PGID "$new_folder"
+      
+      # Find all docker-compose files in the renamed folder
+      local compose_files=()
+      local restart_file=""
+      
+      while IFS= read -r -d $'\0' file; do
+        if [[ "$file" == *docker-compose*.y*ml ]]; then
+          compose_files+=("$file")
+          # If we found a compose file, use it for restarting later
+          restart_file="$file"
+        fi
+      done < <(find "$new_folder" -type f -name "*docker-compose*.y*ml" -print0)
+      
+      # Also check parent directory for docker-compose files related to this instance
+      while IFS= read -r -d $'\0' file; do
+        if [[ "$file" == *"${oldname}"* && "$file" == *docker-compose*.y*ml ]]; then
+          compose_files+=("$file")
+          # If no restart file is set yet, use this one
+          if [[ -z "$restart_file" ]]; then
+            restart_file="$file"
+          fi
+        fi
+      done < <(find "$(dirname "$new_folder")" -maxdepth 1 -type f -name "*docker-compose*.y*ml" -print0)
+      
+      if [[ ${#compose_files[@]} -eq 0 ]]; then
+        echo "Warning: No docker-compose files found for the instance. Container naming might not be updated."
+      else
+        echo "Found ${#compose_files[@]} docker-compose file(s)."
+        
+        # Update all found docker-compose files
+        for compose_file in "${compose_files[@]}"; do
+          echo "Updating file: $compose_file"
+          sed -i "s/container_name:[[:space:]]*asa_[^[:space:]]*/container_name: asa_${newname}/" "$compose_file"
+          sed -i "s/INSTANCE_NAME=[^[:space:]]*/INSTANCE_NAME=${newname}/" "$compose_file"
+        done
+        
+        echo "Renamed instance '$oldname' to '$newname' in folder and updated docker-compose configuration."
+        
+        # If container was running and user opted to restart it
+        if $restart_after; then
+          if [[ -n "$restart_file" ]]; then
+            local restart_dir=$(dirname "$restart_file")
+            echo "Starting container with new name: asa_${newname}..."
+            cd "$restart_dir"
+            docker-compose up -d
+            echo "Container started with new name."
+          else
+            echo "Could not restart container - no suitable docker-compose file found."
+          fi
+        fi
+      fi
+      
+      return 0
+    }
+
+    # Check if the user wants to rename all instances (case-insensitive for '-all')
+    if [[ "${2,,}" == "-all" ]]; then
+      echo "Renaming all instances..."
+      # Loop over instance directories; assuming they are named 'Instance_*'
+      for instance_dir in Instance_*; do
+        if [[ -d "$instance_dir" ]]; then
+          # Extract old instance name from folder name (everything after 'Instance_')
+          oldname=${instance_dir#Instance_}
+          echo "Current instance: $oldname"
+          read -p "Enter new name for instance '$oldname' (press enter to keep unchanged): " newname
+          if [[ -n "$newname" ]]; then
+            rename_instance "$oldname" "$newname"
+          else
+            echo "Instance '$oldname' remains unchanged."
+          fi
+        fi
+      done
+    else
+      # Rename a single specified instance
+      instance="$2"
+      # Expect instance folder to be named 'Instance_<instance>'
+      instance_folder="Instance_${instance}"
+      if [[ ! -d "$instance_folder" ]]; then
+        echo "Instance folder '$instance_folder' not found."
+        exit 1
+      fi
+      echo "Current instance: $instance"
+      read -p "Enter new name for instance '$instance' (press enter to keep unchanged): " newname
+      if [[ -n "$newname" ]]; then
+        rename_instance "$instance" "$newname"
+      else
+        echo "Instance '$instance' remains unchanged."
+      fi
+    fi
+    exit 0
+    ;;
   *)
     echo "Invalid action. Usage: $0 {action} [additional_args...] {instance_name}"
     echo "Actions include: -start, -stop, -update, -create, -setup, -status, -restart, -saveworld, -chat, -custom, -backup, -restore"
@@ -3830,7 +3963,7 @@ manage_service() {
 }
 # Define valid actions
 declare -a valid_actions
-valid_actions=("-create" "-start" "-stop" "-saveworld" "-shutdown" "-restart" "-status" "-update" "-list" "-beta" "-stable" "-version" "-upgrade" "-logs" "-backup" "-restore" "-migrate" "-setup" "-edit" "-custom" "-chat" "-clearupdateflag" "-API" "-validate_update" "-force-restore" "-emergency-restore" "-fix" "-api-recovery" "-changelog")
+valid_actions=("-create" "-start" "-stop" "-saveworld" "-shutdown" "-restart" "-status" "-update" "-list" "-beta" "-stable" "-version" "-upgrade" "-logs" "-backup" "-restore" "-migrate" "-setup" "-edit" "-custom" "-chat" "-clearupdateflag" "-API" "-validate_update" "-force-restore" "-emergency-restore" "-fix" "-api-recovery" "-changelog" "-rename")
 
 display_usage() {
   echo "Usage: $0 {action} [instance_name|-all] [additional_args...]"
@@ -3863,6 +3996,7 @@ display_usage() {
   echo "  -version                                  Display the current version of POK-manager"
   echo "  -api-recovery                             Check and recover API instances with container restart"
   echo "  -changelog                                Display the changelog"
+  echo "  -rename <instance_name|-all>              Rename a single instance or all instances"
 }
 
 # Display version information
@@ -4735,7 +4869,7 @@ migrate_file_ownership() {
     for instance in "${running_instances[@]}"; do
       echo "Stopping instance: $instance"
       # Get the docker compose file path
-      local docker_compose_file="./Instance_${instance}/docker-compose-${instance}.yaml"
+      local docker_compose_file="${BASE_DIR}/Instance_${instance}/docker-compose-${instance}.yaml"
       
       # If the compose file exists, use docker-compose down
       if [ -f "$docker_compose_file" ]; then
