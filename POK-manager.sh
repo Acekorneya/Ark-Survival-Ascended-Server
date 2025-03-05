@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.58"
+POK_MANAGER_VERSION="2.1.59"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -1079,7 +1079,7 @@ check_puid_pgid_user() {
 copy_default_configs() {
   # Define the directory where the configuration files will be stored
   local config_dir="${base_dir}/Instance_${instance_name}/Saved/Config/WindowsServer"
-  local base_dir=$(dirname "$(realpath "$0")")
+  local base_dir="${BASE_DIR}"
 
   # Ensure the configuration directory exists
   mkdir -p "$config_dir"
@@ -1163,7 +1163,7 @@ install_yq() {
 
 # Root tasks
 root_tasks() {
-  local base_dir=$(dirname "$(realpath "$0")")
+  local base_dir="${BASE_DIR}"
   check_vm_max_map_count
   check_puid_pgid_user "$PUID" "$PGID"
   check_dependencies
@@ -1187,7 +1187,7 @@ pull_docker_image() {
 
 read_docker_compose_config() {
   local instance_name="$1"
-  local base_dir=$(dirname "$(realpath "$0")")
+  local base_dir="${BASE_DIR}"
   local docker_compose_file="${base_dir}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
   if [ ! -f "$docker_compose_file" ]; then
     echo "Docker compose file for ${instance_name} does not exist."
@@ -1252,7 +1252,7 @@ read_docker_compose_config() {
 # Function to write Docker Compose file
 write_docker_compose_file() {
   local instance_name="$1"
-  local base_dir=$(dirname "$(realpath "$0")")
+  local base_dir="${BASE_DIR}"
   local instance_dir="${base_dir}/Instance_${instance_name}"
   local docker_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
   local image_tag=$(get_docker_image_tag "$instance_name")
@@ -1527,7 +1527,7 @@ prompt_for_instance_name() {
 # Function to perform an action on all instances
 perform_action_on_all_instances() {
   local action=$1
-  local base_dir=$(dirname "$(realpath "$0")")
+  local base_dir="${BASE_DIR}"
   echo "Performing '${action}' on all instances..."
 
   # Special case for stop action - use the optimized function
@@ -1560,7 +1560,7 @@ perform_action_on_all_instances() {
 
 # Function to stop all instances
 stop_all_instances() {
-  local base_dir=$(dirname "$(realpath "$0")")
+  local base_dir="${BASE_DIR}"
   
   echo "Stopping all running instances..."
   
@@ -1616,7 +1616,7 @@ inject_shutdown_flag_and_shutdown() {
   local message="$2"
   local wait_time="$3"
   local container_name="asa_${instance}" # Assuming container naming convention
-  local base_dir=$(dirname "$(realpath "$0")")
+  local base_dir="${BASE_DIR}"
   local instance_dir="${base_dir}/Instance_${instance}"
   local docker_compose_file="${instance_dir}/docker-compose-${instance}.yaml"
 
@@ -1769,7 +1769,7 @@ generate_docker_compose() {
   review_and_modify_configuration
 
   # Path where Docker Compose files are located
-  local base_dir=$(dirname "$(realpath "$0")")
+  local base_dir="${BASE_DIR}"
   local instance_dir="${base_dir}/Instance_${instance_name}"
   local docker_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
 
@@ -1809,7 +1809,7 @@ prompt_for_final_edit() {
 
 
 list_instances() {
-  local base_dir=$(dirname "$(realpath "$0")")
+  local base_dir="${BASE_DIR}"
   local compose_files=($(find "${base_dir}/Instance_"* -name 'docker-compose-*.yaml' 2>/dev/null || true))
   local instances=()
   for file in "${compose_files[@]}"; do
@@ -1851,7 +1851,7 @@ find_editor() {
 # Function to start an instance
 start_instance() {
   local instance_name=$1
-  local docker_compose_file="./Instance_${instance_name}/docker-compose-${instance_name}.yaml"
+  local docker_compose_file="${BASE_DIR}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
   local image_tag=$(get_docker_image_tag "$instance_name")
   
   echo "-----Starting ${instance_name} Server with image tag ${image_tag}-----"
@@ -1901,7 +1901,7 @@ start_instance() {
   fi
   
   # Ensure the API_Logs directory exists for this instance
-  local base_dir=$(dirname "$(realpath "$0")")
+  local base_dir="${BASE_DIR}"
   local instance_dir="${base_dir}/Instance_${instance_name}"
   local api_logs_dir="${instance_dir}/API_Logs"
   local api_logs_created=false
@@ -2263,7 +2263,7 @@ start_instance() {
   # If not running as sudo, check for permission mismatches
   if ! is_sudo; then
     # Get the server files directory for this instance
-    local instance_dir="./Instance_${instance_name}"
+    local instance_dir="${BASE_DIR}/Instance_${instance_name}"
     
     if [ -d "$instance_dir" ]; then
       local dir_ownership="$(stat -c '%u:%g' "$instance_dir")"
@@ -2368,7 +2368,7 @@ start_instance() {
 # Function to stop an instance
 stop_instance() {
   local instance_name=$1
-  local base_dir=$(dirname "$(realpath "$0")")
+  local base_dir="${BASE_DIR}"
   local docker_compose_file="${base_dir}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
   local container_name="asa_${instance_name}"
   
@@ -2821,7 +2821,7 @@ inject_shutdown_flag_and_shutdown() {
   local message="$2"
   local wait_time="$3"
   local container_name="asa_${instance}" # Assuming container naming convention
-  local base_dir=$(dirname "$(realpath "$0")")
+  local base_dir="${BASE_DIR}"
   local instance_dir="${base_dir}/Instance_${instance}"
   local docker_compose_file="${instance_dir}/docker-compose-${instance}.yaml"
 
@@ -2938,7 +2938,7 @@ run_in_container() {
   # If this is a restart command and the instance has API=TRUE, use our special restart function
   if [[ "$cmd" == "-restart" ]]; then
     # Get the docker-compose file path
-    local base_dir=$(dirname "$(realpath "$0")")
+    local base_dir="${BASE_DIR}"
     local docker_compose_file="${base_dir}/Instance_${instance}/docker-compose-${instance}.yaml"
     
     # Check if API=TRUE in the docker-compose file
@@ -2989,7 +2989,7 @@ run_in_container_background() {
   fi
 }
 get_build_id_from_acf() {
-  local acf_file="$BASE_DIR/ServerFiles/arkserver/appmanifest_2430930.acf"
+  local acf_file="${BASE_DIR}/ServerFiles/arkserver/appmanifest_2430930.acf"
 
   if [ -f "$acf_file" ]; then
     local build_id=$(grep -E "^\s+\"buildid\"\s+" "$acf_file" | grep -o '[[:digit:]]*')
@@ -4735,7 +4735,7 @@ migrate_file_ownership() {
     for instance in "${running_instances[@]}"; do
       echo "Stopping instance: $instance"
       # Get the docker compose file path
-      local docker_compose_file="./Instance_${instance}/docker-compose-${instance}.yaml"
+      local docker_compose_file="${BASE_DIR}/Instance_${instance}/docker-compose-${instance}.yaml"
       
       # If the compose file exists, use docker-compose down
       if [ -f "$docker_compose_file" ]; then
