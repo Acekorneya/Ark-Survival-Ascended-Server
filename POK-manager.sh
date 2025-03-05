@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.62"
+POK_MANAGER_VERSION="2.1.63"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -3849,7 +3849,8 @@ manage_service() {
         read -p "Do you want to stop it to proceed with the rename? (y/n): " should_stop
         if [[ "${should_stop,,}" == "y" ]]; then
           echo "Stopping container asa_${oldname}..."
-          docker stop "asa_${oldname}"
+          # Use the script's stop_instance function instead of direct docker stop
+          stop_instance "$oldname"
           read -p "Would you like to restart the container after renaming? (y/n): " should_restart
           if [[ "${should_restart,,}" == "y" ]]; then
             restart_after=true
@@ -3880,46 +3881,67 @@ manage_service() {
       while IFS= read -r -d $'\0' file; do
         if [[ "$file" == *"${oldname}"* && "$file" == *docker-compose*.y*ml ]]; then
           compose_files+=("$file")
-          # If no restart file is set yet, use this one
-          if [[ -z "$restart_file" ]]; then
-            restart_file="$file"
-          fi
         fi
       done < <(find "$(dirname "$new_folder")" -maxdepth 1 -type f -name "*docker-compose*.y*ml" -print0)
-      
-      if [[ ${#compose_files[@]} -eq 0 ]]; then
-        echo "Warning: No docker-compose files found for the instance. Container naming might not be updated."
-      else
-        echo "Found ${#compose_files[@]} docker-compose file(s)."
+
+      # Update the docker-compose files to reflect the new name
+      for compose_file in "${compose_files[@]}"; do
+        echo "Updating file: $compose_file"
+
+        # Update volume paths in docker-compose files to use the new instance name
+        # This is crucial for maintaining save data and config access
+        sed -i "s|/home/factorioserver/ASA_Server/Instance_${oldname}/|/home/factorioserver/ASA_Server/Instance_${newname}/|g" "$compose_file"
         
-        # Update all found docker-compose files
-        for compose_file in "${compose_files[@]}"; do
-          echo "Updating file: $compose_file"
-          sed -i "s/container_name:[[:space:]]*asa_[^[:space:]]*/container_name: asa_${newname}/" "$compose_file"
-          sed -i "s/INSTANCE_NAME=[^[:space:]]*/INSTANCE_NAME=${newname}/" "$compose_file"
-        done
+        # Also update any other references to the old instance name in the compose file
+        sed -i "s/${oldname}/${newname}/g" "$compose_file"
         
-        echo "Renamed instance '$oldname' to '$newname' in folder and updated docker-compose configuration."
-        
-        # If container was running and user opted to restart it
-        if $restart_after; then
-          if [[ -n "$restart_file" ]]; then
-            local restart_dir=$(dirname "$restart_file")
-            echo "Starting container with new name: asa_${newname}..."
-            cd "$restart_dir"
-            docker-compose up -d
-            echo "Container started with new name."
-          else
-            echo "Could not restart container - no suitable docker-compose file found."
+        # Handle file renaming if the compose file has the old name in its filename
+        if [[ "$(basename "$compose_file")" == *"${oldname}"* ]]; then
+          local new_filename="$(dirname "$compose_file")/$(basename "$compose_file" | sed "s/${oldname}/${newname}/g")"
+          echo "Renaming file from $(basename "$compose_file") to $(basename "$new_filename")"
+          mv "$compose_file" "$new_filename"
+          
+          # If this was the restart file, update the reference
+          if [[ "$compose_file" == "$restart_file" ]]; then
+            restart_file="$new_filename"
           fi
         fi
+      done
+
+      # Ensure the docker_compose_cmd config file is in the correct location
+      local instance_config_dir="${new_folder}/config/POK-manager"
+      local base_config_dir="${BASE_DIR}/config/POK-manager"
+      
+      # Create base config directory if it doesn't exist
+      mkdir -p "$base_config_dir"
+      
+      # If docker_compose_cmd exists in instance config, move it to base config
+      if [[ -f "${instance_config_dir}/docker_compose_cmd" ]]; then
+        cp "${instance_config_dir}/docker_compose_cmd" "${base_config_dir}/docker_compose_cmd"
+        echo "Copied docker_compose_cmd config to main config directory"
+      fi
+
+      echo "Renamed instance '${oldname}' to '${newname}' in folder and updated docker-compose configuration."
+      
+      # Restart the container if requested
+      if [[ "$restart_after" == true ]]; then
+        echo "Starting container with new name: asa_${newname}..."
+        # Use the script's start_instance function instead of direct docker start
+        start_instance "$newname"
+        echo "Container started with new name."
       fi
       
+      # This return statement ensures the function completes successfully
+      # and allows the rename_all_instances function to continue with other renames
       return 0
     }
 
     # Check if the user wants to rename all instances (case-insensitive for '-all')
-    if [[ "${2,,}" == "-all" ]]; then
+    if [[ -z "$2" ]]; then
+      echo "Error: Missing required parameter. Usage: $0 -rename <instance_name|-all>"
+      echo "Please specify an instance name or use '-all' to rename all instances."
+      exit 1
+    elif [[ "${2,,}" == "-all" ]]; then
       echo "Renaming all instances..."
       # Loop over instance directories; assuming they are named 'Instance_*'
       for instance_dir in Instance_*; do

@@ -1,6 +1,14 @@
 # POK-Manager Changelog
 
-## Version 2.1.62 (Latest)
+## Version 2.1.63 (Latest)
+### Bug Fixes
+- Fixed volume path updates during instance rename operations
+- Updated `-rename -all` command to properly continue after restarting renamed containers
+- Ensured docker_compose_cmd config file is correctly placed in the base config directory when renaming
+- Improved path handling in docker-compose files when renaming instances
+- Enhanced container restart process after renaming to maintain server state
+
+## Version 2.1.62 (Previous)
 ### Bug Fixes
 - Updated get_docker_compose_cmd() to verify that the docker_compose_cmd file is non-empty before reading its content.
 - If the file is empty, the function now determines the correct Docker Compose command and writes it to the file.
