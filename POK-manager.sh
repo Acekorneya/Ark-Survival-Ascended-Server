@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.60"
+POK_MANAGER_VERSION="2.1.61"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -595,22 +595,22 @@ get_docker_compose_cmd() {
   if [ ! -f "$cmd_file" ]; then
     touch "$cmd_file"
   fi
-  if [ -f "$cmd_file" ]; then
+  
+  # Changed condition from -f to -s to check for non-empty file
+  if [ -s "$cmd_file" ]; then
     DOCKER_COMPOSE_CMD=$(cat "$cmd_file")
     echo "Using Docker Compose command: '$DOCKER_COMPOSE_CMD' (read from file)."
-  elif [ -z "$DOCKER_COMPOSE_CMD" ]; then
-    # Check for the Docker Compose V2 command availability ('docker compose')
+  else
     if docker compose version &>/dev/null; then
       DOCKER_COMPOSE_CMD="docker compose"
     elif docker-compose --version &>/dev/null; then
-      # Fallback to Docker Compose V1 command if V2 is not available
       DOCKER_COMPOSE_CMD="docker-compose"
     else
       echo "Neither 'docker compose' (V2) nor 'docker-compose' (V1) command is available."
       echo "Please ensure Docker Compose is correctly installed."
       exit 1
     fi
-
+    echo "$DOCKER_COMPOSE_CMD" > "$cmd_file"
     echo "Using Docker Compose command: '$DOCKER_COMPOSE_CMD'."
   fi
 }
