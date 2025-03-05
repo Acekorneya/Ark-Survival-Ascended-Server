@@ -1,10 +1,11 @@
 # POK-Manager Changelog
 
-## Version 2.1.61 (Latest)
+## Version 2.1.62 (Latest)
 ### Bug Fixes
 - Updated get_docker_compose_cmd() to verify that the docker_compose_cmd file is non-empty before reading its content.
 - If the file is empty, the function now determines the correct Docker Compose command and writes it to the file.
 - This fix resolves the '-f command not found' error encountered when starting an instance.
+- Removed redundant update check that was causing the script to check for updates twice (once before displaying the logo and once when executing commands).
 
 ## Version 2.1.60 (Latest)
 ### Bug Fixes

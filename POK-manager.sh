@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.61"
+POK_MANAGER_VERSION="2.1.62"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -5452,11 +5452,6 @@ main() {
   
   # Check for required user and group at the start
   check_puid_pgid_user "$PUID" "$PGID" "$command_args"
-  
-  # Skip update check for validate_update to prevent loop
-  if [[ "$1" != "-validate_update" ]]; then
-    check_for_POK_updates
-  fi
   
   # Check if we're in beta mode
   check_beta_mode
