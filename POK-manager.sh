@@ -1,11 +1,14 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.56"
+POK_MANAGER_VERSION="2.1.58"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 BASE_DIR="$SCRIPT_DIR"
+
+# Create a path preference file 
+PATH_CONFIG_FILE="${BASE_DIR}/config/POK-manager/path_preferences.txt"
 
 # Function to create and display the POK-Manager logo
 display_logo() {
@@ -65,6 +68,144 @@ EOF
 if [ -f "${BASE_DIR}/config/POK-manager/beta_mode" ]; then
   POK_MANAGER_BRANCH="beta"
 fi
+
+# Function to check if volume paths in docker-compose files match the current BASE_DIR
+check_volume_paths() {
+  local auto_update=${1:-false}
+  local mismatched_files=()
+  local config_dir="${BASE_DIR}/config/POK-manager"
+  
+  # Ensure config directory exists
+  mkdir -p "$config_dir"
+  
+  # If user has already chosen to auto-update paths, just do it
+  if [ -f "$PATH_CONFIG_FILE" ] && [ "$auto_update" != "force_check" ]; then
+    if grep -q "AUTO_UPDATE_PATHS=true" "$PATH_CONFIG_FILE"; then
+      update_volume_paths
+      return 0
+    elif grep -q "AUTO_UPDATE_PATHS=false" "$PATH_CONFIG_FILE"; then
+      # User previously chose not to update paths
+      return 0
+    fi
+  fi
+  
+  # Find all docker-compose files
+  local compose_files=($(find "${BASE_DIR}/Instance_"* -name 'docker-compose-*.yaml' 2>/dev/null || true))
+  
+  for file in "${compose_files[@]}"; do
+    # Extract the base directory path from the file
+    local file_base_dir=$(grep -o '"[^"]*:/home/pok/arkserver"' "$file" | head -1 | sed 's/"//g' | cut -d':' -f1 | sed 's|/ServerFiles/arkserver$||')
+    
+    # If file_base_dir is empty, try a different pattern
+    if [ -z "$file_base_dir" ]; then
+      file_base_dir=$(grep -o '"[^"]*/ServerFiles/arkserver:/home/pok/arkserver"' "$file" | head -1 | sed 's/"//g' | cut -d':' -f1 | sed 's|/ServerFiles/arkserver$||')
+    fi
+    
+    # If we found a path and it doesn't match current BASE_DIR
+    if [ -n "$file_base_dir" ] && [ "$file_base_dir" != "$BASE_DIR" ]; then
+      mismatched_files+=("$file")
+    fi
+  done
+  
+  # If we found mismatched files, ask the user what to do
+  if [ ${#mismatched_files[@]} -gt 0 ]; then
+    echo "⚠️ NOTICE: POK-Manager directory has changed"
+    echo "The volume paths in your docker-compose files don't match the current directory."
+    echo "This can happen if you've moved the POK-Manager to a new location."
+    echo "Found ${#mismatched_files[@]} files with mismatched paths:"
+    
+    # Show the first 3 mismatched files as examples
+    local max_display=3
+    local count=0
+    for file in "${mismatched_files[@]}"; do
+      if [ $count -lt $max_display ]; then
+        echo "  - $file"
+      else
+        break
+      fi
+      ((count++))
+    done
+    
+    if [ ${#mismatched_files[@]} -gt $max_display ]; then
+      echo "  - ... and $((${#mismatched_files[@]} - $max_display)) more"
+    fi
+    
+    echo ""
+    echo "Would you like to update all volume paths to the current directory? (y/n)"
+    echo "This ensures your containers will use the correct paths when started."
+    
+    # Only ask if we're not running in auto mode
+    if [ "$auto_update" != "true" ]; then
+      local response
+      read -p "Update paths? (y/n): " response
+      
+      if [[ "$response" =~ ^[Yy] ]]; then
+        update_volume_paths
+        echo "AUTO_UPDATE_PATHS=true" > "$PATH_CONFIG_FILE"
+        echo "✅ All paths updated successfully. Future path changes will be updated automatically."
+      else
+        echo "AUTO_UPDATE_PATHS=false" > "$PATH_CONFIG_FILE"
+        echo "⚠️ Paths not updated. Docker containers may fail to start if they can't access the old paths."
+      fi
+    else
+      update_volume_paths
+      echo "AUTO_UPDATE_PATHS=true" > "$PATH_CONFIG_FILE"
+    fi
+  fi
+}
+
+# Function to update volume paths in docker-compose files
+update_volume_paths() {
+  local compose_files=($(find "${BASE_DIR}/Instance_"* -name 'docker-compose-*.yaml' 2>/dev/null || true))
+  local updated_count=0
+  
+  for file in "${compose_files[@]}"; do
+    # Find the old base dir by extracting from the ServerFiles volume
+    local old_base_dir=$(grep -o '"[^"]*:/home/pok/arkserver"' "$file" | head -1 | sed 's/"//g' | cut -d':' -f1 | sed 's|/ServerFiles/arkserver$||')
+    
+    # If old_base_dir is empty, try a different pattern
+    if [ -z "$old_base_dir" ]; then
+      old_base_dir=$(grep -o '"[^"]*/ServerFiles/arkserver:/home/pok/arkserver"' "$file" | head -1 | sed 's/"//g' | cut -d':' -f1 | sed 's|/ServerFiles/arkserver$||')
+    fi
+    
+    # If we found a path and it doesn't match current BASE_DIR
+    if [ -n "$old_base_dir" ] && [ "$old_base_dir" != "$BASE_DIR" ]; then
+      # Make a backup of the file
+      cp "$file" "${file}.bak"
+      
+      # Replace all instances of the old base dir with the new one
+      sed -i "s|\"${old_base_dir}/|\"${BASE_DIR}/|g" "$file"
+      
+      ((updated_count++))
+    fi
+  done
+  
+  if [ $updated_count -gt 0 ]; then
+    echo "✅ Updated volume paths in $updated_count docker-compose files."
+  fi
+}
+
+# Function to get container ID by instance name (more reliable than just using folder names)
+get_instance_container_id() {
+  local instance_name="$1"
+  local container_name="asa_${instance_name}"
+  
+  # First try to get the container ID by container name
+  local container_id=$(docker ps -qf "name=$container_name" 2>/dev/null)
+  
+  # If that fails, try to identify by compose project
+  if [ -z "$container_id" ]; then
+    container_id=$(docker ps -qf "label=com.docker.compose.project=$instance_name" 2>/dev/null)
+  fi
+  
+  echo "$container_id"
+}
+
+# Function to get all running ASA containers
+get_all_asa_containers() {
+  # Get all running containers that match ASA server criteria
+  docker ps --format "{{.ID}}|{{.Names}}|{{.Image}}" | grep "asa_" | grep "acekorneya/asa_server"
+}
 
 # Define colors for pretty output
 RED='\033[0;31m'
@@ -1714,6 +1855,9 @@ start_instance() {
   local image_tag=$(get_docker_image_tag "$instance_name")
   
   echo "-----Starting ${instance_name} Server with image tag ${image_tag}-----"
+
+  # Check if volume paths need to be updated
+  check_volume_paths
   
   # First check if the docker-compose file exists
   if [ ! -f "$docker_compose_file" ]; then
@@ -2227,11 +2371,14 @@ stop_instance() {
   local base_dir=$(dirname "$(realpath "$0")")
   local docker_compose_file="${base_dir}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
   local container_name="asa_${instance_name}"
+  
+  # Get container ID using our more robust method
+  local container_id=$(get_instance_container_id "$instance_name")
 
   echo "-----Stopping ${instance_name} Server-----"
   
   # Check if the container is running
-  if docker ps -q -f name="$container_name" > /dev/null; then
+  if [ -n "$container_id" ]; then
     echo "Server is running. Attempting quick save before stopping..."
     
     # Attempt a quick saveworld with timeout - run in background and kill if it takes too long
@@ -2984,14 +3131,25 @@ check_for_POK_updates() {
         
         # Only notify if the new version is actually newer
         if [ $new_num -gt $current_num ]; then
+          # Create update_available file so user knows an update is available
+          echo "$new_version" > "$update_info_file"
+          
           echo "************************************************************"
           echo "* A newer version of POK-manager.sh is available: $new_version *"
           echo "* Current version: $current_version                           *"
           
-          # Ask if the user wants to upgrade in interactive mode
+          # Ask if the user wants to upgrade only in interactive mode
           if [ -t 0 ]; then
-            echo -n "* Would you like to upgrade now? (y/n): "
-            read -r upgrade_response
+            echo -n "* Would you like to upgrade now? (y/n) [30s timeout]: "
+            # Add a 30-second timeout for the prompt
+            read -t 30 -r upgrade_response || {
+              echo ""
+              echo "* Timeout reached. Continuing without upgrading."
+              echo "* You can manually upgrade later with: ./POK-manager.sh -upgrade"
+              echo "************************************************************"
+              return
+            }
+            
             if [[ "$upgrade_response" =~ ^[Yy]$ ]]; then
               # Save the new version to the file so upgrade_pok_manager can use it
               echo "$new_version" > "${BASE_DIR}/config/POK-manager/upgraded_version"
@@ -3682,9 +3840,9 @@ display_usage() {
   echo "  -edit                                     Edit an instance's configuration"
   echo "  -setup                                    Perform initial setup tasks"
   echo "  -create <instance_name>                   Create a new instance"
-  echo "  -start <instance_name|-all>               Start an instance or all instances"
-  echo "  -stop <instance_name|-all>                Stop an instance or all instances"
-  echo "  -shutdown [minutes] <instance_name|-all>  Shutdown an instance or all instances with an optional countdown"
+  echo "  -start <instance_name|-all>                Start an instance or all instances"
+  echo "  -stop <instance_name|-all>                 Stop an instance or all instances"
+  echo "  -shutdown [minutes] <instance_name|-all>   Shutdown an instance or all instances with an optional countdown"
   echo "  -update                                   Check for server files & Docker image updates (doesn't modify the script itself)"
   echo "  -upgrade                                  Upgrade POK-manager.sh script to the latest version (requires confirmation)"
   echo "  -force-restore                            Force restore POK-manager.sh from backup in case of update failure"
@@ -3695,7 +3853,7 @@ display_usage() {
   echo "  -custom <command> <instance_name|-all>    Execute a custom command on an instance or all instances"
   echo "  -backup [instance_name|-all]              Backup an instance or all instances (defaults to all if not specified)"
   echo "  -restore [instance_name]                  Restore an instance from a backup"
-  echo "  -logs [-live] <instance_name>             Display logs for an instance (optionally live)"
+  echo "  -logs [-live] <instance_name>              Display logs for an instance (optionally live)"
   echo "  -beta                                     Switch to beta mode to use beta version Docker images"
   echo "  -stable                                   Switch to stable mode to use stable version Docker images"
   echo "  -migrate                                  Migrate file ownership from 1000:1000 to 7777:7777 for compatibility with 2_1 images"
@@ -4267,8 +4425,10 @@ update_server_files_and_docker() {
     image_tag=$(get_docker_image_tag "$instance_name")
     echo "Using Docker image tag: ${image_tag}"
     pull_docker_image "$instance_name"
-    # Check if the container name includes the "asa_" prefix
-    if docker ps | grep -q "asa_${instance_name}"; then
+    
+    # Get container ID using our more robust method
+    local container_id=$(get_instance_container_id "$instance_name")
+    if [ -n "$container_id" ]; then
       instance_for_update="asa_${instance_name}"
     else
       instance_for_update="${instance_name}"
@@ -5079,6 +5239,9 @@ main() {
   
   # Display the POK-Manager logo
   display_logo
+  
+  # Check if docker-compose files have paths that need updating
+  check_volume_paths
   
   # Check for saved command arguments from a previous run
   local command_args_file="${BASE_DIR%/}/config/POK-manager/last_command_args"

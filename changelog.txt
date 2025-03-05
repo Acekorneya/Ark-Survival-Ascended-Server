@@ -1,6 +1,21 @@
 # POK-Manager Changelog
 
-## Version 2.1.56 (Latest)
+## Version 2.1.58 (Latest)
+### Improvements
+- Added a 30-second timeout to update prompts for better compatibility with cronjobs
+- Improved non-interactive mode handling for automation scenarios
+- Enhanced update check system to continue operation when running in background
+
+## Version 2.1.57 (Previous)
+### Path Management and Container Identification Improvements
+- Added automatic detection of volume path changes when POK-Manager is moved to a new directory
+- Implemented interactive prompt to update volume paths in docker-compose files
+- Added configuration option to remember user's path update preference
+- Improved container identification using container IDs and names instead of just folder names
+- Enhanced start_instance and stop_instance functions to use more robust container identification
+- Fixed potential issues with container operations when using non-standard naming
+
+## Version 2.1.56 (Previous)
 ### Permission Management Improvements
 - Fixed issue where running commands with sudo would change POK-manager.sh ownership to root
 - Added automatic permission detection with interactive fix prompt at script startup
