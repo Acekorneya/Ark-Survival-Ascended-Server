@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.52"
+POK_MANAGER_VERSION="2.1.53"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -3784,6 +3784,13 @@ upgrade_pok_manager() {
   cp "$original_script" "$safe_backup"
   echo "Backed up current script to $safe_backup"
   
+  # Store the original command arguments for potential reuse
+  local command_args_file="${BASE_DIR%/}/config/POK-manager/last_command_args"
+  if [ ${#original_args[@]} -gt 0 ]; then
+    printf "%s\n" "${original_args[@]}" > "$command_args_file"
+    echo "Saved command arguments for reuse"
+  fi
+  
   # Create a rollback flag file to enable automatic recovery if the update fails
   echo "1" > "${BASE_DIR%/}/config/POK-manager/rollback_source"
   
@@ -3988,6 +3995,14 @@ check_for_rollback() {
     echo "⚠️ WARNING: Detected an incomplete update process."
     echo "Automatically restoring from backup..."
     
+    # Retrieve saved command arguments if available
+    local saved_args=()
+    local command_args_file="${BASE_DIR%/}/config/POK-manager/last_command_args"
+    if [ -f "$command_args_file" ]; then
+      mapfile -t saved_args < "$command_args_file"
+      echo "Found saved command arguments, will reuse them after restore"
+    fi
+    
     # Perform the actual restore
     if cp "$backup_file" "$0"; then
       chmod +x "$0"
@@ -4001,8 +4016,12 @@ check_for_rollback() {
       rm -f "${BASE_DIR%/}/config/POK-manager/just_upgraded" 2>/dev/null
       rm -f "${BASE_DIR%/}/config/POK-manager/update_completed" 2>/dev/null
       
-      # Re-execute the script with the same arguments
-      exec "$0" "$@"
+      # Re-execute the script with either saved or original arguments
+      if [ ${#saved_args[@]} -gt 0 ]; then
+        exec "$0" "${saved_args[@]}"
+      else
+        exec "$0" "$@"
+      fi
     else
       echo "❌ Failed to restore from backup. Please try manually:"
       echo "sudo ./POK-manager.sh -force-restore"
@@ -4876,6 +4895,23 @@ check_post_migration_permissions() {
 main() {
   # Display the POK-Manager logo
   display_logo
+  
+  # Check for saved command arguments from a previous run
+  local command_args_file="${BASE_DIR%/}/config/POK-manager/last_command_args"
+  if [ -f "$command_args_file" ] && [ "$#" -eq 0 ]; then
+    # Only use saved args if no arguments were provided to the current execution
+    local saved_args=()
+    mapfile -t saved_args < "$command_args_file"
+    if [ ${#saved_args[@]} -gt 0 ]; then
+      echo "Reusing your previous command: ${saved_args[*]}"
+      # Remove the file to prevent reuse in future runs
+      rm -f "$command_args_file"
+      # Execute with the saved arguments
+      exec "$0" "${saved_args[@]}"
+      # This line shouldn't be reached, but just in case
+      exit 0
+    fi
+  fi
   
   # Extract the command portion without PUID/PGID
   local command_args=""

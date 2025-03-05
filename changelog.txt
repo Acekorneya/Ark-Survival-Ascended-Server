@@ -1,6 +1,14 @@
 # POK-Manager Changelog
 
-## Version 2.1.52 (Latest)
+## Version 2.1.53 (Latest)
+### Improvements
+- Added command persistence when upgrading the POK-Manager script
+- Automatically saves and reuses commands when restarting after an update
+- Prevents the need to retype long server chat messages after an upgrade
+- Improved user experience by preserving command history across restarts
+- Added rollback support for saved commands to ensure they're never lost
+
+## Version 2.1.52 (Previous)
 ### Bug Fixes
 - Fixed issue with the `-update` command failing to find containers with "asa_" prefix
 - Improved container name handling to support both prefixed and non-prefixed container names
