@@ -1,6 +1,6 @@
 # POK-Manager Changelog
 
-## Version 2.1.59 (Latest)
+## Version 2.1.60 (Latest)
 ### Bug Fixes
 - Fixed docker-compose file path resolution by updating functions (read_docker_compose_config, write_docker_compose_file, generate_docker_compose, start_instance, stop_instance, etc.) to use BASE_DIR instead of the script's relative path. This ensures that the docker-compose YAML file is correctly located even if the manager is moved.
 
