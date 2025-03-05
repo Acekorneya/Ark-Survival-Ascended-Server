@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.55"
+POK_MANAGER_VERSION="2.1.56"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -569,8 +569,37 @@ adjust_ownership_and_permissions() {
   find "$dir" -type f -exec chown $PUID:$PGID {} \;
   find "$dir" -type f -exec chmod 644 {} \;
 
+  # Always check and fix the main script permissions
+  local script_path="$(realpath "$0")"
+  
+  # If the script is run as root, we need to ensure proper ownership
+  if [ "$(id -u)" -eq 0 ]; then
+    local target_owner=""
+    
+    # Set ownership based on SUDO_USER if available
+    if [ -n "$SUDO_USER" ]; then
+      local sudo_uid=$(id -u "$SUDO_USER")
+      local sudo_gid=$(id -g "$SUDO_USER")
+      target_owner="${sudo_uid}:${sudo_gid}"
+    elif [ -n "$PUID" ] && [ -n "$PGID" ]; then
+      # If PUID/PGID are set, use them
+      target_owner="${PUID}:${PGID}"
+    else
+      # Default to 1000:1000 (common first user) or 7777:7777 if migrated
+      if [ -f "${BASE_DIR}/config/POK-manager/migration_complete" ]; then
+        target_owner="7777:7777"
+      else
+        target_owner="1000:1000"
+      fi
+    fi
+    
+    echo "Setting POK-manager.sh ownership to $target_owner"
+    chown $target_owner "$script_path"
+  fi
+  
   # Set executable bit for POK-manager.sh
-  chmod +x "$(dirname "$(realpath "$0")")/POK-manager.sh"
+  chmod +x "$script_path"
+  echo "Ensuring POK-manager.sh is executable"
 
   echo "Ownership and permissions adjustment on $dir completed."
 }
@@ -2824,6 +2853,9 @@ get_build_id_from_acf() {
   fi
 }
 check_for_POK_updates() {
+  # Get original args from the calling function
+  local original_args=("${@}")
+  
   # Skip update checks when running in non-interactive mode (e.g., cron jobs)
   if [ -t 0 ]; then
     echo "Checking for updates to POK-manager.sh..."
@@ -2964,12 +2996,18 @@ check_for_POK_updates() {
               # Save the new version to the file so upgrade_pok_manager can use it
               echo "$new_version" > "${BASE_DIR}/config/POK-manager/upgraded_version"
               
+              # Save the original command arguments to a file
+              if [ ${#original_args[@]} -gt 0 ]; then
+                printf "%s\n" "${original_args[@]}" > "${BASE_DIR}/config/POK-manager/last_command_args"
+                echo "Original command saved for reuse after upgrade"
+              fi
+              
               # Save the downloaded file for later use
               cp "$temp_file" "${BASE_DIR}/config/POK-manager/new_version"
               chmod +x "${BASE_DIR}/config/POK-manager/new_version"
               
               # Call the upgrade function directly
-              upgrade_pok_manager "$@"
+              upgrade_pok_manager "${original_args[@]}"
               return
             else
               echo "* Run './POK-manager.sh -upgrade' later to perform the update     *"
@@ -3505,7 +3543,41 @@ manage_service() {
   -fix)
     # Check for root-owned files and fix permissions
     echo "Checking for root-owned files that could cause container permission issues..."
+    
+    # Check if running with sudo or root
+    if [ "$(id -u)" -eq 0 ]; then
+      # Make sure to fix the script itself first
+      local script_path="$(realpath "$0")"
+      echo "First ensuring POK-manager.sh has correct permissions..."
+      
+      # Determine appropriate ownership
+      local target_owner=""
+      if [ -n "$SUDO_USER" ]; then
+        local sudo_uid=$(id -u "$SUDO_USER")
+        local sudo_gid=$(id -g "$SUDO_USER")
+        target_owner="${sudo_uid}:${sudo_gid}"
+      elif [ -n "$PUID" ] && [ -n "$PGID" ]; then
+        target_owner="${PUID}:${PGID}"
+      else
+        if [ -f "${BASE_DIR}/config/POK-manager/migration_complete" ]; then
+          target_owner="7777:7777"
+        else
+          target_owner="1000:1000"
+        fi
+      fi
+      
+      echo "Setting POK-manager.sh ownership to $target_owner"
+      chown $target_owner "$script_path"
+      chmod +x "$script_path"
+    fi
+    
+    # Then run the normal fix_root_owned_files function
     fix_root_owned_files
+    
+    echo ""
+    echo "✅ Permission check and fix completed."
+    echo "If you were running the script using sudo before, try running it without sudo now:"
+    echo "./POK-manager.sh [your-command]"
     ;;
   -restart | -shutdown)
     execute_rcon_command "$action" "$instance_name" "${additional_args[@]}"
@@ -3904,9 +3976,39 @@ upgrade_pok_manager() {
         # Make downloaded file executable
         chmod +x "$temp_file"
         
+        # Get original owner information
+        local current_user=$(id -u)
+        local original_owner=$(stat -c "%u:%g" "$original_script")
+        local target_owner="$original_owner"
+        
+        # If running with sudo, use the SUDO_USER's UID:GID or fall back to PUID:PGID
+        if [ "$(id -u)" -eq 0 ]; then
+          if [ -n "$SUDO_USER" ]; then
+            local sudo_uid=$(id -u "$SUDO_USER")
+            local sudo_gid=$(id -g "$SUDO_USER")
+            target_owner="${sudo_uid}:${sudo_gid}"
+          elif [ -n "$PUID" ] && [ -n "$PGID" ]; then
+            # If PUID/PGID are set, use them
+            target_owner="${PUID}:${PGID}"
+          else
+            # Default to 1000:1000 (common first user) or 7777:7777 if migrated
+            if [ -f "${BASE_DIR}/config/POK-manager/migration_complete" ]; then
+              target_owner="7777:7777"
+            else
+              target_owner="1000:1000"
+            fi
+          fi
+        fi
+        
         # Replace the original script with the new one
         mv -f "$temp_file" "$original_script"
         chmod "$original_perms" "$original_script"
+        
+        # Ensure proper ownership - this is critical when run with sudo
+        if [ "$(id -u)" -eq 0 ]; then
+          echo "Setting ownership of POK-manager.sh to $target_owner"
+          chown $target_owner "$original_script"
+        fi
         
         # Save the new version to a file so it can be loaded on restart
         echo "$new_version" > "${BASE_DIR%/}/config/POK-manager/upgraded_version"
@@ -4926,7 +5028,55 @@ check_post_migration_permissions() {
   fi
 }
 
+# Function to check if POK-manager.sh has permission issues
+check_script_permissions() {
+  local script_path="$(realpath "$0")"
+  
+  # Check if script is executable
+  if [ ! -x "$script_path" ]; then
+    echo "⚠️ WARNING: POK-manager.sh is not executable!"
+    echo "This will cause issues running commands. Please fix with:"
+    echo "sudo chmod +x \"$script_path\""
+    echo "Then try running your command again."
+    return 1
+  fi
+  
+  # Check if script is owned by root but running as non-root
+  local script_owner="$(stat -c '%u:%g' "$script_path")"
+  if [ "$script_owner" = "0:0" ] && [ "$(id -u)" -ne 0 ]; then
+    echo "⚠️ WARNING: POK-manager.sh is owned by root, but you're running as $(id -un)"
+    echo "This will cause permission issues. Please fix with:"
+    echo "sudo ./POK-manager.sh -fix"
+    echo "Then try running your command again."
+    return 1
+  fi
+  
+  return 0
+}
+
 main() {
+  # Store the original command arguments right at the beginning
+  local original_args=("$@")
+  
+  # Check script permissions first
+  check_script_permissions || {
+    # If critical permission issues exist, ask if user wants to auto-fix
+    if [ -t 0 ] && [ "$(id -u)" -ne 0 ]; then
+      echo ""
+      echo -n "Would you like to attempt to fix permissions with sudo? (y/n): "
+      read -r fix_response
+      if [[ "$fix_response" =~ ^[Yy]$ ]]; then
+        echo "Running sudo ./POK-manager.sh -fix to fix permissions..."
+        sudo "$0" -fix
+        echo "Permission fix completed. Please try your command again."
+        exit 0
+      fi
+    fi
+  }
+  
+  # Check for updates before anything else
+  check_for_POK_updates "${original_args[@]}"
+  
   # Display the POK-Manager logo
   display_logo
   
@@ -5338,6 +5488,21 @@ fix_root_owned_files() {
   local fixed_count=0
   
   echo "🔍 Scanning for files owned by root (0:0)..."
+  
+  # First, fix the POK-manager.sh script itself if needed
+  local script_path="$(realpath "$0")"
+  local script_owner="$(stat -c '%u:%g' "$script_path")"
+  if [ "$script_owner" = "0:0" ]; then
+    echo "Found POK-manager.sh owned by root (0:0), fixing..."
+    chown $PUID:$PGID "$script_path"
+    chmod +x "$script_path"
+    echo "✓ Fixed ownership of POK-manager.sh to $PUID:$PGID"
+    ((fixed_count++))
+    found_root_files=true
+  else
+    # Always ensure the script is executable regardless of ownership
+    chmod +x "$script_path"
+  fi
   
   # Check if ServerFiles exists
   if [ -d "${base_dir}/ServerFiles" ]; then

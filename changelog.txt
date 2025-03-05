@@ -1,6 +1,19 @@
 # POK-Manager Changelog
 
-## Version 2.1.55 (Latest)
+## Version 2.1.56 (Latest)
+### Permission Management Improvements
+- Fixed issue where running commands with sudo would change POK-manager.sh ownership to root
+- Added automatic permission detection with interactive fix prompt at script startup
+- Enhanced `-fix` command to properly restore script ownership when run with sudo
+- Improved upgrade process to maintain correct script ownership across updates
+- Added specific handling for POK-manager.sh file in all permission-related functions
+- Fixed issue with backup command changing file ownership in sudo mode
+- Improved permission handling for all operations that might require elevated privileges
+- Added proactive permission checks to prevent common "Operation not permitted" errors
+- Enhanced user guidance when permission issues are detected
+- Implemented smarter ownership detection based on SUDO_USER or system configuration
+
+## Version 2.1.55 (Previous)
 ### Improvements
 - Fixed permission issues with the backup system when using the `-backup` command
 - Added fallback mechanism to handle `/config/POK-manager/` permission denied errors
