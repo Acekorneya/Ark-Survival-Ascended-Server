@@ -3585,7 +3585,7 @@ display_usage() {
   echo "  -status <instance_name|-all>              Show the status of an instance or all instances"
   echo "  -restart [minutes] <instance_name|-all>   Restart an instance or all instances"
   echo "  -saveworld <instance_name|-all>           Save the world of an instance or all instances"
-  echo "  -chat \"<message>\" <instance_name|-all>  Send a chat message to an instance or all instances"
+  echo "  -chat \"<message>\" <instance_name|-all>    Send a chat message to an instance or all instances"
   echo "  -custom <command> <instance_name|-all>    Execute a custom command on an instance or all instances"
   echo "  -backup [instance_name|-all]              Backup an instance or all instances (defaults to all if not specified)"
   echo "  -restore [instance_name]                  Restore an instance from a backup"
