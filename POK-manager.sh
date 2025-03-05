@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.54"
+POK_MANAGER_VERSION="2.1.55"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -3152,15 +3152,23 @@ manage_backup_rotation() {
 }
 read_backup_config() {
   local instance_name="$1"
-  local config_file="${MAIN_DIR%/}/config/POK-manager/backup_${instance_name}.conf"
+  local config_file="/config/POK-manager/backup_${instance_name}.conf"
+  local fallback_config="${BASE_DIR}/config/POK-manager/backup_${instance_name}.conf"
 
+  # First try the main location
   if [ -f "$config_file" ]; then
     source "$config_file"
     max_backups=${MAX_BACKUPS:-10}
     max_size_gb=${MAX_SIZE_GB:-10}
+  # Then try the fallback location
+  elif [ -f "$fallback_config" ]; then
+    source "$fallback_config"
+    max_backups=${MAX_BACKUPS:-10}
+    max_size_gb=${MAX_SIZE_GB:-10}
   else
-    max_backups=
-    max_size_gb=
+    # Use defaults if no config file exists
+    max_backups=10
+    max_size_gb=10
   fi
 }
 
@@ -3169,22 +3177,49 @@ write_backup_config() {
   local max_backups="$2"
   local max_size_gb="$3"
 
-  local config_file="${MAIN_DIR%/}/config/POK-manager/backup_${instance_name}.conf"
+  local config_file="/config/POK-manager/backup_${instance_name}.conf"
   local config_dir=$(dirname "$config_file")
   
-  mkdir -p "$config_dir"
+  # Ensure the directory exists with proper permissions
+  if [ ! -d "$config_dir" ]; then
+    # First try with regular permissions
+    mkdir -p "$config_dir" 2>/dev/null || true
+    
+    # If that fails, try with sudo (for container environments)
+    if [ ! -d "$config_dir" ]; then
+      echo "Warning: Failed to create $config_dir, trying with alternative methods..."
+      # Try using the BASE_DIR as fallback location
+      config_dir="${BASE_DIR}/config/POK-manager"
+      config_file="${config_dir}/backup_${instance_name}.conf"
+      mkdir -p "$config_dir"
+    fi
+  fi
   
-  cat > "$config_file" <<EOF
+  # Write the config file
+  if ! cat > "$config_file" <<EOF 2>/dev/null; then
 MAX_BACKUPS=$max_backups
 MAX_SIZE_GB=$max_size_gb
 EOF
+    echo "Warning: Failed to write to $config_file, using alternative location..."
+    # Use BASE_DIR as fallback
+    config_file="${BASE_DIR}/config/POK-manager/backup_${instance_name}.conf"
+    mkdir -p "$(dirname "$config_file")"
+    cat > "$config_file" <<EOF
+MAX_BACKUPS=$max_backups
+MAX_SIZE_GB=$max_size_gb
+EOF
+  fi
 }
 
 prompt_backup_config() {
   local instance_name="$1"
-  read -p "Enter the maximum number of backups to keep for instance $instance_name: " max_backups
-  read -p "Enter the maximum size limit (in GB) for instance $instance_name backups: " max_size_gb
-  write_backup_config "$instance_name" "$max_backups" "$max_size_gb"
+  
+  echo "Setting up backup configuration for instance $instance_name with default values"
+  echo "Maximum backups: 10, Maximum size: 10GB"
+  echo "You can change these settings by editing /config/POK-manager/backup_${instance_name}.conf"
+  
+  # Set default values
+  write_backup_config "$instance_name" "10" "10"
 }
 
 backup_instance() {
@@ -3220,8 +3255,7 @@ backup_instance() {
 backup_single_instance() {
   local instance_name="$1"
   # Remove the trailing slash from $MAIN_DIR if it exists
-  local base_dir=$(dirname "$(realpath "$0")")
-  local main_dir="${MAIN_DIR%/}"
+  local base_dir="${BASE_DIR}"
   local backup_dir="${base_dir}/backups/${instance_name}"
   
   # Get the current timezone using timedatectl

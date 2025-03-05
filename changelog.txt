@@ -1,6 +1,16 @@
 # POK-Manager Changelog
 
-## Version 2.1.53 (Latest)
+## Version 2.1.55 (Latest)
+### Improvements
+- Fixed permission issues with the backup system when using the `-backup` command
+- Added fallback mechanism to handle `/config/POK-manager/` permission denied errors
+- Enhanced backup configuration to use default values (10 backups, 10GB max) when no config exists
+- Ensured backup process doesn't stop running servers during backup operations
+- Improved error handling for backup configuration files with better user feedback
+- Made backup system more robust in containerized environments
+- Default config files generated automatically for each instance with sensible defaults
+
+## Version 2.1.53 (Previous)
 ### Improvements
 - Added command persistence when upgrading the POK-Manager script
 - Automatically saves and reuses commands when restarting after an update
