@@ -1,6 +1,13 @@
 # POK-Manager Changelog
 
-## Version 2.1.51 (Latest)
+## Version 2.1.52 (Latest)
+### Bug Fixes
+- Fixed issue with the `-update` command failing to find containers with "asa_" prefix
+- Improved container name handling to support both prefixed and non-prefixed container names
+- Removed duplicate code in update function that could cause errors
+- Enhanced update process to correctly identify running containers regardless of naming convention
+
+## Version 2.1.51 (Previous)
 ### Major Improvements
 - Added disk space management to prevent containers from consuming excessive storage
 - Automatic log rotation to limit storage consumption

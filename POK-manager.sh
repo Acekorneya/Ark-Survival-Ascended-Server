@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.51"
+POK_MANAGER_VERSION="2.1.52"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -4112,7 +4112,13 @@ update_server_files_and_docker() {
     image_tag=$(get_docker_image_tag "$instance_name")
     echo "Using Docker image tag: ${image_tag}"
     pull_docker_image "$instance_name"
-    instance_for_update="$instance_name"
+    # Check if the container name includes the "asa_" prefix
+    if docker ps | grep -q "asa_${instance_name}"; then
+      instance_for_update="asa_${instance_name}"
+    else
+      instance_for_update="${instance_name}"
+    fi
+    echo "Using container: $instance_for_update for updates"
     need_to_start_temp_container=false
   else 
     # No running instances, determine from file ownership
