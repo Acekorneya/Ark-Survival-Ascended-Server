@@ -8,7 +8,6 @@
 - Improved `-chat` command handling when used with `-all` to send messages to all instances
 - Enhanced consistency of command behavior between single instance and all instances
 - Standardized output formatting for all-instance operations
-- stable version
 
 ## Version 2.1.64 (Previous)
 ### New Features
