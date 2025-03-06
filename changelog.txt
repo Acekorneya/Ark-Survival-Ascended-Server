@@ -1,29 +1,6 @@
 # POK-Manager Changelog
 
-## Version 2.1.66 (Previous)
-### New Features
-- Added feature to display patch notes when the program updates to a new version
-- Automatically shows relevant changes when the script is updated
-- Stores the last displayed version to avoid showing the same patch notes multiple times
-- Provides a user-friendly overview of what's changed since the last version used
-- Enhanced `-version` command to display patch notes for the current version
-- Added ability to view version-specific changes directly when checking version information
-
-### Improvements
-- Enhanced Docker Compose file handling to be more robust when users move or rename instance folders
-- Added dynamic docker-compose file discovery throughout the BASE_DIR, not just in expected locations
-- Improved `list_instances` function to find all instances regardless of folder structure
-- Added new `find_docker_compose_file` function that prioritizes expected paths but can locate moved files
-- Enhanced error messages and interactive prompts when docker-compose files can't be found
-- Added fallback mechanisms to stop containers directly if docker-compose files are missing
-- Improved handling of -all variants (start, stop, restart, shutdown, status) to work with relocated instances
-- Added user-friendly interactive selection when multiple potential docker-compose files are found
-- Improved `-logs` command to automatically show a selection list when no instance is specified
-- Enhanced log viewing to properly handle the `-live` flag and directly present instance choices
-- Added better validation and error messages when viewing logs for non-existent or stopped instances
-- Added automatic validation and correction of docker-compose files to ensure container names, instance names, and volume paths remain consistent even when files are moved or renamed
-
-## Version 2.1.63 (Previous)
+## Version 2.1.63 (Latest)
 ### Bug Fixes
 - Fixed volume path updates during instance rename operations
 - Updated `-rename -all` command to properly continue after restarting renamed containers
