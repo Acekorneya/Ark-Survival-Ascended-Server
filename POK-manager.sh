@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.65"
+POK_MANAGER_VERSION="2.1.66"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -60,211 +60,6 @@ EOF
     else
       # In non-interactive mode, don't display the logo
       :
-    fi
-  fi
-}
-
-# Function to check and display patch notes for new versions
-display_patch_notes() {
-  local config_dir="${BASE_DIR}/config/POK-manager"
-  local last_version_file="${config_dir}/last_displayed_version.txt"
-  local changelog_file="${config_dir}/changelog.txt"
-  
-  # Ensure config directory exists
-  mkdir -p "$config_dir"
-  
-  # If there's no last version file, create it with the current version
-  if [ ! -f "$last_version_file" ]; then
-    echo "$POK_MANAGER_VERSION" > "$last_version_file"
-    
-    # Ensure proper ownership of the file based on existing files or PUID/PGID
-    if [ "$(id -u)" -eq 0 ]; then  # If running as root/sudo
-      # Determine appropriate ownership
-      if [ -d "${BASE_DIR}/ServerFiles/arkserver" ]; then
-        # Use ownership from existing server files
-        local dir_owner=$(stat -c '%u' "${BASE_DIR}/ServerFiles/arkserver")
-        local dir_group=$(stat -c '%g' "${BASE_DIR}/ServerFiles/arkserver")
-        chown ${dir_owner}:${dir_group} "$last_version_file"
-      elif [ -f "${BASE_DIR}/config/POK-manager/migration_complete" ]; then
-        # If migrated to 7777:7777
-        chown 7777:7777 "$last_version_file"
-      elif [ -n "$PUID" ] && [ -n "$PGID" ]; then
-        # Use script's PUID/PGID variables if available
-        chown ${PUID}:${PGID} "$last_version_file"
-      else
-        # Default to 1000:1000 (legacy)
-        chown 1000:1000 "$last_version_file"
-      fi
-    fi
-    
-    return 0
-  fi
-  
-  # Read the last displayed version
-  local last_version=$(cat "$last_version_file")
-  
-  # If the versions are the same, no need to show patch notes
-  if [ "$last_version" = "$POK_MANAGER_VERSION" ]; then
-    return 0
-  fi
-  
-  # If we're in interactive mode, show the patch notes
-  if [ -t 0 ] && [ -t 1 ]; then
-    echo "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
-    echo "                         🎉 NEW VERSION DETECTED 🎉                               "
-    echo "                                                                                   "
-    echo " POK-Manager has been updated from version $last_version to $POK_MANAGER_VERSION   "        
-    echo "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
-    echo ""
-    
-    # Display patch notes from the changelog
-    local found_current_version=false
-    local in_patch_notes=false
-    
-    # If changelog doesn't exist, download it
-    if [ ! -f "$changelog_file" ]; then
-      echo "Downloading changelog..."
-      # Add timestamp and random string as cache-busting parameters
-      local timestamp=$(date +%s)
-      local random_str=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 10)
-      local branch_name="master"
-      if [ "$POK_MANAGER_BRANCH" = "beta" ]; then
-        branch_name="beta"
-      fi
-      local changelog_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/${branch_name}/changelog.txt?nocache=${timestamp}_${random_str}"
-      
-      # Download changelog using wget or curl
-      if command -v wget &>/dev/null; then
-        wget -q --no-cache -O "$changelog_file" "$changelog_url"
-      elif command -v curl &>/dev/null; then
-        curl -s -H "Cache-Control: no-cache, no-store" -H "Pragma: no-cache" -o "$changelog_file" "$changelog_url"
-      else
-        echo "Neither wget nor curl is available. Unable to download changelog."
-        echo "Please run './POK-manager.sh -changelog' to see what's new in this version."
-        # Update the last displayed version to the current one
-        echo "$POK_MANAGER_VERSION" > "$last_version_file"
-        return 0
-      fi
-    fi
-    
-    if [ -f "$changelog_file" ]; then
-      # First check if our current version exists in the changelog
-      local version_exists=false
-      while IFS= read -r line; do
-        if [[ "$line" =~ ^##\ (Version\ )?([0-9]+\.[0-9]+\.[0-9]+) ]]; then
-          local version="${BASH_REMATCH[2]}"
-          if [ "$version" = "$POK_MANAGER_VERSION" ]; then
-            version_exists=true
-            break
-          fi
-        fi
-      done < "$changelog_file"
-      
-      if [ "$version_exists" = false ]; then
-        echo "═════════════════════════ VERSION INFORMATION ════════════════════════════"
-        echo ""
-        echo "Your installed version ($POK_MANAGER_VERSION) was not found in the changelog."
-        echo "This could be because the changelog hasn't been updated yet or because"
-        echo "you're running a development or custom version of POK-manager.sh."
-        echo ""
-        echo "To see all available release notes, run:"
-        echo "./POK-manager.sh -changelog"
-        echo ""
-        echo "══════════════════════════════════════════════════════════════════════════"
-        
-        # Update the last displayed version to the current one
-        echo "$POK_MANAGER_VERSION" > "$last_version_file"
-        
-        # Ensure proper ownership of the file
-        if [ "$(id -u)" -eq 0 ]; then  # If running as root/sudo
-          if [ -d "${BASE_DIR}/ServerFiles/arkserver" ]; then
-            local dir_owner=$(stat -c '%u' "${BASE_DIR}/ServerFiles/arkserver")
-            local dir_group=$(stat -c '%g' "${BASE_DIR}/ServerFiles/arkserver")
-            chown ${dir_owner}:${dir_group} "$last_version_file"
-          elif [ -f "${BASE_DIR}/config/POK-manager/migration_complete" ]; then
-            chown 7777:7777 "$last_version_file"
-          elif [ -n "$PUID" ] && [ -n "$PGID" ]; then
-            chown ${PUID}:${PGID} "$last_version_file"
-          else
-            chown 1000:1000 "$last_version_file"
-          fi
-        fi
-        
-        # Wait for user to acknowledge the message
-        read -p "Press Enter to continue..." response
-        return 0
-      fi
-      
-      echo "═════════════════════════ WHAT'S NEW IN THIS VERSION ═════════════════════════"
-      echo ""
-      
-      # Parse the changelog to find entries between last_version and POK_MANAGER_VERSION
-      local displaying_notes=false
-      local reached_last_version=false
-      
-      while IFS= read -r line; do
-        # Check if this line starts a version entry
-        if [[ "$line" =~ ^##\ (Version\ )?([0-9]+\.[0-9]+\.[0-9]+) ]]; then
-          local version="${BASH_REMATCH[2]}"
-          
-          # If we've already shown the current version and now found another version,
-          # we've shown all the versions between last_version and POK_MANAGER_VERSION
-          if [ "$displaying_notes" = true ] && [ "$version" != "$POK_MANAGER_VERSION" ]; then
-            displaying_notes=false
-            # If we've reached or passed the last version, we're done
-            if [ "$reached_last_version" = true ]; then
-              break
-            fi
-          fi
-          
-          # Check if this is the current version
-          if [ "$version" = "$POK_MANAGER_VERSION" ]; then
-            displaying_notes=true
-          fi
-          
-          # Check if this is the last displayed version
-          if [ "$version" = "$last_version" ]; then
-            reached_last_version=true
-            # If we've already shown all relevant notes, we're done
-            if [ "$displaying_notes" = false ]; then
-              break
-            fi
-          fi
-        fi
-        
-        # Print the line if we're displaying notes for this version
-        if [ "$displaying_notes" = true ]; then
-          echo "$line"
-        fi
-      done < "$changelog_file"
-      
-      echo ""
-      echo "══════════════════════════════════════════════════════════════════════════════"
-      echo ""
-      echo "Use './POK-manager.sh -changelog' to view the full changelog."
-    else
-      echo "Could not display patch notes. Please run './POK-manager.sh -changelog' to see what's new."
-    fi
-    
-    # Wait for user to acknowledge the patch notes
-    read -p "Press Enter to continue..." response
-  fi
-  
-  # Update the last displayed version to the current one
-  echo "$POK_MANAGER_VERSION" > "$last_version_file"
-  
-  # Ensure proper ownership of the file
-  if [ "$(id -u)" -eq 0 ]; then  # If running as root/sudo
-    if [ -d "${BASE_DIR}/ServerFiles/arkserver" ]; then
-      local dir_owner=$(stat -c '%u' "${BASE_DIR}/ServerFiles/arkserver")
-      local dir_group=$(stat -c '%g' "${BASE_DIR}/ServerFiles/arkserver")
-      chown ${dir_owner}:${dir_group} "$last_version_file"
-    elif [ -f "${BASE_DIR}/config/POK-manager/migration_complete" ]; then
-      chown 7777:7777 "$last_version_file"
-    elif [ -n "$PUID" ] && [ -n "$PGID" ]; then
-      chown ${PUID}:${PGID} "$last_version_file"
-    else
-      chown 1000:1000 "$last_version_file"
     fi
   fi
 }
@@ -801,100 +596,25 @@ get_docker_compose_cmd() {
     touch "$cmd_file"
   fi
   
-  # Check for non-empty file
+  # Changed condition from -f to -s to check for non-empty file
   if [ -s "$cmd_file" ]; then
     DOCKER_COMPOSE_CMD=$(cat "$cmd_file")
     echo "Using Docker Compose command: '$DOCKER_COMPOSE_CMD' (read from file)."
-    
-    # Validate that the command actually exists
-    if ! command -v $DOCKER_COMPOSE_CMD &>/dev/null && ! which $DOCKER_COMPOSE_CMD &>/dev/null; then
-      echo "Warning: Stored Docker Compose command '$DOCKER_COMPOSE_CMD' appears to be invalid."
-      echo "Re-detecting Docker Compose command..."
-      DOCKER_COMPOSE_CMD=""
-    fi
-  fi
-  
-  # If DOCKER_COMPOSE_CMD is empty after validation, detect it again
-  if [ -z "$DOCKER_COMPOSE_CMD" ]; then
+  else
     if docker compose version &>/dev/null; then
       DOCKER_COMPOSE_CMD="docker compose"
     elif docker-compose --version &>/dev/null; then
       DOCKER_COMPOSE_CMD="docker-compose"
     else
       echo "Neither 'docker compose' (V2) nor 'docker-compose' (V1) command is available."
-      echo "Attempting to install Docker Compose..."
-      
-      # Detect the Linux distribution
-      if [ -f /etc/os-release ]; then
-        . /etc/os-release
-        DISTRO=$ID
-      elif command -v lsb_release &>/dev/null; then
-        DISTRO=$(lsb_release -si | tr '[:upper:]' '[:lower:]')
-      else
-        DISTRO="unknown"
-      fi
-      
-      # Install Docker Compose based on the distribution
-      case $DISTRO in
-        ubuntu|debian|raspbian)
-          echo "Detected $DISTRO distribution."
-          echo "Installing Docker Compose using apt..."
-          sudo apt-get update
-          sudo apt-get install -y docker-compose-plugin
-          ;;
-        fedora|centos|rhel)
-          echo "Detected $DISTRO distribution."
-          echo "Installing Docker Compose using dnf/yum..."
-          if command -v dnf &>/dev/null; then
-            sudo dnf install -y docker-compose-plugin
-          else
-            sudo yum install -y docker-compose-plugin
-          fi
-          ;;
-        arch|manjaro)
-          echo "Detected $DISTRO distribution."
-          echo "Installing Docker Compose using pacman..."
-          sudo pacman -Sy --noconfirm docker-compose
-          ;;
-        *)
-          echo "Unsupported or unknown distribution: $DISTRO"
-          echo "Installing Docker Compose using the official installation method..."
-          # Install Docker Compose v2 plugin
-          DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
-          mkdir -p $DOCKER_CONFIG/cli-plugins
-          COMPOSE_VERSION=$(curl -s https://api.github.com/repos/docker/compose/releases/latest | grep 'tag_name' | cut -d\" -f4)
-          ARCH=$(uname -m)
-          
-          case $ARCH in
-            x86_64) ARCH="x86_64" ;;
-            aarch64) ARCH="aarch64" ;;
-            armv7l) ARCH="armv7" ;;
-            *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
-          esac
-          
-          curl -SL "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-${ARCH}" -o $DOCKER_CONFIG/cli-plugins/docker-compose
-          chmod +x $DOCKER_CONFIG/cli-plugins/docker-compose
-          ;;
-      esac
-      
-      # Check if installation was successful
-      if docker compose version &>/dev/null; then
-        DOCKER_COMPOSE_CMD="docker compose"
-        echo "Docker Compose V2 installed successfully."
-      elif docker-compose --version &>/dev/null; then
-        DOCKER_COMPOSE_CMD="docker-compose"
-        echo "Docker Compose V1 installed successfully."
-      else
-        echo "Failed to install Docker Compose. Please install it manually."
+      echo "Please ensure Docker Compose is correctly installed."
       exit 1
     fi
-    fi
-    
-    # Save the command to the file for future use
     echo "$DOCKER_COMPOSE_CMD" > "$cmd_file"
     echo "Using Docker Compose command: '$DOCKER_COMPOSE_CMD'."
   fi
 }
+
 
 get_config_file_path() {
   local config_dir="./config/POK-manager"
@@ -1807,59 +1527,35 @@ prompt_for_instance_name() {
 # Function to perform an action on all instances
 perform_action_on_all_instances() {
   local action=$1
-  local message="$2"
-  
-  # Get all instances
-  local instances=($(list_instances))
-  
-  if [ ${#instances[@]} -eq 0 ]; then
-    echo "No instances found."
-    return 1
+  local base_dir="${BASE_DIR}"
+  echo "Performing '${action}' on all instances..."
+
+  # Special case for stop action - use the optimized function
+  if [[ "$action" == "-stop" ]]; then
+    stop_all_instances
+    return
   fi
-  
-  echo "Performing $action on all instances..."
-  
-  # Perform action on each instance
-  for instance in "${instances[@]}"; do
+
+  # Find all instance directories
+  local instance_dirs=($(find "${base_dir}/Instance_"* -maxdepth 0 -type d 2>/dev/null || true))
+
+  for instance_dir in "${instance_dirs[@]}"; do
+    # Extract instance name from directory
+    local instance_name=$(basename "$instance_dir" | sed -E 's/Instance_(.*)/\1/')
+    echo "Performing '${action}' on instance: $instance_name"
+
     case $action in
-      -start)
-        echo "Starting instance: $instance"
-        start_instance "$instance"
-        ;;
-      -stop)
-        echo "Stopping instance: $instance"
-        stop_instance "$instance"
-        ;;
-      -restart)
-        echo "Restarting instance: $instance"
-        stop_instance "$instance"
-        start_instance "$instance"
-        ;;
-      -shutdown)
-        echo "Shutting down instance: $instance"
-        shutdown_instance "$instance"
-        ;;
-      -status)
-        echo "Status for instance: $instance"
-        execute_rcon_command "$action" "$instance"
-        ;;
-      -saveworld)
-        echo "Saving world for instance: $instance"
-        execute_rcon_command "$action" "$instance"
-        ;;
-      -chat)
-        echo "Sending chat message to instance: $instance"
-        execute_rcon_command "$action" "$instance" "$message"
-        ;;
-      *)
-        echo "Unsupported action for all instances: $action"
-        return 1
-        ;;
+    -start)
+      start_instance "$instance_name"
+      ;;
+    -stop)
+      stop_instance "$instance_name"
+      ;;
+    *)
+      echo "Unsupported action '${action}' for all instances."
+      ;;
     esac
-    echo "----------------------------"
   done
-  
-  echo "Completed $action on all instances."
 }
 
 # Function to stop all instances
@@ -2113,80 +1809,14 @@ prompt_for_final_edit() {
 
 
 list_instances() {
+  local base_dir="${BASE_DIR}"
+  local compose_files=($(find "${base_dir}/Instance_"* -name 'docker-compose-*.yaml' 2>/dev/null || true))
   local instances=()
-  
-  # Get all docker-compose files in the BASE_DIR and its subdirectories
-  local compose_files=($(find "${BASE_DIR}" -name 'docker-compose-*.yaml' 2>/dev/null || true))
-  
   for file in "${compose_files[@]}"; do
-    # Extract instance name from the docker-compose filename
-    local instance_name=$(basename "$file" | sed -E 's/docker-compose-(.*)\.yaml/\1/')
-    
-    # Avoid duplicates
-    if [[ ! " ${instances[*]} " =~ " ${instance_name} " ]]; then
-      instances+=("$instance_name")
-    fi
+    local instance_name=$(echo "$file" | sed -E 's|.*/Instance_([^/]+)/docker-compose-.*\.yaml|\1|')
+    instances+=("$instance_name")
   done
-  
   echo "${instances[@]}"
-}
-
-# Function to find the docker-compose file for a given instance
-find_docker_compose_file() {
-  local instance_name="$1"
-  local interactive="${2:-true}"  # Default to interactive mode
-  local docker_compose_file=""
-  
-  # 1. First check the expected path
-  local expected_path="${BASE_DIR}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
-  if [ -f "$expected_path" ]; then
-    echo "$expected_path"
-    return 0
-  fi
-  
-  # 2. Search in BASE_DIR for files matching the pattern
-  local found_files=()
-  while IFS= read -r file; do
-    if [ -n "$file" ]; then
-      found_files+=("$file")
-    fi
-  done < <(find "${BASE_DIR}" -name "docker-compose-${instance_name}.yaml" 2>/dev/null || true)
-  
-  # 3. Handle search results
-  local file_count=${#found_files[@]}
-  
-  if [ "$file_count" -eq 1 ]; then
-    # Found exactly one matching file
-    echo "${found_files[0]}"
-    return 0
-  elif [ "$file_count" -gt 1 ]; then
-    # Found multiple matching files
-    if [ "$interactive" = "true" ] && [ -t 0 ]; then  # Check if script is running in interactive mode
-      echo "Multiple docker-compose files found for instance '${instance_name}':"
-      for i in "${!found_files[@]}"; do
-        echo "[$((i+1))] ${found_files[$i]}"
-      done
-      
-      local selection
-      read -p "Select the file to use (1-${file_count}): " selection
-      
-      if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le "$file_count" ]; then
-        echo "${found_files[$((selection-1))]}"
-        return 0
-      else
-        echo "Invalid selection." >&2
-        return 1
-      fi
-    else
-      # In non-interactive mode, use the first file found
-      echo "${found_files[0]}"
-      return 0
-    fi
-  else
-    # No matching files found
-    echo "Error: No docker-compose file found for instance '${instance_name}'." >&2
-    return 1
-  fi
 }
 
 find_editor() {
@@ -2221,19 +1851,10 @@ find_editor() {
 # Function to start an instance
 start_instance() {
   local instance_name=$1
-  local docker_compose_file=$(find_docker_compose_file "$instance_name")
-  local exit_code=$?
-  
-  if [ $exit_code -ne 0 ]; then
-    echo "❌ ERROR: Could not find Docker Compose file for instance '${instance_name}'."
-    echo "Make sure the instance exists and the docker-compose-${instance_name}.yaml file is present."
-    return 1
-  fi
-  
+  local docker_compose_file="${BASE_DIR}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
   local image_tag=$(get_docker_image_tag "$instance_name")
   
   echo "-----Starting ${instance_name} Server with image tag ${image_tag}-----"
-  echo "Using Docker Compose file: $docker_compose_file"
 
   # Check if volume paths need to be updated
   check_volume_paths
@@ -2709,7 +2330,7 @@ start_instance() {
           }
           check_vm_max_map_count
           sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d || {
-            echo "❌ ERROR: Failed to start the server container even with sudo."
+            echo "❌ ERROR: Failed to start the server container."
             exit 1
           }
         else
@@ -2746,33 +2367,15 @@ start_instance() {
 
 # Function to stop an instance
 stop_instance() {
-  get_docker_compose_cmd
   local instance_name=$1
-  local docker_compose_file=$(find_docker_compose_file "$instance_name" false)
-  local exit_code=$?
-  
-  if [ $exit_code -ne 0 ]; then
-    echo "❌ ERROR: Could not find Docker Compose file for instance '${instance_name}'."
-    
-    # Check if the container is running anyway (might have been started manually)
-    local container_name="asa_${instance_name}"
-    if docker ps --format '{{.Names}}' | grep -q "^${container_name}$"; then
-      echo "Container ${container_name} is running. Attempting to stop it directly..."
-      docker stop "${container_name}"
-      return $?
-    else
-      echo "No running container found for instance '${instance_name}'."
-      return 1
-    fi
-  fi
-  
+  local base_dir="${BASE_DIR}"
+  local docker_compose_file="${base_dir}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
   local container_name="asa_${instance_name}"
   
   # Get container ID using our more robust method
   local container_id=$(get_instance_container_id "$instance_name")
 
   echo "-----Stopping ${instance_name} Server-----"
-  echo "Using Docker Compose file: $docker_compose_file"
   
   # Check if the container is running
   if [ -n "$container_id" ]; then
@@ -2866,34 +2469,6 @@ stop_instance() {
   return 0
 }
 
-# Function to check the status of a server instance
-status_instance() {
-  local instance="$1"
-  local container_name="${instance}_server"
-  
-  # Check if the container exists
-  if ! docker ps -a --format "{{.Names}}" | grep -q "^${container_name}$"; then
-    echo "Container for instance '$instance' does not exist."
-    return 1
-  fi
-  
-  # Check if the container is running
-  local container_status=$(docker inspect --format='{{.State.Status}}' "$container_name" 2>/dev/null)
-  echo "Container status: $container_status"
-  
-  # If container is running, try to get additional status using RCON
-  if [[ "$container_status" == "running" ]]; then
-    # Get player count using 'listplayers' command
-    echo "Attempting to get player information..."
-    local player_info=$(docker exec "$container_name" /bin/bash -c "/home/pok/scripts/rcon_interface.sh -custom 'listplayers'" 2>/dev/null)
-    echo "$player_info"
-    
-    # You can add more status commands here if needed
-  fi
-  
-  return 0
-}
-
 list_running_instances() {
   local instances=($(list_instances))
   local running_instances=()
@@ -2963,7 +2538,7 @@ execute_rcon_command() {
           local non_api_instances=()
           
           for instance in $(list_running_instances); do
-            local docker_compose_file=$(find_docker_compose_file "$instance")
+            local docker_compose_file="${BASE_DIR}/Instance_${instance}/docker-compose-${instance}.yaml"
             
             # Check if API=TRUE in the docker-compose file
             if [ -f "$docker_compose_file" ] && (grep -q "^ *- API=TRUE" "$docker_compose_file" || grep -q "^ *- API:TRUE" "$docker_compose_file"); then
@@ -3110,14 +2685,14 @@ execute_rcon_command() {
         
         # Check if the current instance is API=TRUE
         local this_instance_api=false
-        local docker_compose_file=$(find_docker_compose_file "$instance_name")
+        local docker_compose_file="${BASE_DIR}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
         if [ -f "$docker_compose_file" ] && (grep -q "^ *- API=TRUE" "$docker_compose_file" || grep -q "^ *- API:TRUE" "$docker_compose_file"); then
           this_instance_api=true
         fi
         
         # Check other running instances
         for instance in $(list_running_instances | grep -v "^$instance_name$"); do
-          local other_docker_compose_file=$(find_docker_compose_file "$instance")
+          local other_docker_compose_file="${BASE_DIR}/Instance_${instance}/docker-compose-${instance}.yaml"
           
           if [ -f "$other_docker_compose_file" ] && (grep -q "^ *- API=TRUE" "$other_docker_compose_file" || grep -q "^ *- API:TRUE" "$other_docker_compose_file"); then
             # This instance is API=TRUE
@@ -3248,7 +2823,7 @@ inject_shutdown_flag_and_shutdown() {
   local container_name="asa_${instance}" # Assuming container naming convention
   local base_dir="${BASE_DIR}"
   local instance_dir="${base_dir}/Instance_${instance}"
-  local docker_compose_file=$(find_docker_compose_file "$instance")
+  local docker_compose_file="${instance_dir}/docker-compose-${instance}.yaml"
 
   # Check if the container exists and is running
   if docker ps -q -f name=^/${container_name}$ > /dev/null; then
@@ -3363,7 +2938,8 @@ run_in_container() {
   # If this is a restart command and the instance has API=TRUE, use our special restart function
   if [[ "$cmd" == "-restart" ]]; then
     # Get the docker-compose file path
-    local docker_compose_file=$(find_docker_compose_file "$instance")
+    local base_dir="${BASE_DIR}"
+    local docker_compose_file="${base_dir}/Instance_${instance}/docker-compose-${instance}.yaml"
     
     # Check if API=TRUE in the docker-compose file
     if [ -f "$docker_compose_file" ] && (grep -q "^ *- API=TRUE" "$docker_compose_file" || grep -q "^ *- API:TRUE" "$docker_compose_file"); then
@@ -4035,23 +3611,8 @@ display_logs() {
   local instance_name="$1"
   local live="$2"
 
-  # We assume instance_name is already provided at this point,
-  # as manage_service would have handled the empty case
-  
-  # Validate the instance exists and is running
-  local container_name="asa_${instance_name}"
-  if ! docker ps --format '{{.Names}}' | grep -q "^${container_name}$"; then
-    echo "Warning: Instance '$instance_name' is not currently running."
-    
-    # Check if this is a known instance
-    if ! find_docker_compose_file "$instance_name" >/dev/null 2>&1; then
-      echo "Error: Instance '$instance_name' does not exist or is not properly configured."
-      return 1
-    fi
-    
-    echo "The instance exists but is not running. Start it first to view logs."
-    echo "Use './POK-manager.sh -start $instance_name' to start the instance."
-    return 1
+  if ! validate_instance "$instance_name"; then
+    instance_name=$(select_instance)
   fi
 
   display_single_instance_logs "$instance_name" "$live"
@@ -4075,10 +3636,9 @@ manage_service() {
   local action=$1
   local instance_name=$2
   local additional_args="${@:3}"
-  
   # Ensure root privileges for specific actions
   if [[ "$action" == "-setup" ]]; then
-    check_puid_pgid_user "$PUID" "$PGID"
+  check_puid_pgid_user "$PUID" "$PGID"
   fi
 
   # Adjust Docker permissions only for actions that explicitly require Docker interaction
@@ -4089,65 +3649,10 @@ manage_service() {
   esac
 
   # Special handling for -start all and -stop all actions
-  if [[ "$action" == "-start" || "$action" == "-stop" || "$action" == "-restart" || "$action" == "-shutdown" || "$action" == "-status" || "$action" == "-saveworld" ]] && [[ "${instance_name,,}" == "-all" ]]; then
+  if [[ "$action" == "-start" || "$action" == "-stop" ]] && [[ "${instance_name,,}" == "-all" ]]; then
     perform_action_on_all_instances "$action"
     return
   fi
-
-  # Special handling for -chat with -all
-  if [[ "$action" == "-chat" ]] && [[ "${additional_args}" == "-all" ]]; then
-    perform_action_on_all_instances "$action" "$instance_name"
-    return
-  fi
-
-  # For actions that require an instance, verify the instance exists
-  case $action in
-  -start | -stop | -restart | -shutdown | -status | -chat | -saveworld)
-    if [[ -z "$instance_name" ]]; then
-      echo "Error: No instance name specified for $action action."
-      echo "Usage: ./POK-manager.sh $action <instance_name>"
-      return 1
-    fi
-    
-    # Check if the instance exists by trying to find its docker-compose file
-    if ! find_docker_compose_file "$instance_name" >/dev/null 2>&1; then
-      echo "Warning: Could not find docker-compose file for instance '$instance_name'."
-      
-      # List available instances
-      local available_instances=($(list_instances))
-      if [ ${#available_instances[@]} -gt 0 ]; then
-        echo "Available instances:"
-        for i in "${!available_instances[@]}"; do
-          echo "  - ${available_instances[$i]}"
-        done
-        
-        # If in interactive mode, ask if user wants to select from available instances
-        if [ -t 0 ]; then
-          echo "Select an instance to $action:"
-          for i in "${!available_instances[@]}"; do
-            echo "[$((i+1))] ${available_instances[$i]}"
-          done
-          
-          local selection
-          read -p "Enter selection (1-${#available_instances[@]}): " selection
-          
-          if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le "${#available_instances[@]}" ]; then
-            instance_name="${available_instances[$((selection-1))]}"
-            echo "Selected instance: $instance_name"
-          else
-            echo "Invalid selection. Aborting."
-            return 1
-          fi
-        else
-          return 1
-        fi
-      else
-        echo "No instances found. Please create an instance first with './POK-manager.sh -create <instance_name>'."
-        return 1
-      fi
-    fi
-    ;;
-  esac
 
   # Handle actions
   case $action in
@@ -4236,81 +3741,45 @@ manage_service() {
     execute_rcon_command "$action" "$instance_name" "${additional_args[@]}"
     ;;
   -saveworld |-status)
-    # Only handle single instance case here, -all case is handled earlier
-    if [[ "$instance_name" != "-all" ]]; then
-      execute_rcon_command "$action" "$instance_name"
-    fi
+    execute_rcon_command "$action" "$instance_name"
     ;;
   -chat)
-    # Only handle single instance case here, -all case is handled earlier
     local message="$instance_name"
     instance_name="$additional_args"
-    
-    if [[ "$instance_name" != "-all" ]]; then
-      execute_rcon_command "$action" "$instance_name" "$message"
-    fi
+    execute_rcon_command "$action" "$instance_name" "$message"
     ;;
   -custom)
-    # Fixed handling for -custom with -all
     local rcon_command="$instance_name"
     instance_name="$additional_args"
-    
-    # Check if the instance_name arg is -all
-    if [[ "$instance_name" == "-all" ]]; then
-      echo "----- Processing $action command for all running instances. Please wait... -----"
-      execute_rcon_command "$action" "-all" "$rcon_command"
-      echo "----- All running instances processed with $action command. -----"
-    else
-      execute_rcon_command "$action" "$instance_name" "$rcon_command"
-    fi
+    execute_rcon_command "$action" "$instance_name" "$rcon_command"
     ;;
   -logs)
     local live=""
-    local instance_name_provided=true
-    
-    # Check if first arg is -live
     if [[ "$instance_name" == "-live" ]]; then
       live="-live"
       instance_name="$additional_args"
-      
-      # If no instance name was provided after -live
-      if [[ -z "$instance_name" ]]; then
-        instance_name_provided=false
-      fi
     fi
 
-    # If no instance name was provided at all
     if [[ -z "$instance_name" ]]; then
-      instance_name_provided=false
-    fi
-    
-    # If no instance name was provided, prompt user to select from running instances
-    if [[ "$instance_name_provided" == "false" ]]; then
-      # Get list of running instances
+      echo "Available running instances:"
       local instances=($(list_running_instances))
       if [ ${#instances[@]} -eq 0 ]; then
-        echo "No running instances found. Start an instance first to view logs."
-        return 1
+        echo "No running instances found."
+        exit 1
       fi
-      
-      # Display selection directly without asking for confirmation
-      echo "Select an instance to view logs:"
       for ((i=0; i<${#instances[@]}; i++)); do
-        echo "[$((i+1))] ${instances[i]}"
+        echo "$((i+1)). ${instances[i]}"
       done
-      
-      local choice
       while true; do
-        read -p "Enter selection (1-${#instances[@]}): " choice
+        read -p "Enter the number of the running instance: " choice
         if [[ $choice =~ ^[0-9]+$ ]] && [ $choice -ge 1 ] && [ $choice -le ${#instances[@]} ]; then
           instance_name="${instances[$((choice-1))]}"
           break
         else
-          echo "Invalid selection. Please try again or press Ctrl+C to exit."
+          echo "Invalid choice. Please try again."
         fi
       done
     fi
-    
     display_logs "$instance_name" "$live"
     ;;
   -clearupdateflag)
@@ -4526,8 +3995,8 @@ display_usage() {
   echo "  -edit                                     Edit an instance's configuration"
   echo "  -setup                                    Perform initial setup tasks"
   echo "  -create <instance_name>                   Create a new instance"
-  echo "  -start <instance_name|-all>               Start an instance or all instances"
-  echo "  -stop <instance_name|-all>                Stop an instance or all instances"
+  echo "  -start <instance_name|-all>                Start an instance or all instances"
+  echo "  -stop <instance_name|-all>                 Stop an instance or all instances"
   echo "  -shutdown [minutes] <instance_name|-all>   Shutdown an instance or all instances with an optional countdown"
   echo "  -update                                   Check for server files & Docker image updates (doesn't modify the script itself)"
   echo "  -upgrade                                  Upgrade POK-manager.sh script to the latest version (requires confirmation)"
@@ -4565,102 +4034,6 @@ display_version() {
   echo "Default PUID: ${PUID}, PGID: ${PGID}"
   local image_tag=$(get_docker_image_tag)
   echo "Docker image: acekorneya/asa_server:${image_tag}"
-  echo ""
-
-  # Show patch notes for the current version
-  local config_dir="${BASE_DIR}/config/POK-manager"
-  local changelog_file="${config_dir}/changelog.txt"
-  
-  # Ensure config directory exists
-  mkdir -p "$config_dir"
-  
-  # If changelog doesn't exist, download it
-  if [ ! -f "$changelog_file" ]; then
-    echo "Downloading changelog to show patch notes for this version..."
-    # Add timestamp and random string as cache-busting parameters
-    local timestamp=$(date +%s)
-    local random_str=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 10)
-    local branch_name="master"
-    if [ "$POK_MANAGER_BRANCH" = "beta" ]; then
-      branch_name="beta"
-    fi
-    local changelog_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/${branch_name}/changelog.txt?nocache=${timestamp}_${random_str}"
-    
-    # Download changelog using wget or curl
-    if command -v wget &>/dev/null; then
-      wget -q --no-cache -O "$changelog_file" "$changelog_url"
-    elif command -v curl &>/dev/null; then
-      curl -s -H "Cache-Control: no-cache, no-store" -H "Pragma: no-cache" -o "$changelog_file" "$changelog_url"
-    else
-      echo "Neither wget nor curl is available. Unable to download changelog."
-      echo "Please run './POK-manager.sh -changelog' to see what's new in this version."
-      return
-    fi
-  fi
-  
-  # Display patch notes for current version
-  if [ -f "$changelog_file" ]; then
-    # First check if our current version exists in the changelog
-    local version_exists=false
-    while IFS= read -r line; do
-      if [[ "$line" =~ ^##\ (Version\ )?([0-9]+\.[0-9]+\.[0-9]+) ]]; then
-        local version="${BASH_REMATCH[2]}"
-        if [ "$version" = "$POK_MANAGER_VERSION" ]; then
-          version_exists=true
-          break
-        fi
-      fi
-    done < "$changelog_file"
-    
-    if [ "$version_exists" = false ]; then
-      echo "═════════════════════════ VERSION INFORMATION ════════════════════════════"
-      echo ""
-      echo "Your installed version ($POK_MANAGER_VERSION) was not found in the changelog."
-      echo "This could be because the changelog hasn't been updated yet or because"
-      echo "you're running a development or custom version of POK-manager.sh."
-      echo ""
-      echo "To see all available release notes, run:"
-      echo "./POK-manager.sh -changelog"
-      echo ""
-      echo "══════════════════════════════════════════════════════════════════════════"
-      return
-    fi
-    
-    echo "═════════════════════════ WHAT'S IN THIS VERSION ═════════════════════════"
-    echo ""
-    
-    # Display the notes for the current version
-    local displaying_notes=false
-    
-    while IFS= read -r line; do
-      # Check if this line starts a version entry
-      if [[ "$line" =~ ^##\ (Version\ )?([0-9]+\.[0-9]+\.[0-9]+) ]]; then
-        local version="${BASH_REMATCH[2]}"
-        
-        # If we found current version, start displaying
-        if [ "$version" = "$POK_MANAGER_VERSION" ]; then
-          displaying_notes=true
-          echo "$line"
-          continue
-        # If we were displaying and found a new version, stop
-        elif [ "$displaying_notes" = true ]; then
-          break
-        fi
-      fi
-      
-      # Print the line if we're displaying notes for this version
-      if [ "$displaying_notes" = true ]; then
-        echo "$line"
-      fi
-    done < "$changelog_file"
-    
-    echo ""
-    echo "══════════════════════════════════════════════════════════════════════════"
-    echo ""
-    echo "For the full changelog, run: ./POK-manager.sh -changelog"
-  else
-    echo "Could not display patch notes. Please run './POK-manager.sh -changelog' to see what's new."
-  fi
 }
 
 # Function to set beta/stable mode
@@ -5306,7 +4679,7 @@ update_server_files_and_docker() {
     # Check for API-enabled instances that need special handling
     local api_instances=()
     for instance in "${instances_to_stop[@]}"; do
-      local docker_compose_file=$(find_docker_compose_file "$instance")
+      local docker_compose_file="${BASE_DIR}/Instance_${instance}/docker-compose-${instance}.yaml"
       if [ -f "$docker_compose_file" ] && (grep -q "^ *- API=TRUE" "$docker_compose_file" || grep -q "^ *- API:TRUE" "$docker_compose_file"); then
         echo "Detected API=TRUE for instance $instance - will use special shutdown process"
         api_instances+=("$instance")
@@ -5518,7 +4891,7 @@ migrate_file_ownership() {
     for instance in "${running_instances[@]}"; do
       echo "Stopping instance: $instance"
       # Get the docker compose file path
-      local docker_compose_file=$(find_docker_compose_file "$instance")
+      local docker_compose_file="${BASE_DIR}/Instance_${instance}/docker-compose-${instance}.yaml"
       
       # If the compose file exists, use docker-compose down
       if [ -f "$docker_compose_file" ]; then
@@ -5629,7 +5002,7 @@ migrate_file_ownership() {
   for instance_dir in "${BASE_DIR}"/Instance_*/; do
     if [ -d "$instance_dir" ]; then
       local instance_name=$(basename "$instance_dir" | sed 's/Instance_//')
-      local docker_compose_file=$(find_docker_compose_file "$instance_name")
+      local docker_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
       local api_logs_dir="${instance_dir}/API_Logs"
       
       # Ensure API_Logs directory exists and has proper ownership
@@ -6023,9 +5396,6 @@ main() {
   # Display the POK-Manager logo
   display_logo
   
-  # Show patch notes if this is the first run after an update
-  display_patch_notes
-  
   # Check if docker-compose files have paths that need updating
   check_volume_paths
   
@@ -6234,7 +5604,7 @@ get_docker_image_tag() {
   if $is_beta; then
     image_tag_version="2_1"
   else
-    # For stable branch, check file ownership to determine compatibility
+    # For stable branch, check file ownership to determine compatibility version
     # If server files directory exists, check ownership to determine backward compatibility
     local server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
     if [ -d "$server_files_dir" ]; then
@@ -6563,7 +5933,7 @@ handle_api_recovery() {
   for instance in $(list_instances); do
     # Get the docker-compose file path
     local base_dir=$(dirname "$(realpath "$0")")
-    local docker_compose_file=$(find_docker_compose_file "$instance")
+    local docker_compose_file="${base_dir}/Instance_${instance}/docker-compose-${instance}.yaml"
     
     # Skip if docker-compose file doesn't exist
     if [ ! -f "$docker_compose_file" ]; then
@@ -6649,7 +6019,7 @@ enhanced_restart_command() {
   
   # Categorize instances based on API mode
   for instance in "${instances_to_process[@]}"; do
-    local docker_compose_file=$(find_docker_compose_file "$instance")
+    local docker_compose_file="${BASE_DIR}/Instance_${instance}/docker-compose-${instance}.yaml"
     
     # Check if API=TRUE in the docker-compose file
     if [ -f "$docker_compose_file" ] && (grep -q "^ *- API=TRUE" "$docker_compose_file" || grep -q "^ *- API:TRUE" "$docker_compose_file"); then
@@ -7092,4 +6462,3 @@ display_changelog() {
 
 # Invoke the main function with all passed arguments
 main "$@"
-

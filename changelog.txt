@@ -1,15 +1,6 @@
 # POK-Manager Changelog
 
-## Version 2.1.65 (Latest)
-### Bug Fixes
-- Fixed issues with `-status`, `-saveworld`, and `-chat` commands when used with `-all` parameter
-- Corrected behavior so `-status -all` properly displays detailed server information for all instances
-- Fixed `-saveworld -all` to save all server worlds without prompting for instance selection
-- Improved `-chat` command handling when used with `-all` to send messages to all instances
-- Enhanced consistency of command behavior between single instance and all instances
-- Standardized output formatting for all-instance operations
-
-## Version 2.1.64 (Previous)
+## Version 2.1.66 (Previous)
 ### New Features
 - Added feature to display patch notes when the program updates to a new version
 - Automatically shows relevant changes when the script is updated
