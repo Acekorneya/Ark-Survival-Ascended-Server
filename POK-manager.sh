@@ -1807,6 +1807,7 @@ prompt_for_instance_name() {
 # Function to perform an action on all instances
 perform_action_on_all_instances() {
   local action=$1
+  local message="$2"
   
   # Get all instances
   local instances=($(list_instances))
@@ -1840,7 +1841,15 @@ perform_action_on_all_instances() {
         ;;
       -status)
         echo "Status for instance: $instance"
-        status_instance "$instance"
+        execute_rcon_command "$action" "$instance"
+        ;;
+      -saveworld)
+        echo "Saving world for instance: $instance"
+        execute_rcon_command "$action" "$instance"
+        ;;
+      -chat)
+        echo "Sending chat message to instance: $instance"
+        execute_rcon_command "$action" "$instance" "$message"
         ;;
       *)
         echo "Unsupported action for all instances: $action"
@@ -2854,6 +2863,34 @@ stop_instance() {
   fi
 
   echo "Instance ${instance_name} stopped successfully."
+  return 0
+}
+
+# Function to check the status of a server instance
+status_instance() {
+  local instance="$1"
+  local container_name="${instance}_server"
+  
+  # Check if the container exists
+  if ! docker ps -a --format "{{.Names}}" | grep -q "^${container_name}$"; then
+    echo "Container for instance '$instance' does not exist."
+    return 1
+  fi
+  
+  # Check if the container is running
+  local container_status=$(docker inspect --format='{{.State.Status}}' "$container_name" 2>/dev/null)
+  echo "Container status: $container_status"
+  
+  # If container is running, try to get additional status using RCON
+  if [[ "$container_status" == "running" ]]; then
+    # Get player count using 'listplayers' command
+    echo "Attempting to get player information..."
+    local player_info=$(docker exec "$container_name" /bin/bash -c "/home/pok/scripts/rcon_interface.sh -custom 'listplayers'" 2>/dev/null)
+    echo "$player_info"
+    
+    # You can add more status commands here if needed
+  fi
+  
   return 0
 }
 
@@ -4052,8 +4089,14 @@ manage_service() {
   esac
 
   # Special handling for -start all and -stop all actions
-  if [[ "$action" == "-start" || "$action" == "-stop" || "$action" == "-restart" || "$action" == "-shutdown" || "$action" == "-status" ]] && [[ "${instance_name,,}" == "-all" ]]; then
+  if [[ "$action" == "-start" || "$action" == "-stop" || "$action" == "-restart" || "$action" == "-shutdown" || "$action" == "-status" || "$action" == "-saveworld" ]] && [[ "${instance_name,,}" == "-all" ]]; then
     perform_action_on_all_instances "$action"
+    return
+  fi
+
+  # Special handling for -chat with -all
+  if [[ "$action" == "-chat" ]] && [[ "${additional_args}" == "-all" ]]; then
+    perform_action_on_all_instances "$action" "$instance_name"
     return
   fi
 
@@ -4193,17 +4236,33 @@ manage_service() {
     execute_rcon_command "$action" "$instance_name" "${additional_args[@]}"
     ;;
   -saveworld |-status)
-    execute_rcon_command "$action" "$instance_name"
+    # Only handle single instance case here, -all case is handled earlier
+    if [[ "$instance_name" != "-all" ]]; then
+      execute_rcon_command "$action" "$instance_name"
+    fi
     ;;
   -chat)
+    # Only handle single instance case here, -all case is handled earlier
     local message="$instance_name"
     instance_name="$additional_args"
-    execute_rcon_command "$action" "$instance_name" "$message"
+    
+    if [[ "$instance_name" != "-all" ]]; then
+      execute_rcon_command "$action" "$instance_name" "$message"
+    fi
     ;;
   -custom)
+    # Fixed handling for -custom with -all
     local rcon_command="$instance_name"
     instance_name="$additional_args"
-    execute_rcon_command "$action" "$instance_name" "$rcon_command"
+    
+    # Check if the instance_name arg is -all
+    if [[ "$instance_name" == "-all" ]]; then
+      echo "----- Processing $action command for all running instances. Please wait... -----"
+      execute_rcon_command "$action" "-all" "$rcon_command"
+      echo "----- All running instances processed with $action command. -----"
+    else
+      execute_rcon_command "$action" "$instance_name" "$rcon_command"
+    fi
     ;;
   -logs)
     local live=""
@@ -7033,3 +7092,4 @@ display_changelog() {
 
 # Invoke the main function with all passed arguments
 main "$@"
+
