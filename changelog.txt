@@ -1,6 +1,24 @@
 # POK-Manager Changelog
 
-## Version 2.1.66 (Latest)
+## Version 2.1.67 (Latest)
+### Improvements
+- stable release.
+- Added automatic Docker Compose installation for supported Linux distributions
+- Eliminated manual prompting for Docker Compose installation, it's now installed automatically if missing
+- Enhanced fallback methods for installing Docker Compose on unsupported distributions
+- Improved compatibility with Docker Compose V2 plugin installation
+- Added explicit Arch Linux support for Docker and Docker Compose installation
+- Enhanced OS detection to properly identify and support Arch Linux systems
+- Added feature to display patch notes when the program updates to a new version
+- Automatically shows relevant changes when the script is updated
+- Stores the last displayed version to avoid showing the same patch notes multiple times
+- Provides a user-friendly overview of what's changed since the last version used
+- Enhanced `-version` command to display patch notes for the current version
+- Added ability to view version-specific changes directly when checking version information
+- Corrected warning messages for mixed API modes to accurately reflect that server files ARE updated during restart
+- Updated information displayed during mixed API mode restarts to properly inform users about the update process
+
+## Version 2.1.66 (Previous)
 ### Bug Fixes
 - Fixed volume path updates during instance rename operations
 - Updated `-rename -all` command to properly continue after restarting renamed containers

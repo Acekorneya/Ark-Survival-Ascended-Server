@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.66"
+POK_MANAGER_VERSION="2.1.67"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory
@@ -9,6 +9,68 @@ BASE_DIR="$SCRIPT_DIR"
 
 # Create a path preference file 
 PATH_CONFIG_FILE="${BASE_DIR}/config/POK-manager/path_preferences.txt"
+
+# Store the last displayed version for patch notes
+LAST_VERSION_FILE="${BASE_DIR}/config/POK-manager/last_displayed_version.txt"
+
+# Create config directory if it doesn't exist
+mkdir -p "${BASE_DIR}/config/POK-manager"
+
+# Function to determine the expected ownership (UID:GID) based on installation mode
+get_expected_ownership() {
+  local expected_uid="1000"
+  local expected_gid="1000"
+  
+  # Check for 2.1+ mode with 7777 UID
+  if [ -f "${BASE_DIR}/config/POK-manager/migration_complete" ]; then
+    expected_uid="7777"
+    expected_gid="7777"
+  else
+    # Check existing config directory ownership to determine mode
+    if [ -d "${BASE_DIR}/config/POK-manager" ]; then
+      local config_dir_ownership="$(stat -c '%u:%g' ${BASE_DIR}/config/POK-manager)"
+      local config_dir_uid=$(echo "$config_dir_ownership" | cut -d: -f1)
+      local config_dir_gid=$(echo "$config_dir_ownership" | cut -d: -f2)
+      
+      # If directory is owned by 7777, use that
+      if [ "$config_dir_uid" = "7777" ]; then
+        expected_uid="7777"
+        expected_gid="7777"
+      fi
+    fi
+  fi
+  
+  echo "${expected_uid}:${expected_gid}"
+}
+
+# Function to initialize the last displayed version if not exists
+initialize_last_version() {
+  if [ ! -f "$LAST_VERSION_FILE" ]; then
+    echo "$POK_MANAGER_VERSION" > "$LAST_VERSION_FILE"
+    
+    # Apply permissions when running as root
+    if [ "$(id -u)" -eq 0 ]; then
+      # Get expected ownership
+      local ownership=$(get_expected_ownership)
+      local expected_uid=$(echo "$ownership" | cut -d: -f1)
+      local expected_gid=$(echo "$ownership" | cut -d: -f2)
+      
+      # Apply ownership to the file
+      chown ${expected_uid}:${expected_gid} "$LAST_VERSION_FILE"
+      
+      # Also update the parent directory if needed
+      if [ -d "${BASE_DIR}/config/POK-manager" ]; then
+        local dir_ownership="$(stat -c '%u:%g' ${BASE_DIR}/config/POK-manager)"
+        if [ "$dir_ownership" != "${expected_uid}:${expected_gid}" ]; then
+          chown ${expected_uid}:${expected_gid} "${BASE_DIR}/config/POK-manager"
+        fi
+      fi
+    fi
+  fi
+}
+
+# Call initialize at startup
+initialize_last_version
 
 # Function to create and display the POK-Manager logo
 display_logo() {
@@ -525,6 +587,9 @@ check_dependencies() {
       elif command -v yum &>/dev/null; then
         # CentOS/RHEL
         sudo yum install -y docker
+      elif [ -f /etc/arch-release ]; then
+        # Arch Linux
+        sudo pacman -Sy --noconfirm docker
       else
         echo "Unsupported Linux distribution. Please install Docker manually and run the script again."
         exit 1
@@ -550,27 +615,98 @@ check_dependencies() {
     DOCKER_COMPOSE_CMD="docker-compose"
   else
     echo "Neither 'docker compose' (V2) nor 'docker-compose' (V1) command is available."
-    read -p "Do you want to install Docker Compose? [y/N]: " install_compose
-    if [[ "$install_compose" =~ ^[Yy]$ ]]; then
-      # Detect the OS and install Docker Compose accordingly
-      if command -v apt-get &>/dev/null; then
-        # Debian/Ubuntu
-        sudo apt-get update
-        sudo apt-get install -y docker-compose
-      elif command -v dnf &>/dev/null; then
-        # Fedora
-        sudo dnf install -y docker-compose
-      elif command -v yum &>/dev/null; then
-        # CentOS/RHEL
-        sudo yum install -y docker-compose
+    # Automatically install Docker Compose without prompting
+    echo "Docker Compose is required and will be installed automatically..."
+    
+    # Detect the OS and install Docker Compose accordingly
+    if command -v apt-get &>/dev/null; then
+      # Debian/Ubuntu
+      echo "Detected Debian/Ubuntu system, installing Docker Compose..."
+      sudo apt-get update
+      # Try to install docker compose plugin first (for V2)
+      if sudo apt-get install -y docker-compose-plugin 2>/dev/null; then
+        echo "Docker Compose V2 plugin installed successfully."
+        DOCKER_COMPOSE_CMD="docker compose"
+        docker_compose_version_command="docker compose version"
       else
-        echo "Unsupported Linux distribution. Please install Docker Compose manually and run the script again."
+        # Fallback to standalone docker-compose
+        echo "Installing standalone Docker Compose V1..."
+        sudo apt-get install -y docker-compose
+        DOCKER_COMPOSE_CMD="docker-compose"
+        docker_compose_version_command="docker-compose --version"
+      fi
+    elif command -v dnf &>/dev/null; then
+      # Fedora
+      echo "Detected Fedora system, installing Docker Compose..."
+      # Try to install docker compose plugin first (for V2)
+      if sudo dnf install -y docker-compose-plugin 2>/dev/null; then
+        echo "Docker Compose V2 plugin installed successfully."
+        DOCKER_COMPOSE_CMD="docker compose"
+        docker_compose_version_command="docker compose version"
+      else
+        # Fallback to standalone docker-compose
+        echo "Installing standalone Docker Compose V1..."
+        sudo dnf install -y docker-compose
+        DOCKER_COMPOSE_CMD="docker-compose"
+        docker_compose_version_command="docker-compose --version"
+      fi
+    elif command -v yum &>/dev/null; then
+      # CentOS/RHEL
+      echo "Detected CentOS/RHEL system, installing Docker Compose..."
+      # Try to install docker compose plugin first (for V2)
+      if sudo yum install -y docker-compose-plugin 2>/dev/null; then
+        echo "Docker Compose V2 plugin installed successfully."
+        DOCKER_COMPOSE_CMD="docker compose"
+        docker_compose_version_command="docker compose version"
+      else
+        # Fallback to standalone docker-compose
+        echo "Installing standalone Docker Compose V1..."
+        sudo yum install -y docker-compose
+        DOCKER_COMPOSE_CMD="docker-compose"
+        docker_compose_version_command="docker-compose --version"
+      fi
+    elif [ -f /etc/arch-release ]; then
+      # Arch Linux
+      echo "Detected Arch Linux system, installing Docker Compose..."
+      # Try to install docker compose plugin first (for V2)
+      if sudo pacman -Sy --noconfirm docker-compose 2>/dev/null; then
+        echo "Docker Compose installed successfully."
+        DOCKER_COMPOSE_CMD="docker-compose"
+        docker_compose_version_command="docker-compose --version"
+      fi
+    else
+      # For unsupported distributions, use the latest Docker Compose binary
+      echo "Unsupported Linux distribution. Attempting to install Docker Compose binary..."
+      
+      # Install docker compose v2 as a plugin
+      DOCKER_COMPOSE_VERSION=$(curl -s https://api.github.com/repos/docker/compose/releases/latest | grep 'tag_name' | cut -d\" -f4)
+      echo "Installing Docker Compose ${DOCKER_COMPOSE_VERSION}..."
+      DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
+      mkdir -p $DOCKER_CONFIG/cli-plugins
+      
+      # Download the binary to the plugins directory
+      sudo curl -SL "https://github.com/docker/compose/releases/download/${DOCKER_COMPOSE_VERSION}/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+      
+      # Make it executable
+      sudo chmod +x /usr/local/bin/docker-compose
+      
+      # Create a symbolic link for the plugin
+      sudo ln -sf /usr/local/bin/docker-compose $DOCKER_CONFIG/cli-plugins/docker-compose
+      
+      # Check which command works now
+      if docker compose version &>/dev/null; then
+        DOCKER_COMPOSE_CMD="docker compose"
+        docker_compose_version_command="docker compose version"
+        echo "Docker Compose V2 installed successfully."
+      elif docker-compose --version &>/dev/null; then
+        DOCKER_COMPOSE_CMD="docker-compose"
+        docker_compose_version_command="docker-compose --version"
+        echo "Docker Compose V1 installed successfully."
+      else
+        echo "Error: Docker Compose installation failed."
+        echo "Please install Docker Compose manually and run the script again."
         exit 1
       fi
-      DOCKER_COMPOSE_CMD="docker-compose"
-    else
-      echo "Docker Compose installation declined. Please install Docker Compose manually to proceed."
-      exit 1
     fi
   fi
 
@@ -607,8 +743,90 @@ get_docker_compose_cmd() {
       DOCKER_COMPOSE_CMD="docker-compose"
     else
       echo "Neither 'docker compose' (V2) nor 'docker-compose' (V1) command is available."
-      echo "Please ensure Docker Compose is correctly installed."
-      exit 1
+      # Automatically install Docker Compose without prompting
+      echo "Docker Compose is required and will be installed automatically..."
+      
+      # Detect the OS and install Docker Compose accordingly
+      if command -v apt-get &>/dev/null; then
+        # Debian/Ubuntu
+        echo "Detected Debian/Ubuntu system, installing Docker Compose..."
+        sudo apt-get update
+        # Try to install docker compose plugin first (for V2)
+        if sudo apt-get install -y docker-compose-plugin 2>/dev/null; then
+          echo "Docker Compose V2 plugin installed successfully."
+          DOCKER_COMPOSE_CMD="docker compose"
+        else
+          # Fallback to standalone docker-compose
+          echo "Installing standalone Docker Compose V1..."
+          sudo apt-get install -y docker-compose
+          DOCKER_COMPOSE_CMD="docker-compose"
+        fi
+      elif command -v dnf &>/dev/null; then
+        # Fedora
+        echo "Detected Fedora system, installing Docker Compose..."
+        # Try to install docker compose plugin first (for V2)
+        if sudo dnf install -y docker-compose-plugin 2>/dev/null; then
+          echo "Docker Compose V2 plugin installed successfully."
+          DOCKER_COMPOSE_CMD="docker compose"
+        else
+          # Fallback to standalone docker-compose
+          echo "Installing standalone Docker Compose V1..."
+          sudo dnf install -y docker-compose
+          DOCKER_COMPOSE_CMD="docker-compose"
+        fi
+      elif command -v yum &>/dev/null; then
+        # CentOS/RHEL
+        echo "Detected CentOS/RHEL system, installing Docker Compose..."
+        # Try to install docker compose plugin first (for V2)
+        if sudo yum install -y docker-compose-plugin 2>/dev/null; then
+          echo "Docker Compose V2 plugin installed successfully."
+          DOCKER_COMPOSE_CMD="docker compose"
+        else
+          # Fallback to standalone docker-compose
+          echo "Installing standalone Docker Compose V1..."
+          sudo yum install -y docker-compose
+          DOCKER_COMPOSE_CMD="docker-compose"
+        fi
+      elif [ -f /etc/arch-release ]; then
+        # Arch Linux
+        echo "Detected Arch Linux system, installing Docker Compose..."
+        # Try to install docker compose plugin first (for V2)
+        if sudo pacman -Sy --noconfirm docker-compose 2>/dev/null; then
+          echo "Docker Compose installed successfully."
+          DOCKER_COMPOSE_CMD="docker-compose"
+        fi
+      else
+        # For unsupported distributions, use the latest Docker Compose binary
+        echo "Unsupported Linux distribution. Attempting to install Docker Compose binary..."
+        
+        # Install docker compose v2 as a plugin
+        DOCKER_COMPOSE_VERSION=$(curl -s https://api.github.com/repos/docker/compose/releases/latest | grep 'tag_name' | cut -d\" -f4)
+        echo "Installing Docker Compose ${DOCKER_COMPOSE_VERSION}..."
+        DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
+        mkdir -p $DOCKER_CONFIG/cli-plugins
+        
+        # Download the binary to the plugins directory
+        sudo curl -SL "https://github.com/docker/compose/releases/download/${DOCKER_COMPOSE_VERSION}/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+        
+        # Make it executable
+        sudo chmod +x /usr/local/bin/docker-compose
+        
+        # Create a symbolic link for the plugin
+        sudo ln -sf /usr/local/bin/docker-compose $DOCKER_CONFIG/cli-plugins/docker-compose
+        
+        # Check which command works now
+        if docker compose version &>/dev/null; then
+          DOCKER_COMPOSE_CMD="docker compose"
+          echo "Docker Compose V2 installed successfully."
+        elif docker-compose --version &>/dev/null; then
+          DOCKER_COMPOSE_CMD="docker-compose"
+          echo "Docker Compose V1 installed successfully."
+        else
+          echo "Error: Docker Compose installation failed."
+          echo "Please install Docker Compose manually and run the script again."
+          exit 1
+        fi
+      fi
     fi
     echo "$DOCKER_COMPOSE_CMD" > "$cmd_file"
     echo "Using Docker Compose command: '$DOCKER_COMPOSE_CMD'."
@@ -2551,15 +2769,16 @@ execute_rcon_command() {
           # If mixed API modes, show warning
           if [ ${#api_instances[@]} -gt 0 ] && [ ${#non_api_instances[@]} -gt 0 ]; then
             echo "⚠️ WARNING: Mixed API modes detected (both TRUE and FALSE). ⚠️"
-            echo "When restarting with mixed API modes, server files WILL NOT be updated."
-            echo "If a game update is available, this restart will NOT apply it."
+            echo "When restarting with mixed API modes, the running containers will be stopped,"
+            echo "server files WILL be updated, and containers will be brought back up."
+            echo "If a game update is available, it WILL be applied during this process."
             echo ""
-            echo "To properly update server files, you should:"
-            echo "1. Stop all containers:  ./POK-manager.sh -stop -all"
-            echo "2. Update server files:  ./POK-manager.sh -update"
-            echo "3. Start all containers: ./POK-manager.sh -start -all"
+            echo "This process follows these steps automatically:"
+            echo "1. Stop all containers"
+            echo "2. Update server files"
+            echo "3. Start all containers"
             echo ""
-            echo "This prevents SteamCMD errors and ensures all files are updated correctly."
+            echo "This ensures all server files are updated correctly while minimizing downtime."
             sleep 3
           fi
           
@@ -2710,15 +2929,16 @@ execute_rcon_command() {
         # If mixed modes detected, show warning
         if [ "$all_api" = "false" ] && [ "$all_non_api" = "false" ]; then
           echo "⚠️ WARNING: Mixed API modes detected across running instances. ⚠️"
-          echo "When restarting with mixed API modes, server files WILL NOT be updated."
-          echo "If a game update is available, this restart will NOT apply it."
+          echo "When restarting with mixed API modes, the running containers will be stopped,"
+          echo "server files WILL be updated, and containers will be brought back up."
+          echo "If a game update is available, it WILL be applied during this process."
           echo ""
-          echo "To properly update server files, you should:"
-          echo "1. Stop all containers:  ./POK-manager.sh -stop -all"
-          echo "2. Update server files:  ./POK-manager.sh -update"
-          echo "3. Start all containers: ./POK-manager.sh -start -all"
+          echo "This process follows these steps automatically:"
+          echo "1. Stop all containers"
+          echo "2. Update server files"
+          echo "3. Start all containers"
           echo ""
-          echo "This prevents SteamCMD errors and ensures all files are updated correctly."
+          echo "This ensures all server files are updated correctly while minimizing downtime."
           sleep 3
         fi
         
@@ -3708,25 +3928,45 @@ manage_service() {
       local script_path="$(realpath "$0")"
       echo "First ensuring POK-manager.sh has correct permissions..."
       
-      # Determine appropriate ownership
-      local target_owner=""
+      # Get the expected ownership based on installation mode
+      local ownership=$(get_expected_ownership)
+      local expected_uid=$(echo "$ownership" | cut -d: -f1)
+      local expected_gid=$(echo "$ownership" | cut -d: -f2)
+      
+      # Define the target owner variable before using it
+      local target_owner="${expected_uid}:${expected_gid}"
+      
+      # If running with sudo, use the actual user if possible
       if [ -n "$SUDO_USER" ]; then
+        # Only use the sudo user if they're the expected owner (makes sense for personal installs)
         local sudo_uid=$(id -u "$SUDO_USER")
         local sudo_gid=$(id -g "$SUDO_USER")
-        target_owner="${sudo_uid}:${sudo_gid}"
-      elif [ -n "$PUID" ] && [ -n "$PGID" ]; then
-        target_owner="${PUID}:${PGID}"
-      else
-        if [ -f "${BASE_DIR}/config/POK-manager/migration_complete" ]; then
-          target_owner="7777:7777"
-        else
-          target_owner="1000:1000"
+        
+        # If the sudo user is the expected owner or a member of the expected group, use them
+        if [ "$sudo_uid" = "$expected_uid" ] || id -G "$SUDO_USER" | grep -q -w "$expected_gid"; then
+          target_owner="${sudo_uid}:${expected_gid}"
         fi
       fi
       
       echo "Setting POK-manager.sh ownership to $target_owner"
+      # Force change ownership regardless of current state
       chown $target_owner "$script_path"
       chmod +x "$script_path"
+      
+      # Also fix the last_displayed_version.txt file if it exists
+      if [ -f "$LAST_VERSION_FILE" ]; then
+        echo "Setting $LAST_VERSION_FILE ownership to $target_owner"
+        chown $target_owner "$LAST_VERSION_FILE"
+      fi
+      
+      # Fix the config directory ownership if needed
+      if [ -d "${BASE_DIR}/config/POK-manager" ]; then
+        local config_dir_ownership="$(stat -c '%u:%g' ${BASE_DIR}/config/POK-manager)"
+        if [ "$config_dir_ownership" != "$target_owner" ]; then
+          echo "Setting config directory ownership to $target_owner"
+          chown -R $target_owner "${BASE_DIR}/config/POK-manager"
+        fi
+      fi
     fi
     
     # Then run the normal fix_root_owned_files function
@@ -4034,6 +4274,222 @@ display_version() {
   echo "Default PUID: ${PUID}, PGID: ${PGID}"
   local image_tag=$(get_docker_image_tag)
   echo "Docker image: acekorneya/asa_server:${image_tag}"
+  
+  # Fetch and display patch notes for the current version
+  local changelog=$(fetch_changelog)
+  if [ $? -eq 0 ]; then
+    echo ""
+    echo "===== PATCH NOTES ====="
+    
+    # Check if this is a development branch
+    if is_development_branch "$changelog" "$POK_MANAGER_VERSION"; then
+      echo "This is a development version ahead of current available versions."
+      echo "No specific patch notes available for version $POK_MANAGER_VERSION."
+    else
+      local notes=$(extract_version_patch_notes "$changelog" "$POK_MANAGER_VERSION")
+      if [ -n "$notes" ]; then
+        echo -e "$notes"
+      else
+        echo "No patch notes found for version $POK_MANAGER_VERSION."
+      fi
+    fi
+  else
+    echo ""
+    echo "Could not fetch patch notes from GitHub."
+  fi
+}
+
+# Function to fetch changelog from GitHub
+fetch_changelog() {
+  local branch_name="master"
+  if [ "$POK_MANAGER_BRANCH" = "beta" ]; then
+    branch_name="beta"
+  fi
+  
+  # Add timestamp and random string as cache-busting parameters
+  local timestamp=$(date +%s)
+  local random_str=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 10)
+  local changelog_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/${branch_name}/changelog.txt?nocache=${timestamp}_${random_str}"
+  local temp_file="/tmp/changelog.${timestamp}.tmp"
+  
+  # Download the changelog using wget or curl with aggressive cache-busting
+  local download_success=false
+  if command -v wget &>/dev/null; then
+    if wget -q --no-cache --no-check-certificate -O "$temp_file" "$changelog_url"; then
+      download_success=true
+    fi
+  elif command -v curl &>/dev/null; then
+    if curl -s -k -H "Cache-Control: no-cache, no-store" -H "Pragma: no-cache" -o "$temp_file" "$changelog_url"; then
+      download_success=true
+    fi
+  else
+    echo "Neither wget nor curl is available. Unable to fetch changelog."
+    return 1
+  fi
+  
+  if [ "$download_success" = "true" ] && [ -f "$temp_file" ] && [ -s "$temp_file" ]; then
+    # Make sure the file is at least 100 bytes in size (sanity check)
+    if [ $(stat -c%s "$temp_file") -ge 100 ]; then
+      # Preserve line endings when reading the content
+      local content=$(cat "$temp_file")
+      rm -f "$temp_file"
+      echo "$content"
+      return 0
+    else
+      echo "Downloaded changelog file is too small. May be incomplete."
+      rm -f "$temp_file"
+      return 1
+    fi
+  else
+    echo "Failed to download changelog."
+    return 1
+  fi
+}
+
+# Function to extract patch notes for a specific version
+extract_version_patch_notes() {
+  local changelog="$1"
+  local version="$2"
+  local in_section=false
+  local section_content=""
+  
+  # Process the changelog line by line
+  while IFS= read -r line; do
+    # If we found a new section header
+    if [[ "$line" =~ ^##[[:space:]] ]]; then
+      # If we were already in a section, we've reached the end of it
+      if [ "$in_section" = true ]; then
+        break
+      fi
+      
+      # Check if this is the section we're looking for
+      if [[ "$line" =~ ^##[[:space:]]Version[[:space:]]$version([[:space:]]|\() ]] || [[ "$line" =~ ^##[[:space:]]\[$version\] ]]; then
+        in_section=true
+        section_content+="$line"$'\n'
+      fi
+    # If we're in the correct section, add the line to the content
+    elif [ "$in_section" = true ]; then
+      section_content+="$line"$'\n'
+    fi
+  done <<< "$changelog"
+  
+  echo -e "$section_content"
+}
+
+# Function to extract patch notes between two versions
+extract_patch_notes_between_versions() {
+  local changelog="$1"
+  local last_version="$2"
+  local current_version="$3"
+  
+  # Parse the changelog and extract all version numbers
+  local versions=$(echo "$changelog" | grep -E "^## Version |^## \[" | sed -E 's/^## Version ([0-9]+\.[0-9]+\.[0-9]+).*$/\1/; s/^## \[([0-9]+\.[0-9]+\.[0-9]+)\].*$/\1/')
+  
+  # Create a temporary file with all versions
+  local temp_versions="/tmp/versions.${RANDOM}.tmp"
+  echo "$versions" > "$temp_versions"
+  
+  # Find versions between last_version and current_version
+  local in_range=false
+  local versions_to_show=""
+  
+  while read -r version; do
+    if [ "$version" = "$current_version" ]; then
+      in_range=true
+      versions_to_show="$version $versions_to_show"
+    elif [ "$in_range" = true ] && [ "$version" != "$last_version" ]; then
+      versions_to_show="$versions_to_show $version"
+    elif [ "$version" = "$last_version" ]; then
+      in_range=false
+      break
+    fi
+  done < "$temp_versions"
+  
+  rm -f "$temp_versions"
+  
+  # Extract patch notes for each version in the range
+  local all_notes=""
+  for ver in $versions_to_show; do
+    local notes=$(extract_version_patch_notes "$changelog" "$ver")
+    if [ -n "$notes" ]; then
+      all_notes+="$notes"$'\n\n'
+    fi
+  done
+  
+  echo -e "$all_notes"
+}
+
+# Function to check if the current version is a development branch
+is_development_branch() {
+  local changelog="$1"
+  local current_version="$2"
+  
+  # Check if the version exists in the changelog
+  local version_exists=$(echo "$changelog" | grep -E "Version $current_version|\\[$current_version\\]")
+  
+  if [ -z "$version_exists" ]; then
+    return 0  # It's a development version
+  else
+    return 1  # It's a known version
+  fi
+}
+
+# Function to show patch notes if version has changed
+show_patch_notes_if_updated() {
+  # Skip if not in interactive mode
+  if [ ! -t 0 ]; then
+    return
+  fi
+  
+  # Get the last displayed version
+  local last_version=""
+  if [ -f "$LAST_VERSION_FILE" ]; then
+    last_version=$(cat "$LAST_VERSION_FILE")
+  fi
+  
+  # If no last version or same as current, skip
+  if [ -z "$last_version" ] || [ "$last_version" = "$POK_MANAGER_VERSION" ]; then
+    return
+  fi
+  
+  # Fetch changelog
+  local changelog=$(fetch_changelog)
+  if [ $? -ne 0 ]; then
+    return
+  fi
+  
+  echo ""
+  echo "===== WHAT'S NEW IN POK-MANAGER VERSION $POK_MANAGER_VERSION ====="
+  
+  # Check if this is a development branch
+  if is_development_branch "$changelog" "$POK_MANAGER_VERSION"; then
+    echo "This is a development version ahead of current available versions."
+    echo "You've upgraded from version $last_version to $POK_MANAGER_VERSION."
+  else
+    # Extract patch notes between versions
+    local notes=$(extract_patch_notes_between_versions "$changelog" "$last_version" "$POK_MANAGER_VERSION")
+    if [ -n "$notes" ]; then
+      echo -e "$notes"
+    else
+      echo "No specific patch notes available for the upgrade from $last_version to $POK_MANAGER_VERSION."
+    fi
+  fi
+  
+  echo ""
+  
+  # Update the last displayed version
+  echo "$POK_MANAGER_VERSION" > "$LAST_VERSION_FILE"
+  
+  # Ensure proper file ownership when running as root
+  if [ "$(id -u)" -eq 0 ]; then
+    # Get expected ownership
+    local ownership=$(get_expected_ownership)
+    local expected_uid=$(echo "$ownership" | cut -d: -f1)
+    local expected_gid=$(echo "$ownership" | cut -d: -f2)
+    
+    # Apply ownership to the file
+    chown ${expected_uid}:${expected_gid} "$LAST_VERSION_FILE"
+  fi
 }
 
 # Function to set beta/stable mode
@@ -5367,12 +5823,59 @@ check_script_permissions() {
     return 1
   fi
   
+  # Check if script has the correct PUID/PGID matching the config files
+  local expected_owner=$(get_expected_ownership)
+  local expected_uid=$(echo "$expected_owner" | cut -d: -f1)
+  local expected_gid=$(echo "$expected_owner" | cut -d: -f2)
+  local script_uid=$(echo "$script_owner" | cut -d: -f1)
+  local script_gid=$(echo "$script_owner" | cut -d: -f2)
+  
+  # Skip this check if running as root (as we'll fix it in the -fix command)
+  if [ "$(id -u)" -ne 0 ] && [ "$script_uid" != "$expected_uid" -o "$script_gid" != "$expected_gid" ]; then
+    echo "⚠️ WARNING: POK-manager.sh has incorrect ownership!"
+    echo "Current ownership: $script_uid:$script_gid, Expected: $expected_uid:$expected_gid"
+    echo "This may cause permission issues. Please fix with:"
+    echo "sudo ./POK-manager.sh -fix"
+    echo "Then try running your command again."
+    return 1
+  fi
+  
   return 0
 }
 
 main() {
   # Store the original command arguments right at the beginning
   local original_args=("$@")
+  
+  # Force check and fix for script permissions if running with sudo
+  if [ "$(id -u)" -eq 0 ]; then
+    local is_fix_command=false
+    
+    # Check if this is a -fix command
+    for arg in "$@"; do
+      if [ "$arg" = "-fix" ]; then
+        is_fix_command=true
+        break
+      fi
+    done
+    
+    # If not already fixing, check and fix script ownership immediately
+    if [ "$is_fix_command" = "false" ]; then
+      # Get the expected ownership
+      local ownership=$(get_expected_ownership)
+      local expected_uid=$(echo "$ownership" | cut -d: -f1)
+      local expected_gid=$(echo "$ownership" | cut -d: -f2)
+      local script_path="$(realpath "$0")"
+      local script_owner="$(stat -c '%u:%g' "$script_path")"
+      local script_uid=$(echo "$script_owner" | cut -d: -f1)
+      local script_gid=$(echo "$script_owner" | cut -d: -f2)
+      
+      if [ "$script_uid" != "$expected_uid" ] || [ "$script_gid" != "$expected_gid" ]; then
+        echo "Auto-fixing script permissions to $expected_uid:$expected_gid..."
+        chown $expected_uid:$expected_gid "$script_path"
+      fi
+    fi
+  fi
   
   # Check script permissions first
   check_script_permissions || {
@@ -5398,6 +5901,9 @@ main() {
   
   # Check if docker-compose files have paths that need updating
   check_volume_paths
+  
+  # Show patch notes if we've upgraded to a new version
+  show_patch_notes_if_updated
   
   # Check for saved command arguments from a previous run
   local command_args_file="${BASE_DIR%/}/config/POK-manager/last_command_args"
@@ -6037,17 +6543,18 @@ enhanced_restart_command() {
     restart_mode="mixed"
     echo "⚠️ Mixed API modes detected. Using coordinated restart approach for all instances."
     echo ""
-    echo "⚠️ IMPORTANT UPDATE WARNING: ⚠️"
-    echo "When restarting instances with mixed API modes (TRUE and FALSE), server files WILL NOT be updated."
-    echo "If a game update is available, this restart will NOT apply it."
+    echo "⚠️ IMPORTANT UPDATE INFORMATION: ⚠️"
+    echo "When restarting instances with mixed API modes (TRUE and FALSE), the running containers will be stopped,"
+    echo "server files WILL be updated, and containers will be brought back up."
+    echo "If a game update is available, it WILL be applied during this process."
     echo ""
-    echo "To properly update your server files:"
-    echo "1. Stop all containers first:   ./POK-manager.sh -stop -all"
-    echo "2. Run the update command:      ./POK-manager.sh -update"
-    echo "3. Start all containers:        ./POK-manager.sh -start -all"
+    echo "This process follows these steps automatically:"
+    echo "1. Stop all containers"
+    echo "2. Update server files"
+    echo "3. Start all containers"
     echo ""
-    echo "This prevents SteamCMD errors and ensures all files are updated correctly."
-    echo "Continuing with restart (without updates) in 5 seconds..."
+    echo "This ensures all server files are updated correctly while minimizing downtime."
+    echo "Continuing with restart in 5 seconds..."
     sleep 5
   elif [ ${#api_instances[@]} -gt 0 ]; then
     restart_mode="api-only"
