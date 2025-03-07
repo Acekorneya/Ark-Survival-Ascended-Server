@@ -378,7 +378,7 @@ declare -A default_config_values=(
     ["Cluster ID"]="cluster"
     ["Mod IDs"]=
     ["Passive Mods"]=
-    ["Custom Server Args"]="-UseDynamicConfig"
+    ["Custom Server Args"]=
     # Add other default values here
 )
 # Validation functions
