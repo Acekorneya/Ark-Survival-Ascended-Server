@@ -604,7 +604,7 @@ When creating a new server instance using POK-manager.sh, a Docker Compose confi
 | ------------------------------| ------------------| ------------------------------------------------------------------------------------------|
 | `INSTANCE_NAME`               | `Instance_name`   | The name of the instance                                                                  |
 | `TZ`                          | `America/Los_Angeles`| Timezone setting: Change this to your local timezone.                                  |
-| `RANDOM_STARTUP_DELAY`        | `TRUE`            | Add a random delay (0-30s) during startup to prevent update conflicts when multiple instances start simultaneously |
+| `RANDOM_STARTUP_DELAY`        | `TRUE`            | Add a random delay (0-10s) during startup to prevent update conflicts when multiple instances start simultaneously |
 | `BATTLEEYE`                   | `TRUE`            | Set to TRUE to use BattleEye, FALSE to not use BattleEye                                  |
 | `API`                         | `FALSE`           | Set to TRUE to install and use AsaApi, FALSE to disable AsaApi                |
 | `RCON_ENABLED`                | `TRUE`            | Needed for Graceful Shutdown                                                              |
