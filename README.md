@@ -1,7 +1,7 @@
 # POK Ark Survival Ascended Server Management Script
 
 <p align="center">
-  <img src="https://cdn.akamai.steamstatic.com/steam/apps/2399830/header.jpg" alt="Ark Survival Ascended Logo" width="600">
+  <img src="https://ark.wiki.gg/images/thumb/0/0a/ASA_Logo_transparent.png/630px-ASA_Logo_transparent.png" alt="Ark Survival Ascended Logo" width="600">
 </p>
 
 [![Docker Pulls](https://img.shields.io/docker/pulls/acekorneya/asa_server?style=for-the-badge&logo=docker&logoColor=white&color=2496ED)](https://hub.docker.com/r/acekorneya/asa_server)
