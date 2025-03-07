@@ -2548,7 +2548,7 @@ start_instance() {
           }
           check_vm_max_map_count
           sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d || {
-            echo "❌ ERROR: Failed to start the server container."
+            echo "❌ ERROR: Failed to start the server container even with sudo."
             exit 1
           }
         else
@@ -3360,9 +3360,9 @@ check_for_POK_updates() {
           
           # Ask if the user wants to upgrade only in interactive mode
           if [ -t 0 ]; then
-            echo -n "* Would you like to upgrade now? (y/n) [30s timeout]: "
-            # Add a 30-second timeout for the prompt
-            read -t 30 -r upgrade_response || {
+            echo -n "* Would you like to upgrade now? (y/n) [15s timeout]: "
+            # Add a 15-second timeout for the prompt
+            read -t 15 -r upgrade_response || {
               echo ""
               echo "* Timeout reached. Continuing without upgrading."
               echo "* You can manually upgrade later with: ./POK-manager.sh -upgrade"
@@ -3385,7 +3385,7 @@ check_for_POK_updates() {
               chmod +x "${BASE_DIR}/config/POK-manager/new_version"
               
               # Call the upgrade function directly
-              upgrade_pok_manager "${original_args[@]}"
+              upgrade_pok_manager
               return
             else
               echo "* Run './POK-manager.sh -upgrade' later to perform the update     *"
@@ -4662,80 +4662,73 @@ upgrade_pok_manager() {
   
   # Store the original command arguments for potential reuse
   local command_args_file="${BASE_DIR%/}/config/POK-manager/last_command_args"
+  
+  # Get the original script's permissions to maintain them
+  local original_perms=$(stat -c "%a" "$original_script")
+  
+  # Check if a new version was downloaded during check_for_POK_updates
+  local new_version_file="${BASE_DIR%/}/config/POK-manager/new_version"
+  local temp_file=""
+  
+  # Source of the update: direct download or pre-downloaded file
+  if [ -f "$new_version_file" ]; then
+    echo "Using pre-downloaded update file"
+    temp_file="$new_version_file"
+  else
+    # Determine which branch to use for updates
+    local branch_name="master"
+    if [ "$POK_MANAGER_BRANCH" = "beta" ]; then
+      branch_name="beta"
+      echo "Using beta branch for updates"
+    fi
+    
+    # Add timestamp and random string as cache-busting parameters
+    local timestamp=$(date +%s)
+    local random_str=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 10)
+    local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/${branch_name}/POK-manager.sh?nocache=${timestamp}_${random_str}"
+    temp_file="/tmp/POK-manager.sh.${timestamp}.tmp"
+    
+    # Download the new script
+    local download_success=false
+    if command -v wget &>/dev/null; then
+      if wget -q --no-cache --no-check-certificate -O "$temp_file" "$script_url"; then
+        download_success=true
+      fi
+    elif command -v curl &>/dev/null; then
+      if curl -s -k -H "Cache-Control: no-cache, no-store" -H "Pragma: no-cache" -o "$temp_file" "$script_url"; then
+        download_success=true
+      fi
+    else
+      echo "Error: Neither wget nor curl is available. Unable to download updates."
+      return 1
+    fi
+    
+    if ! [ "$download_success" = "true" ]; then
+      echo "Error: Failed to download the latest script. Update aborted."
+      return 1
+    fi
+  fi
+  
+  # Create a file to signal that we're in a potential rollback situation
+  touch "${BASE_DIR%/}/config/POK-manager/rollback_source"
+  
+  # Process command arguments into a string for easy display
+  local command_args=""
   if [ ${#original_args[@]} -gt 0 ]; then
+    command_args="${original_args[*]}"
+  fi
+  
+  # Store any original commands for after the update
+  if [ -f "$command_args_file" ]; then
+    # We already have saved command args from the check_for_POK_updates function
+    echo "Command arguments were already saved for reuse after update"
+  elif [ ${#original_args[@]} -gt 0 ]; then
+    # Save the original command arguments to a file
     printf "%s\n" "${original_args[@]}" > "$command_args_file"
-    echo "Saved command arguments for reuse"
+    echo "Original command saved for reuse after update"
   fi
   
-  # Create a rollback flag file to enable automatic recovery if the update fails
-  echo "1" > "${BASE_DIR%/}/config/POK-manager/rollback_source"
-  
-  # Get the original file's permissions
-  local original_perms=$(stat -c '%a' "$original_script")
-  
-  # Check if we're in beta mode
-  local branch="master"
-  if check_beta_mode; then
-    branch="beta"
-  fi
-  
-  # Download the latest version from GitHub with aggressive cache-busting
-  echo "Downloading the latest version from GitHub ($branch branch)..."
-  
-  # Generate a unique timestamp and random string to prevent caching
-  local timestamp=$(date +%s)
-  local random_str=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 10)
-  local script_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/$branch/POK-manager.sh?nocache=${timestamp}_${random_str}"
-  local temp_file="${BASE_DIR%/}/POK-manager.sh.new"
-  
-  # Download the file using wget or curl with strong cache-busting
-  local download_success=false
-  if command -v wget &>/dev/null; then
-    if wget -q --no-cache -O "$temp_file" "$script_url"; then
-      download_success=true
-    fi
-  else
-    if curl -s -H "Cache-Control: no-cache, no-store" -H "Pragma: no-cache" -o "$temp_file" "$script_url"; then
-      download_success=true
-    fi
-  fi
-  
-  # Download the changelog file
-  local changelog_dir="${BASE_DIR}/config/POK-manager"
-  local changelog_file="${changelog_dir}/changelog.txt"
-  mkdir -p "$changelog_dir"
-  
-  # Generate changelog URL based on branch
-  local changelog_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/$branch/changelog.txt?nocache=${timestamp}_${random_str}"
-  local temp_changelog_file="${changelog_dir}/changelog.txt.new"
-  
-  echo "Downloading changelog..."
-  local changelog_download_success=false
-  if command -v wget &>/dev/null; then
-    if wget -q --no-cache -O "$temp_changelog_file" "$changelog_url"; then
-      changelog_download_success=true
-    fi
-  else
-    if curl -s -H "Cache-Control: no-cache, no-store" -H "Pragma: no-cache" -o "$temp_changelog_file" "$changelog_url"; then
-      changelog_download_success=true
-    fi
-  fi
-  
-  if [ "$changelog_download_success" = "true" ] && [ -s "$temp_changelog_file" ]; then
-    # Replace the current changelog file
-    mv -f "$temp_changelog_file" "$changelog_file"
-    echo "Changelog updated successfully."
-  else
-    echo "Could not download changelog. The file may not exist or there may be connectivity issues."
-    # If no changelog exists yet, create a simple placeholder
-    if [ ! -f "$changelog_file" ]; then
-      echo "POK-Manager Changelog" > "$changelog_file"
-      echo "===================" >> "$changelog_file"
-      echo "" >> "$changelog_file"
-      echo "This changelog will be populated during the next successful upgrade." >> "$changelog_file"
-    fi
-  fi
-  
+  # Verify the downloaded file is good by checking for required content
   if [ "$download_success" = "true" ] && [ -s "$temp_file" ]; then
     # Make sure the downloaded file is valid by checking key elements
     if grep -q "POK_MANAGER_VERSION=" "$temp_file" && grep -q "upgrade_pok_manager" "$temp_file"; then
@@ -4800,43 +4793,53 @@ upgrade_pok_manager() {
         echo ""
         echo "----------------------------------------------------------"
         echo "NOTICE: The POK-manager has been successfully upgraded!"
-        echo "Your original command needs to be re-run with the new version."
-        echo ""
-        echo "You can now run your command again:"
-        echo "  $0 $command_args"
+        
+        # Extract the stored command arguments
+        local saved_args=""
+        if [ -f "$command_args_file" ]; then
+          saved_args=$(cat "$command_args_file")
+          if [ -n "$saved_args" ]; then
+            echo "Your original command will be executed with the new version."
+            echo ""
+            echo "Command: $0 $saved_args"
+          fi
+        fi
         echo "----------------------------------------------------------"
         echo ""
         
         # If running interactively, add a pause
         if [ -t 0 ]; then
-          read -p "Press Enter to automatically restart with your command or Ctrl+C to cancel..."
-          # Explicitly run the original command to ensure it doesn't get lost
-          exec "$original_script" "${original_args[@]}"
-        else
-          # For non-interactive sessions, just restart with the same args
-          exec "$original_script" "${original_args[@]}"
+          echo -n "Press Enter to continue..."
+          read -r dummy
         fi
         
-        # This line should never be reached but is kept as a fallback
-        exit 0
+        # Execute the original script with any saved arguments
+        if [ -f "$command_args_file" ]; then
+          # Read the saved arguments line by line into an array
+          mapfile -t saved_cmd_args < "$command_args_file"
+          # Remove the saved args file to prevent reuse
+          rm -f "$command_args_file"
+          # Execute with the saved arguments
+          exec "$0" "${saved_cmd_args[@]}"
+        else
+          # Just execute the updated script with no arguments
+          exec "$0"
+        fi
+        
       else
-        echo "ERROR: Couldn't determine version in the downloaded file."
-        rm -f "$temp_file"
-        echo "Update failed. Original script is unchanged."
+        echo "Error: Could not determine version from downloaded file."
         return 1
       fi
     else
-      echo "ERROR: Downloaded file is invalid or incomplete."
-      rm -f "$temp_file"
-      echo "Update failed. Original script is unchanged."
+      echo "Error: Downloaded file does not appear to be a valid POK-manager.sh script."
       return 1
     fi
   else
-    echo "Failed to download update from GitHub. Please check your internet connection."
-    if [ -f "$temp_file" ]; then
+    echo "Error: Downloaded file is too small or invalid. Update failed."
+    # Only clean up the temp file if we downloaded it ourselves
+    if [ "$temp_file" != "$new_version_file" ] && [ -f "$temp_file" ]; then
       rm -f "$temp_file"
     fi
-    echo "Update failed. Original script is unchanged."
     return 1
   fi
 }
@@ -5680,7 +5683,6 @@ migrate_file_ownership() {
   echo "Note: If you want to go back to the 1000:1000 ownership, you can run:"
   echo "sudo chown -R 1000:1000 ${BASE_DIR}"
 }
-
 # Function to check for post-migration permission issues
 check_post_migration_permissions() {
   local command_args="$1"
@@ -5903,6 +5905,7 @@ main() {
   check_volume_paths
   
   # Show patch notes if we've upgraded to a new version
+  # This will only display patch notes once after an update and track the last displayed version
   show_patch_notes_if_updated
   
   # Check for saved command arguments from a previous run
@@ -6110,7 +6113,7 @@ get_docker_image_tag() {
   if $is_beta; then
     image_tag_version="2_1"
   else
-    # For stable branch, check file ownership to determine compatibility version
+    # For stable branch, check file ownership to determine backward compatibility
     # If server files directory exists, check ownership to determine backward compatibility
     local server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
     if [ -d "$server_files_dir" ]; then
