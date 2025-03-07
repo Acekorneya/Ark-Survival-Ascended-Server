@@ -381,6 +381,7 @@ declare -A default_config_values=(
     ["Custom Server Args"]=
     # Add other default values here
 )
+
 # Validation functions
 validate_boolean() {
   local input=$1
