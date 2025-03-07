@@ -447,21 +447,24 @@ To set up a cron job for running POK-manager.sh commands, follow these steps:
    * * * * * /path/to/command
    ```
    - The asterisks (`*`) represent the minute, hour, day of the month, month, and day of the week, respectively.
-   - Replace `/path/to/command` with the actual command you want to run.
+   - Replace `/path/to/command` with the actual full path to POK-manager.sh and the command you want to run.
 
-   For example, to save the world state of an instance named "my_instance" every 30 minutes, add the following line:
-   ```
-   */30 * * * * /path/to/POK-manager.sh -saveworld my_instance
-   ```
-   This command will run every 30 minutes, on the hour and half-hour (e.g., 12:00, 12:30, 1:00, 1:30, etc.).
+   **Important:** Always use the complete absolute path to your POK-manager.sh script in crontab entries. Since version 2.1.5x, you can directly use commands with the `-all` parameter without needing to change directories first.
 
-   To create a backup of an instance named "my_instance" every 6 hours, add the following line:
+   For example, to save the world state of all instances every 30 minutes:
    ```
-   0 */6 * * * /path/to/POK-manager.sh -backup my_instance
+   */30 * * * * /absolute/path/to/POK-manager.sh -saveworld -all
    ```
-   This command will run every 6 hours, starting at midnight (e.g., 12:00 AM, 6:00 AM, 12:00 PM, 6:00 PM).
+   
+   To restart all instances every day at 3 AM with a 10-minute warning:
+   ```
+   0 3 * * * /absolute/path/to/POK-manager.sh -restart 10 -all
+   ```
+   This command will run every 3 hours, starting at midnight (e.g., 12:00 AM, 6:00 AM, 12:00 PM, 6:00 PM).
 
 3. Save the changes and exit the editor. The cron jobs will now run automatically at the specified intervals.
+
+> **Note:** Starting with version 2.1.5x, POK-manager can now correctly identify server instances when run from cron jobs or systemd timers, even with the `-all` parameter. You no longer need to create wrapper scripts to change directories before running commands.
 
 Here are a few more examples of commonly used cron job schedules:
 
@@ -476,7 +479,6 @@ You can use online cron job generators like [Crontab Guru](https://crontab.guru/
 Remember to replace `/path/to/POK-manager.sh` with the actual path to your POK-manager.sh script, and adjust the instance names and commands according to your requirements.
 
 By scheduling automatic tasks with cron, you can ensure regular backups, world saves, and other maintenance tasks are performed without manual intervention, providing a more reliable and convenient server management experience.
-
 
 #### Backing Up and Restoring Instances
 POK-manager.sh provides commands for backing up and restoring server instances. Here's how you can use them:
