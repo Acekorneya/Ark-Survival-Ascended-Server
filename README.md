@@ -355,6 +355,7 @@ This approach provides better security while ensuring permissions are automatica
 - `-shutdown [minutes] <instance_name|-all>`: Shuts down a specific server instance or all instances with an optional countdown in minutes.
 - `-update`: Checks for server files & Docker image updates (doesn't modify the script itself).
 - `-upgrade`: Upgrades POK-manager.sh script to the latest version (requires confirmation).
+- `-force-restore`: Forces restoration of POK-manager.sh from backup in case of update failure.
 - `-status <instance_name|-all>`: Shows the status of a specific server instance or all instances.
 - `-restart [minutes] <instance_name|-all>`: Restarts a specific server instance or all instances with an optional countdown in minutes.
 - `-saveworld <instance_name|-all>`: Saves the world of a specific server instance or all instances.
@@ -363,11 +364,16 @@ This approach provides better security while ensuring permissions are automatica
 - `-backup [instance_name|-all]`: Backs up a specific server instance or all instances (defaults to all if not specified).
 - `-restore [instance_name]`: Restores a server instance from a backup.
 - `-logs [-live] <instance_name>`: Displays logs for a specific server instance (optionally live).
-- `-beta`: Switches to beta mode, using the beta branch for updates and beta Docker images.
-- `-stable`: Switches to stable mode, using the master branch for updates and stable Docker images.
-- `-API <TRUE|FALSE> <instance_name|-all>`: Enables or disables AsaApi for specified instance(s).
-- `-api-recovery`: Check and recover API instances with container restart - useful for automatic monitoring via cron.
+- `-beta`: Switches to beta mode to use beta version Docker images.
+- `-stable`: Switches to stable mode to use stable version Docker images.
+- `-migrate`: Migrates file ownership from 1000:1000 to 7777:7777 for compatibility with 2_1 images.
+- `-clearupdateflag <instance_name|-all>`: Clears a stale updating.flag file if an update was interrupted.
+- `-API <TRUE|FALSE> <instance_name|-all>`: Enables or disables ArkServerAPI for specified instance(s).
+- `-fix`: Fixes permissions on files owned by root (0:0) that could cause container issues.
 - `-version`: Displays the current version of POK-manager.
+- `-api-recovery`: Checks and recovers API instances with container restart.
+- `-changelog`: Displays the changelog.
+- `-rename <instance_name|-all>`: Renames a single instance or all instances.
 
 ### Examples
 
