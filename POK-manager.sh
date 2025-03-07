@@ -6478,11 +6478,11 @@ configure_api() {
   fi
 }
 
-# Function to detect files owned by root (0:0)
+# Function to detect files owned by incorrect users
 detect_root_owned_files() {
   local base_dir="${BASE_DIR}"
   local dirs_to_check=()
-  local found_root_files=false
+  local found_incorrect_files=false
   
   # Check if ServerFiles exists
   if [ -d "${base_dir}/ServerFiles" ]; then
@@ -6506,39 +6506,40 @@ detect_root_owned_files() {
     dirs_to_check+=("${base_dir}/config/POK-manager")
   fi
   
-  echo "Checking for files owned by root (0:0) that could cause container issues..."
+  echo "Checking for files with incorrect ownership that could cause container issues..."
   
-  # Check each directory for root-owned files
+  # Check each directory for files with incorrect ownership
   for dir in "${dirs_to_check[@]}"; do
-    # Use find to identify files owned by root:root (0:0)
-    local root_files=($(find "$dir" -user 0 -group 0 -type f -o -user 0 -group 0 -type d 2>/dev/null))
+    # Find files not owned by expected user (7777:7777 or 1000:1000)
+    local incorrect_files=($(find "$dir" \( ! -user 7777 -o ! -group 7777 \) -a \( ! -user 1000 -o ! -group 1000 \) -type f -o \( ! -user 7777 -o ! -group 7777 \) -a \( ! -user 1000 -o ! -group 1000 \) -type d 2>/dev/null))
     
-    if [ ${#root_files[@]} -gt 0 ]; then
-      if [ "$found_root_files" = "false" ]; then
-        echo "⚠️ WARNING: Found files/directories owned by root (0:0) that could cause permission issues:"
-        found_root_files=true
+    if [ ${#incorrect_files[@]} -gt 0 ]; then
+      if [ "$found_incorrect_files" = "false" ]; then
+        echo "⚠️ WARNING: Found files/directories with incorrect ownership that could cause permission issues:"
+        found_incorrect_files=true
       fi
       
       echo "  Directory: $dir"
-      echo "  Found ${#root_files[@]} files/directories owned by root"
+      echo "  Found ${#incorrect_files[@]} files/directories with incorrect ownership"
       
       # List the first 5 files for reference (to avoid overwhelming output)
       local count=0
-      for file in "${root_files[@]}"; do
+      for file in "${incorrect_files[@]}"; do
         if [ $count -lt 5 ]; then
-          echo "    - $file"
+          local file_owner=$(stat -c '%u:%g' "$file")
+          echo "    - $file (owned by user:group $file_owner)"
           ((count++))
         else
-          echo "    - ... and $((${#root_files[@]} - 5)) more"
+          echo "    - ... and $((${#incorrect_files[@]} - 5)) more"
           break
         fi
       done
     fi
   done
   
-  if [ "$found_root_files" = "true" ]; then
+  if [ "$found_incorrect_files" = "true" ]; then
     echo ""
-    echo "These root-owned files can cause permission issues with your container."
+    echo "These incorrectly owned files can cause permission issues with your container."
     echo "We'll attempt to automatically fix these issues using sudo."
     echo ""
     echo "If the automatic fix fails, you can manually run:"
@@ -6546,37 +6547,37 @@ detect_root_owned_files() {
     echo ""
     return 0
   else
-    echo "No root-owned files found that would cause container issues. 👍"
+    echo "No files with incorrect ownership found that would cause container issues. 👍"
     return 1
   fi
 }
 
-# Function to fix root-owned files
+# Function to fix incorrectly owned files
 fix_root_owned_files() {
   # Check if running with sudo
   if ! is_sudo; then
-    echo "❌ ERROR: This command requires sudo privileges to fix root-owned files."
+    echo "❌ ERROR: This command requires sudo privileges to fix file ownership issues."
     echo "Please run: sudo ./POK-manager.sh -fix"
     return 1
   fi
   
   local base_dir="${BASE_DIR}"
   local dirs_to_fix=()
-  local found_root_files=false
+  local found_incorrect_files=false
   local fixed_count=0
   
-  echo "🔍 Scanning for files owned by root (0:0)..."
+  echo "🔍 Scanning for files with incorrect ownership..."
   
   # First, fix the POK-manager.sh script itself if needed
   local script_path="$(realpath "$0")"
   local script_owner="$(stat -c '%u:%g' "$script_path")"
-  if [ "$script_owner" = "0:0" ]; then
-    echo "Found POK-manager.sh owned by root (0:0), fixing..."
+  if [ "$script_owner" != "$PUID:$PGID" ]; then
+    echo "Found POK-manager.sh owned by $script_owner, fixing to $PUID:$PGID..."
     chown $PUID:$PGID "$script_path"
     chmod +x "$script_path"
     echo "✓ Fixed ownership of POK-manager.sh to $PUID:$PGID"
     ((fixed_count++))
-    found_root_files=true
+    found_incorrect_files=true
   else
     # Always ensure the script is executable regardless of ownership
     chmod +x "$script_path"
@@ -6611,22 +6612,23 @@ fix_root_owned_files() {
   for dir in "${dirs_to_fix[@]}"; do
     echo "Checking directory: $dir"
     
-    # Find root-owned files and directories
-    local root_files=($(find "$dir" -user 0 -group 0 -type f -o -user 0 -group 0 -type d 2>/dev/null))
+    # Find files with incorrect ownership
+    local incorrect_files=($(find "$dir" \( ! -user 7777 -o ! -group 7777 \) -a \( ! -user 1000 -o ! -group 1000 \) -type f -o \( ! -user 7777 -o ! -group 7777 \) -a \( ! -user 1000 -o ! -group 1000 \) -type d 2>/dev/null))
     
-    if [ ${#root_files[@]} -gt 0 ]; then
-      found_root_files=true
-      echo "  Found ${#root_files[@]} files/directories owned by root in $dir"
+    if [ ${#incorrect_files[@]} -gt 0 ]; then
+      found_incorrect_files=true
+      echo "  Found ${#incorrect_files[@]} files/directories with incorrect ownership in $dir"
       echo "  Changing ownership to $PUID:$PGID..."
       
       # Change ownership of all files found
-      for file in "${root_files[@]}"; do
+      for file in "${incorrect_files[@]}"; do
+        local original_owner=$(stat -c '%u:%g' "$file")
         chown $PUID:$PGID "$file"
         ((fixed_count++))
         
         # For large numbers of files, don't output each one
         if [ $fixed_count -le 20 ]; then
-          echo "  ✓ Fixed: $file"
+          echo "  ✓ Fixed: $file (changed from $original_owner to $PUID:$PGID)"
         elif [ $fixed_count -eq 21 ]; then
           echo "  ✓ Fixed additional files (not showing all for brevity)..."
         fi
@@ -6634,18 +6636,18 @@ fix_root_owned_files() {
     fi
   done
   
-  if [ "$found_root_files" = "true" ]; then
-    echo "✅ Successfully fixed $fixed_count root-owned files. Your container should now work correctly."
-    # Verify fix was successful by checking if any root-owned files remain
+  if [ "$found_incorrect_files" = "true" ]; then
+    echo "✅ Successfully fixed $fixed_count files with incorrect ownership. Your container should now work correctly."
+    # Verify fix was successful by checking if any incorrectly owned files remain
     if detect_remaining_root_files; then
-      echo "⚠️ Warning: Some root-owned files could not be fixed. The container may still have permission issues."
+      echo "⚠️ Warning: Some files with incorrect ownership could not be fixed. The container may still have permission issues."
       return 2  # Partial success
     else
       echo "All permission issues have been resolved!"
       return 0  # Complete success
     fi
   else
-    echo "No root-owned files found. No changes were made."
+    echo "No files with incorrect ownership found. No changes were made."
     return 0  # No action needed
   fi
 }
