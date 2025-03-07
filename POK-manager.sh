@@ -4546,7 +4546,7 @@ display_usage() {
   echo "  -migrate                                  Migrate file ownership from 1000:1000 to 7777:7777 for compatibility with 2_1 images"
   echo "  -clearupdateflag <instance_name|-all>     Clear a stale updating.flag file if an update was interrupted"
   echo "  -API <TRUE|FALSE> <instance_name|-all>    Enable or disable ArkServerAPI for specified instance(s)"
-  echo "  -fix                                      Fix permissions on files owned by root (0:0) that could cause container issues"
+  echo "  -fix                                      Fix permissions on files owned by the wrong user that could cause container issues"
   echo "  -version                                  Display the current version of POK-manager"
   echo "  -api-recovery                             Check and recover API instances with container restart"
   echo "  -changelog                                Display the changelog"
