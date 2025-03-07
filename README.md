@@ -1,5 +1,9 @@
 # POK Ark Survival Ascended Server Management Script
 
+<p align="center">
+  <img src="https://cdn.akamai.steamstatic.com/steam/apps/2399830/header.jpg" alt="Ark Survival Ascended Logo" width="600">
+</p>
+
 [![Docker Pulls](https://img.shields.io/docker/pulls/acekorneya/asa_server?style=for-the-badge&logo=docker&logoColor=white&color=2496ED)](https://hub.docker.com/r/acekorneya/asa_server)
 [![GitHub Stars](https://img.shields.io/github/stars/Acekorneya/Ark-Survival-Ascended-Server?style=for-the-badge&logo=github&color=yellow)](https://github.com/Acekorneya/Ark-Survival-Ascended-Server)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Us-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/9GJKWjQuXy)
