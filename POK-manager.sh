@@ -554,6 +554,15 @@ install_jq() {
     elif [ -f /etc/arch-release ]; then
       # Arch Linux
       sudo pacman -Sy --noconfirm jq
+    elif [ -f /etc/alpine-release ]; then
+      # Alpine Linux
+      sudo apk add --no-cache jq
+    elif [ -f /etc/SuSE-release ] || [ -f /etc/SUSE-brand ]; then
+      # openSUSE
+      sudo zypper install -y jq
+    elif [ -f /etc/gentoo-release ]; then
+      # Gentoo
+      sudo emerge -av app-misc/jq
     else
       echo "Unsupported Linux distribution. Please install jq manually and run the setup again."
       return 1
@@ -590,10 +599,21 @@ check_dependencies() {
       elif [ -f /etc/arch-release ]; then
         # Arch Linux
         sudo pacman -Sy --noconfirm docker
+      elif [ -f /etc/alpine-release ]; then
+        # Alpine Linux
+        sudo apk add --no-cache docker
+      elif [ -f /etc/SuSE-release ] || [ -f /etc/SUSE-brand ]; then
+        # openSUSE
+        sudo zypper install -y docker
+      elif [ -f /etc/gentoo-release ]; then
+        # Gentoo
+        sudo emerge -av app-containers/docker
       else
         echo "Unsupported Linux distribution. Please install Docker manually and run the script again."
         exit 1
       fi
+      sudo systemctl enable docker
+      sudo systemctl start docker
       sudo usermod -aG docker $USER
       echo "Docker has been installed. Please log out and log back in for the changes to take effect."
     else
@@ -668,12 +688,27 @@ check_dependencies() {
     elif [ -f /etc/arch-release ]; then
       # Arch Linux
       echo "Detected Arch Linux system, installing Docker Compose..."
-      # Try to install docker compose plugin first (for V2)
-      if sudo pacman -Sy --noconfirm docker-compose 2>/dev/null; then
-        echo "Docker Compose installed successfully."
-        DOCKER_COMPOSE_CMD="docker-compose"
-        docker_compose_version_command="docker-compose --version"
-      fi
+      sudo pacman -Sy --noconfirm docker-compose
+      DOCKER_COMPOSE_CMD="docker-compose"
+      docker_compose_version_command="docker-compose --version"
+    elif [ -f /etc/alpine-release ]; then
+      # Alpine Linux
+      echo "Detected Alpine Linux system, installing Docker Compose..."
+      sudo apk add --no-cache docker-compose
+      DOCKER_COMPOSE_CMD="docker-compose"
+      docker_compose_version_command="docker-compose --version"
+    elif [ -f /etc/SuSE-release ] || [ -f /etc/SUSE-brand ]; then
+      # openSUSE
+      echo "Detected openSUSE system, installing Docker Compose..."
+      sudo zypper install -y docker-compose
+      DOCKER_COMPOSE_CMD="docker-compose"
+      docker_compose_version_command="docker-compose --version"
+    elif [ -f /etc/gentoo-release ]; then
+      # Gentoo
+      echo "Detected Gentoo system, installing Docker Compose..."
+      sudo emerge -av app-containers/docker-compose
+      DOCKER_COMPOSE_CMD="docker-compose"
+      docker_compose_version_command="docker-compose --version"
     else
       # For unsupported distributions, use the latest Docker Compose binary
       echo "Unsupported Linux distribution. Attempting to install Docker Compose binary..."
