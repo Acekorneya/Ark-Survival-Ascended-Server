@@ -1127,7 +1127,7 @@ These values are set when the Docker image is built and cannot be modified when 
 
 ### Runtime Environment Variables
 These values can be changed in your docker-compose.yaml file and take effect when the container starts:
-- All the other environment variables listed in the Environment Variables table above
+- All the other environment variables listed in the Environment Variables table
 
 To ensure proper file access between the host and container, the ownership of your files on the host 
 must match the PUID:PGID values of the Docker image you're using.
@@ -1155,7 +1155,7 @@ We Also have Ark Servers for people who dont have the requirements to host a ful
 
 - Server Name: POK-Community-CrossARK. 
 
-- Running Both Map in Cluster and More to Come as they release and added to the cluster. 
+- Running all Official Maps in Cluster and More to Come as they release and added to the cluster. 
 - PVE: A peaceful environment for your adventures.
 - Flyer Carry Enabled: Explore the skies with your tamed creatures.
 - Official Server Rates: Balanced gameplay for an enjoyable experience.
