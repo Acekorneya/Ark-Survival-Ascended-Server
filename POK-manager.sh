@@ -970,21 +970,12 @@ adjust_ownership_and_permissions() {
   if [ "$(id -u)" -eq 0 ]; then
     local target_owner=""
     
-    # Set ownership based on SUDO_USER if available
-    if [ -n "$SUDO_USER" ]; then
-      local sudo_uid=$(id -u "$SUDO_USER")
-      local sudo_gid=$(id -g "$SUDO_USER")
-      target_owner="${sudo_uid}:${sudo_gid}"
-    elif [ -n "$PUID" ] && [ -n "$PGID" ]; then
-      # If PUID/PGID are set, use them
-      target_owner="${PUID}:${PGID}"
+    # Determine the correct ownership based on migration status
+    # Always use either 7777:7777 or 1000:1000 regardless of who ran sudo
+    if [ -f "${BASE_DIR}/config/POK-manager/migration_complete" ]; then
+      target_owner="7777:7777"
     else
-      # Default to 1000:1000 (common first user) or 7777:7777 if migrated
-      if [ -f "${BASE_DIR}/config/POK-manager/migration_complete" ]; then
-        target_owner="7777:7777"
-      else
-        target_owner="1000:1000"
-      fi
+      target_owner="1000:1000"
     fi
     
     echo "Setting POK-manager.sh ownership to $target_owner"
@@ -3763,8 +3754,7 @@ manage_backup_rotation() {
   local max_backups="$2"
   local max_size_gb="$3"
 
-  local main_dir="${MAIN_DIR%/}"
-  local backup_dir="${main_dir}/backups/${instance_name}"
+  local backup_dir="${BASE_DIR}/backups/${instance_name}"
 
   # Convert max_size_gb to bytes
   local max_size_bytes=$((max_size_gb * 1024 * 1024 * 1024))
@@ -3800,25 +3790,24 @@ manage_backup_rotation() {
     backup_files=("${backup_files[@]:1}")
   done
 }
+
 read_backup_config() {
   local instance_name="$1"
-  local config_file="/config/POK-manager/backup_${instance_name}.conf"
-  local fallback_config="${BASE_DIR}/config/POK-manager/backup_${instance_name}.conf"
+  local config_file="${BASE_DIR}/config/POK-manager/backup_${instance_name}.conf"
 
-  # First try the main location
+  # Check if the config file exists
   if [ -f "$config_file" ]; then
     source "$config_file"
     max_backups=${MAX_BACKUPS:-10}
     max_size_gb=${MAX_SIZE_GB:-10}
-  # Then try the fallback location
-  elif [ -f "$fallback_config" ]; then
-    source "$fallback_config"
-    max_backups=${MAX_BACKUPS:-10}
-    max_size_gb=${MAX_SIZE_GB:-10}
+    echo "Using backup configuration from: $config_file"
   else
     # Use defaults if no config file exists
     max_backups=10
     max_size_gb=10
+    # Create the config file with default values since it doesn't exist
+    write_backup_config "$instance_name" "$max_backups" "$max_size_gb"
+    echo "Created default backup configuration for instance $instance_name (MAX_BACKUPS=$max_backups, MAX_SIZE_GB=$max_size_gb)"
   fi
 }
 
@@ -3827,37 +3816,41 @@ write_backup_config() {
   local max_backups="$2"
   local max_size_gb="$3"
 
-  local config_file="/config/POK-manager/backup_${instance_name}.conf"
+  # Get the parent directory ownership to match it for the config files
+  local parent_uid=$(stat -c '%u' "${BASE_DIR}")
+  local parent_gid=$(stat -c '%g' "${BASE_DIR}")
+  
+  # If we can't determine the parent directory ownership, use PUID/PGID
+  if [ -z "$parent_uid" ] || [ "$parent_uid" -eq 0 ]; then
+    parent_uid=$PUID
+  fi
+  if [ -z "$parent_gid" ] || [ "$parent_gid" -eq 0 ]; then
+    parent_gid=$PGID
+  fi
+
+  # Write to the config directory in BASE_DIR
+  local config_file="${BASE_DIR}/config/POK-manager/backup_${instance_name}.conf"
   local config_dir=$(dirname "$config_file")
   
-  # Ensure the directory exists with proper permissions
-  if [ ! -d "$config_dir" ]; then
-    # First try with regular permissions
-    mkdir -p "$config_dir" 2>/dev/null || true
-    
-    # If that fails, try with sudo (for container environments)
-    if [ ! -d "$config_dir" ]; then
-      echo "Warning: Failed to create $config_dir, trying with alternative methods..."
-      # Try using the BASE_DIR as fallback location
-      config_dir="${BASE_DIR}/config/POK-manager"
-      config_file="${config_dir}/backup_${instance_name}.conf"
-      mkdir -p "$config_dir"
-    fi
-  fi
+  # Ensure the directory exists
+  mkdir -p "$config_dir" 2>/dev/null || true
   
-  # Write the config file
-  if ! cat > "$config_file" <<EOF 2>/dev/null; then
+  if cat > "$config_file" <<EOF 2>/dev/null; then
 MAX_BACKUPS=$max_backups
 MAX_SIZE_GB=$max_size_gb
 EOF
-    echo "Warning: Failed to write to $config_file, using alternative location..."
-    # Use BASE_DIR as fallback
-    config_file="${BASE_DIR}/config/POK-manager/backup_${instance_name}.conf"
-    mkdir -p "$(dirname "$config_file")"
-    cat > "$config_file" <<EOF
-MAX_BACKUPS=$max_backups
-MAX_SIZE_GB=$max_size_gb
-EOF
+    # Make sure the file is readable
+    chmod 644 "$config_file" 2>/dev/null || true
+    # Set proper ownership for the config file if running as root
+    if [ "$(id -u)" -eq 0 ]; then
+      chown $parent_uid:$parent_gid "$config_file" 2>/dev/null || true
+    elif command -v sudo &>/dev/null; then
+      sudo chown $parent_uid:$parent_gid "$config_file" 2>/dev/null || true
+    fi
+    
+    echo "Backup configuration created at $config_file"
+  else
+    echo "Warning: Failed to create backup configuration file for instance $instance_name. Default values will be used: MAX_BACKUPS=10, MAX_SIZE_GB=10"
   fi
 }
 
@@ -3866,7 +3859,8 @@ prompt_backup_config() {
   
   echo "Setting up backup configuration for instance $instance_name with default values"
   echo "Maximum backups: 10, Maximum size: 10GB"
-  echo "You can change these settings by editing /config/POK-manager/backup_${instance_name}.conf"
+  echo "You can change these settings by editing the configuration file at:"
+  echo "  ${BASE_DIR}/config/POK-manager/backup_${instance_name}.conf"
   
   # Set default values
   write_backup_config "$instance_name" "10" "10"
@@ -3878,27 +3872,29 @@ backup_instance() {
   if [[ "$instance_name" == "-all" ]]; then
     local instances=($(list_instances))
     for instance in "${instances[@]}"; do
+      # Always ensure backup config exists before backing up
       read_backup_config "$instance"
-      if [ -z "$max_backups" ] || [ -z "$max_size_gb" ]; then
-        echo "Backup configuration missing or incomplete for instance $instance."
-        prompt_backup_config "$instance"
-      fi
+      backup_single_instance "$instance"
+      manage_backup_rotation "$instance" "$max_backups" "$max_size_gb"
+    done
+  elif [ -z "$instance_name" ]; then
+    echo "No instance name or '-all' flag specified. Defaulting to backing up all instances."
+    local instances=($(list_instances))
+    for instance in "${instances[@]}"; do
+      # Always ensure backup config exists before backing up
+      read_backup_config "$instance"
       backup_single_instance "$instance"
       manage_backup_rotation "$instance" "$max_backups" "$max_size_gb"
     done
   else
+    # Always ensure backup config exists before backing up
     read_backup_config "$instance_name"
-    if [ -z "$max_backups" ] || [ -z "$max_size_gb" ]; then
-      echo "Backup configuration missing or incomplete for instance $instance_name."
-      prompt_backup_config "$instance_name"
-    fi
     backup_single_instance "$instance_name"
     manage_backup_rotation "$instance_name" "$max_backups" "$max_size_gb"
   fi
 
   # Adjust ownership and permissions for the backup directory
-  local base_dir=$(dirname "$(realpath "$0")")
-  local backup_dir="${base_dir}/backups"
+  local backup_dir="${BASE_DIR}/backups"
   adjust_ownership_and_permissions "$backup_dir"
 }
 
@@ -3917,7 +3913,29 @@ backup_single_instance() {
   # Format the backup file name
   local backup_file="${instance_name}_backup_${timestamp}.tar.gz"
   
-  mkdir -p "$backup_dir"
+  # Create backup directory with proper permissions if it doesn't exist
+  if [ ! -d "$backup_dir" ]; then
+    echo "Creating backup directory for instance $instance_name..."
+    mkdir -p "$backup_dir"
+    
+    # Set proper permissions on the backup directory
+    if [ "$(id -u)" -eq 0 ]; then
+      # Get the parent directory ownership to match it for the backup directory
+      local parent_uid=$(stat -c '%u' "${BASE_DIR}")
+      local parent_gid=$(stat -c '%g' "${BASE_DIR}")
+      
+      # If we can't determine the parent directory ownership, use PUID/PGID
+      if [ -z "$parent_uid" ] || [ "$parent_uid" -eq 0 ]; then
+        parent_uid=$PUID
+      fi
+      if [ -z "$parent_gid" ] || [ "$parent_gid" -eq 0 ]; then
+        parent_gid=$PGID
+      fi
+      
+      # Apply ownership
+      chown $parent_uid:$parent_gid "$backup_dir"
+    fi
+  fi
 
   local instance_dir="${base_dir}/Instance_${instance_name}"
   local saved_arks_dir="${instance_dir}/Saved/SavedArks"
@@ -3925,6 +3943,24 @@ backup_single_instance() {
     echo "Creating backup for instance $instance_name..."
     tar -czf "${backup_dir}/${backup_file}" -C "$instance_dir/Saved" "SavedArks"
     echo "Backup created: ${backup_dir}/${backup_file}"
+    
+    # Set proper permissions on the backup file
+    if [ "$(id -u)" -eq 0 ]; then
+      # Get the parent directory ownership to match it for the backup file
+      local parent_uid=$(stat -c '%u' "${BASE_DIR}")
+      local parent_gid=$(stat -c '%g' "${BASE_DIR}")
+      
+      # If we can't determine the parent directory ownership, use PUID/PGID
+      if [ -z "$parent_uid" ] || [ "$parent_uid" -eq 0 ]; then
+        parent_uid=$PUID
+      fi
+      if [ -z "$parent_gid" ] || [ "$parent_gid" -eq 0 ]; then
+        parent_gid=$PGID
+      fi
+      
+      # Apply ownership
+      chown $parent_uid:$parent_gid "${backup_dir}/${backup_file}"
+    fi
   else
     echo "SavedArks directory not found for instance $instance_name. Skipping backup."
   fi
