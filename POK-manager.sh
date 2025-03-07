@@ -2104,7 +2104,8 @@ find_editor() {
 # Function to start an instance
 start_instance() {
   local instance_name=$1
-  local docker_compose_file="${BASE_DIR}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
+  local instance_dir="${BASE_DIR}/Instance_${instance_name}"
+  local docker_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
   local image_tag=$(get_docker_image_tag "$instance_name")
   
   echo "-----Starting ${instance_name} Server with image tag ${image_tag}-----"
@@ -2114,9 +2115,162 @@ start_instance() {
   
   # First check if the docker-compose file exists
   if [ ! -f "$docker_compose_file" ]; then
-    echo "❌ ERROR: Docker Compose file not found at $docker_compose_file"
-    echo "Make sure the instance ${instance_name} exists and is properly configured."
-    exit 1
+    # Try to find any docker-compose file in the instance directory
+    local found_compose_files=($(find "${instance_dir}" -maxdepth 1 -name 'docker-compose-*.yaml' 2>/dev/null || true))
+    
+    if [ ${#found_compose_files[@]} -gt 0 ]; then
+      # Take the first one found
+      local found_compose_file="${found_compose_files[0]}"
+      local found_instance_name=$(basename "$found_compose_file" | sed 's/docker-compose-//g' | sed 's/\.yaml//g')
+      
+      echo "⚠️ Found a docker-compose file for instance '$found_instance_name' in folder for '$instance_name'"
+      echo "This may happen if you renamed the folder manually instead of using the script's rename feature."
+      
+      # Ask user which name they want to use
+      echo "Would you like to:"
+      echo "1) Change the docker-compose file to match the folder name: '$instance_name'"
+      echo "2) Use the instance name from the docker-compose file: '$found_instance_name'"
+      read -p "Enter your choice (1 or 2): " name_choice
+      
+      if [[ "$name_choice" == "2" ]]; then
+        echo "Using instance name from docker-compose file: '$found_instance_name'"
+        instance_name="$found_instance_name"
+        docker_compose_file="$found_compose_file"
+      else
+        echo "Automatically fixing the docker-compose file to match the instance name: '$instance_name'"
+        
+        # Create a backup of the original file
+        local backup_file="${found_compose_file}.backup_$(date +%Y%m%d_%H%M%S)"
+        cp "$found_compose_file" "$backup_file"
+        # Set the correct ownership for the backup file to match parent folder
+        local parent_ownership=$(stat -c "%u:%g" "${instance_dir}")
+        chown "$parent_ownership" "$backup_file"
+        echo "Created backup of original docker-compose file at: $backup_file"
+        
+        # Update the compose file - container name, instance name and volumes
+        echo "Updating docker-compose file to match new instance name: $instance_name"
+        
+        # Update container name - handle both quoted and unquoted formats
+        sed -i "s/container_name: \"asa_${found_instance_name}\"/container_name: \"asa_${instance_name}\"/g" "$found_compose_file"
+        sed -i "s/container_name: asa_${found_instance_name}/container_name: asa_${instance_name}/g" "$found_compose_file"
+        
+        # Update environment variables for instance name
+        sed -i "s/INSTANCE_NAME=${found_instance_name}/INSTANCE_NAME=${instance_name}/g" "$found_compose_file"
+        sed -i "s/- INSTANCE_NAME=${found_instance_name}/- INSTANCE_NAME=${instance_name}/g" "$found_compose_file"
+        
+        # Update volume paths
+        sed -i "s|Instance_${found_instance_name}/Saved|Instance_${instance_name}/Saved|g" "$found_compose_file"
+        sed -i "s|Instance_${found_instance_name}/API_Logs|Instance_${instance_name}/API_Logs|g" "$found_compose_file"
+        
+        # Rename the file itself to match the new instance name
+        mv "$found_compose_file" "$docker_compose_file"
+        echo "Renamed docker-compose file to match new instance name"
+        
+        echo "Using updated docker-compose file: $docker_compose_file"
+      fi
+    else
+      echo "❌ ERROR: Docker Compose file not found at $docker_compose_file"
+      echo "Make sure the instance ${instance_name} exists and is properly configured."
+      exit 1
+    fi
+  else
+    # Docker compose file exists, but let's verify its contents match the instance name
+    local file_instance_name=$(grep -E "container_name:.*asa_" "$docker_compose_file" | sed -E 's/.*container_name:.*asa_([^"]*).*/\1/' | tr -d ' ')
+    local env_instance_name=$(grep -E "INSTANCE_NAME=" "$docker_compose_file" | sed -E 's/.*INSTANCE_NAME=([^"]*).*/\1/' | tr -d ' ')
+    
+    if [[ "$file_instance_name" != "$instance_name" || "$env_instance_name" != "$instance_name" ]]; then
+      echo "⚠️ Docker compose file exists but contains mismatched instance names."
+      echo "Found container name in docker-compose file: 'asa_$file_instance_name'"
+      echo "Found INSTANCE_NAME in docker-compose file: '$env_instance_name'"
+      
+      # Ask user which name they want to use
+      echo "Would you like to:"
+      echo "1) Change the docker-compose file to match the folder name: '$instance_name'"
+      echo "2) Use the instance name from the docker-compose file: '$file_instance_name'"
+      read -p "Enter your choice (1 or 2): " name_choice
+      
+      if [[ "$name_choice" == "2" ]]; then
+        echo "Using instance name from docker-compose file: '$file_instance_name'"
+        instance_name="$file_instance_name"
+      else
+        echo "Automatically fixing the docker-compose file to match the instance name: '$instance_name'"
+        
+        # Create a backup of the original file
+        local backup_file="${docker_compose_file}.backup_$(date +%Y%m%d_%H%M%S)"
+        cp "$docker_compose_file" "$backup_file"
+        # Set the correct ownership for the backup file to match parent folder
+        local parent_ownership=$(stat -c "%u:%g" "${instance_dir}")
+        chown "$parent_ownership" "$backup_file"
+        echo "Created backup of original docker-compose file at: $backup_file"
+        
+        # Update container name - handle both quoted and unquoted formats
+        sed -i "s/container_name: \"asa_${file_instance_name}\"/container_name: \"asa_${instance_name}\"/g" "$docker_compose_file"
+        sed -i "s/container_name: asa_${file_instance_name}/container_name: asa_${instance_name}/g" "$docker_compose_file"
+        
+        # Update environment variables for instance name - handle both formats with and without leading hyphen
+        sed -i "s/INSTANCE_NAME=${env_instance_name}/INSTANCE_NAME=${instance_name}/g" "$docker_compose_file"
+        sed -i "s/- INSTANCE_NAME=${env_instance_name}/- INSTANCE_NAME=${instance_name}/g" "$docker_compose_file"
+        
+        # Update volume paths if they contain the old instance name
+        sed -i "s|Instance_${file_instance_name}/Saved|Instance_${instance_name}/Saved|g" "$docker_compose_file"
+        sed -i "s|Instance_${file_instance_name}/API_Logs|Instance_${instance_name}/API_Logs|g" "$docker_compose_file"
+        
+        echo "Updated docker-compose file to match instance name: $instance_name"
+      fi
+    fi
+  fi
+  
+  # Validate docker-compose file to ensure all instance names match
+  echo "Validating docker-compose file for consistency..."
+  local compose_file_name=$(basename "$docker_compose_file" | sed 's/docker-compose-//g' | sed 's/\.yaml//g')
+  local container_name=$(grep -E "container_name:.*asa_" "$docker_compose_file" | sed -E 's/.*container_name:.*asa_([^"]*).*/\1/' | tr -d ' ')
+  local env_instance_name=$(grep -E "INSTANCE_NAME=" "$docker_compose_file" | sed -E 's/.*INSTANCE_NAME=([^"]*).*/\1/' | tr -d ' ')
+  
+  if [[ "$compose_file_name" != "$instance_name" || "$container_name" != "$instance_name" || "$env_instance_name" != "$instance_name" ]]; then
+    echo "⚠️ WARNING: Inconsistencies found in docker-compose file:"
+    echo "  - Folder instance name: $instance_name"
+    echo "  - Docker compose filename instance: $compose_file_name"
+    echo "  - Container name instance: $container_name"
+    echo "  - Environment INSTANCE_NAME: $env_instance_name"
+    echo "These inconsistencies may cause issues with server operation."
+    echo "Would you like to fix these inconsistencies automatically? (y/N)"
+    read -p "> " fix_inconsistencies
+    
+    if [[ "$fix_inconsistencies" =~ ^[Yy]$ ]]; then
+      echo "Creating backup of current docker-compose file..."
+      local backup_file="${docker_compose_file}.backup_$(date +%Y%m%d_%H%M%S)"
+      cp "$docker_compose_file" "$backup_file"
+      # Set the correct ownership for the backup file to match parent folder
+      local parent_ownership=$(stat -c "%u:%g" "${instance_dir}")
+      chown "$parent_ownership" "$backup_file"
+      
+      echo "Fixing inconsistencies to use instance name: $instance_name"
+      # Update container name - handle both quoted and unquoted formats
+      sed -i "s/container_name: \"asa_${container_name}\"/container_name: \"asa_${instance_name}\"/g" "$docker_compose_file"
+      sed -i "s/container_name: asa_${container_name}/container_name: asa_${instance_name}/g" "$docker_compose_file"
+      
+      # Update environment variables - handle both formats with and without leading hyphen
+      sed -i "s/INSTANCE_NAME=${env_instance_name}/INSTANCE_NAME=${instance_name}/g" "$docker_compose_file"
+      sed -i "s/- INSTANCE_NAME=${env_instance_name}/- INSTANCE_NAME=${instance_name}/g" "$docker_compose_file"
+      
+      # Update volume paths
+      sed -i "s|Instance_${container_name}/Saved|Instance_${instance_name}/Saved|g" "$docker_compose_file"
+      sed -i "s|Instance_${container_name}/API_Logs|Instance_${instance_name}/API_Logs|g" "$docker_compose_file"
+      
+      # If the filename doesn't match, rename it
+      if [[ "$compose_file_name" != "$instance_name" ]]; then
+        local new_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
+        mv "$docker_compose_file" "$new_compose_file"
+        docker_compose_file="$new_compose_file"
+        echo "Renamed docker-compose file to: $(basename "$docker_compose_file")"
+      fi
+      
+      echo "✅ All inconsistencies fixed. Using instance name: $instance_name"
+    else
+      echo "Continuing with existing configuration. Some features may not work correctly."
+    fi
+  else
+    echo "✅ Docker-compose file validation passed. All instance names match: $instance_name"
   fi
 
   # Check for root-owned files that might cause permission issues
@@ -2622,11 +2776,56 @@ start_instance() {
 stop_instance() {
   local instance_name=$1
   local base_dir="${BASE_DIR}"
-  local docker_compose_file="${base_dir}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
+  local instance_dir="${base_dir}/Instance_${instance_name}"
+  local docker_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
   local container_name="asa_${instance_name}"
+  
+  # Check if the docker-compose file exists
+  if [ ! -f "$docker_compose_file" ]; then
+    # Try to find any docker-compose file in the instance directory
+    local found_compose_files=($(find "${instance_dir}" -maxdepth 1 -name 'docker-compose-*.yaml' 2>/dev/null || true))
+    
+    if [ ${#found_compose_files[@]} -gt 0 ]; then
+      # Take the first one found
+      local found_compose_file="${found_compose_files[0]}"
+      local found_instance_name=$(basename "$found_compose_file" | sed 's/docker-compose-//g' | sed 's/\.yaml//g')
+      
+      echo "⚠️ Found a docker-compose file for instance '$found_instance_name' in folder for '$instance_name'"
+      echo "This may happen if you renamed the folder manually instead of using the script's rename feature."
+      echo "Using the found docker-compose file: $found_compose_file"
+      
+      # Get the container name from the found docker-compose file
+      if grep -q "container_name:" "$found_compose_file"; then
+        # Extract container name handling both quoted and unquoted formats
+        local found_container=""
+        if grep -q "container_name: \"" "$found_compose_file"; then
+          # Extract quoted container name
+          found_container=$(grep "container_name:" "$found_compose_file" | sed 's/.*container_name: "\(.*\)".*/\1/')
+        else
+          # Extract unquoted container name
+          found_container=$(grep "container_name:" "$found_compose_file" | sed 's/.*container_name: \(.*\)/\1/')
+        fi
+        
+        if [ -n "$found_container" ]; then
+          container_name="$found_container"
+          echo "Using container name from docker-compose file: $container_name"
+        fi
+      fi
+      
+      docker_compose_file="$found_compose_file"
+    fi
+  fi
   
   # Get container ID using our more robust method
   local container_id=$(get_instance_container_id "$instance_name")
+
+  # If we couldn't find a container for the instance_name, try with the found_instance_name if available
+  if [ -z "$container_id" ] && [ -n "$found_instance_name" ]; then
+    container_id=$(get_instance_container_id "$found_instance_name")
+    if [ -n "$container_id" ]; then
+      echo "Found running container for '$found_instance_name' instead of '$instance_name'"
+    fi
+  fi
 
   echo "-----Stopping ${instance_name} Server-----"
   
@@ -3846,9 +4045,30 @@ validate_instance() {
       echo "Use './POK-manager.sh -start $instance_name' to start it."
     else
       # Check if the instance directory exists at least
-      local base_dir=$(dirname "$(realpath "$0")")
+      local base_dir="${BASE_DIR}"
       local instance_dir="${base_dir}/Instance_${instance_name}"
+      local docker_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
+      
       if [ -d "$instance_dir" ]; then
+        # Directory exists but expected docker-compose doesn't
+        if [ ! -f "$docker_compose_file" ]; then
+          # Check for any docker-compose file
+          local found_compose_files=($(find "${instance_dir}" -maxdepth 1 -name 'docker-compose-*.yaml' 2>/dev/null || true))
+          
+          if [ ${#found_compose_files[@]} -gt 0 ]; then
+            # Found a mismatched docker-compose file
+            local found_compose_file="${found_compose_files[0]}"
+            local found_instance_name=$(basename "$found_compose_file" | sed 's/docker-compose-//g' | sed 's/\.yaml//g')
+            
+            echo "⚠️ Warning: Found a mismatched docker-compose file in folder for instance '$instance_name'."
+            echo "The docker-compose file is for instance '$found_instance_name'."
+            echo "This can happen if you renamed a folder manually instead of using the rename feature."
+            echo "Use './POK-manager.sh -start $instance_name' to fix this issue automatically."
+            echo "When prompted, select option 1 to update all references in the docker-compose file."
+            return 1
+          fi
+        fi
+        
         echo "Instance $instance_name is configured but has never been started or is currently stopped."
         echo "Use './POK-manager.sh -start $instance_name' to start it."
       else
