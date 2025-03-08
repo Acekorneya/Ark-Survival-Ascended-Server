@@ -2950,7 +2950,8 @@ execute_rcon_command() {
 
   # New validation to check for extra dash in RCON command
   if [[ "$message" =~ ^- ]]; then
-    echo "Error: RCON command should not start with a dash. Please use '-custom <RCON command> -all or instance name' instead."
+    echo "Error: RCON command should not start with a dash. Please use '-custom <RCON command>' instead."
+    echo "Usage: ./POK-manager.sh -custom <RCON command> <instance_name|-all>"
     return 1
   fi
 
