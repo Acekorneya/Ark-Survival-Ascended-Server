@@ -2948,6 +2948,12 @@ execute_rcon_command() {
     local target_all=false
   fi
 
+  # New validation to check for extra dash in RCON command
+  if [[ "$message" =~ ^- ]]; then
+    echo "Error: RCON command should not start with a dash. Please use '-custom <RCON command>' instead."
+    return 1
+  fi
+
   if [[ "$target_all" == "true" ]]; then
     # Get list of running instances
     local running_instances=($(list_running_instances))

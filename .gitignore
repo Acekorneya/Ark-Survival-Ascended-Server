@@ -1,0 +1,13 @@
+# Ignore everything
+*
+
+# Except the following files and directories
+!.gitignore
+!/defaults/
+!/scripts/
+!/changelog.txt
+!/Dockerfile
+!/docker-compose.yaml
+!/LICENSE.txt
+!/POK-manager.sh
+!/README.md
