@@ -3,7 +3,7 @@
 POK_MANAGER_VERSION="2.1.67"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
-# Get the base directory
+# Get the base directory for the script
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 BASE_DIR="$SCRIPT_DIR"
 
