@@ -19,7 +19,7 @@
 - Added intelligent ownership handling for backup configuration files
 - Improved permission management for backup configuration to prevent access issues
 - Maintained backward compatibility with existing backup configurations
-- Added default values for cronjob backups: 10GB maximum size and 10 backups retained when not specified
+- Added default values for cronjob backups: 10GB maximum size and 10 backups retained when not specified  
 
 ## Version 2.1.67 (Previous)
 ### Improvements
