@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.67"
+POK_MANAGER_VERSION="2.1.68"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory for the script
@@ -1414,7 +1414,6 @@ root_tasks() {
   check_dependencies
   install_jq
   install_yq
-  install_steamcmd
   adjust_ownership_and_permissions "${base_dir}/ServerFiles/arkserver"
   adjust_ownership_and_permissions "${base_dir}/ServerFiles/arkserver/ShooterGame"
   adjust_ownership_and_permissions "${base_dir}/Cluster"
@@ -3672,53 +3671,6 @@ check_for_POK_updates() {
   fi
 }
 
-install_steamcmd() {
-  local steamcmd_dir="$BASE_DIR/config/POK-manager/steamcmd"
-  local steamcmd_script="$steamcmd_dir/steamcmd.sh"
-  local steamcmd_binary="$steamcmd_dir/linux32/steamcmd"
-
-  if [ ! -f "$steamcmd_script" ] || [ ! -f "$steamcmd_binary" ]; then
-    echo "SteamCMD not found. Attempting to install SteamCMD..."
-
-    mkdir -p "$steamcmd_dir"
-
-    if [ -f /etc/debian_version ]; then
-      # Debian or Ubuntu
-      sudo dpkg --add-architecture i386
-      sudo apt-get update
-      sudo apt-get install -y curl lib32gcc-s1
-    elif [ -f /etc/redhat-release ]; then
-      # Red Hat, CentOS, or Fedora
-      if command -v dnf &>/dev/null; then
-        sudo dnf install -y curl glibc.i686 libstdc++.i686
-      else
-        sudo yum install -y curl glibc.i686 libstdc++.i686
-      fi
-    elif [ -f /etc/arch-release ]; then
-      # Arch Linux
-      sudo pacman -Sy --noconfirm curl lib32-gcc-libs
-    else
-      echo "Unsupported Linux distribution. Please install curl and 32-bit libraries manually and run the setup again."
-      return 1
-    fi
-
-    curl -s "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz" | tar -xz -C "$steamcmd_dir"
-
-    # Set executable permissions on steamcmd.sh and steamcmd binary
-    adjust_ownership_and_permissions "$steamcmd_dir"
-    chmod +x "$steamcmd_script"
-    chmod +x "$steamcmd_binary"
-
-    if [ -f "$steamcmd_script" ] && [ -f "$steamcmd_binary" ]; then
-      echo "SteamCMD has been successfully installed."
-    else
-      echo "Failed to install SteamCMD. Please install it manually and run the setup again."
-      return 1
-    fi
-  else
-    echo "SteamCMD is already installed."
-  fi
-}
 is_sudo() {
   if [ "$EUID" -eq 0 ]; then
     return 0
@@ -3731,31 +3683,6 @@ get_current_build_id() {
   local build_id=$(curl -sX GET "https://api.steamcmd.net/v1/info/$app_id" | jq -r ".data.\"$app_id\".depots.branches.public.buildid")
   echo "$build_id"
 }
-ensure_steamcmd_executable() {
-  local steamcmd_dir="$BASE_DIR/config/POK-manager/steamcmd"
-  local steamcmd_script="$steamcmd_dir/steamcmd.sh"
-  local steamcmd_binary="$steamcmd_dir/linux32/steamcmd"
-
-  if [ -f "$steamcmd_script" ]; then
-    if [ ! -x "$steamcmd_script" ]; then
-      echo "Making SteamCMD script executable..."
-      chmod +x "$steamcmd_script"
-    fi
-  else
-    echo "SteamCMD script not found. Please make sure it is installed correctly."
-    exit 1
-  fi
-
-  if [ -f "$steamcmd_binary" ]; then
-    if [ ! -x "$steamcmd_binary" ]; then
-      echo "Making SteamCMD binary executable..."
-      chmod +x "$steamcmd_binary"
-    fi
-  else
-    echo "SteamCMD binary not found. Please make sure it is installed correctly."
-    exit 1
-  fi
-}
 
 manage_backup_rotation() {
   local instance_name="$1"
@@ -3764,55 +3691,71 @@ manage_backup_rotation() {
 
   local backup_dir="${BASE_DIR}/backups/${instance_name}"
 
-  # Convert max_size_gb to bytes
+  # Convert max_size_gb to bytes for precise size comparison
   local max_size_bytes=$((max_size_gb * 1024 * 1024 * 1024))
 
   # Get a list of backup files sorted by modification time (oldest first)
   local backup_files=($(ls -tr "${backup_dir}/"*.tar.gz 2>/dev/null))
-
-  # Check if the number of backups exceeds the maximum allowed
-  while [ ${#backup_files[@]} -gt $max_backups ]; do
-    # Remove the oldest backup
-    local oldest_backup="${backup_files[0]}"
-    echo "Removing old backup: $oldest_backup"
-    rm "$oldest_backup"
-    # Remove the oldest backup from the array
-    backup_files=("${backup_files[@]:1}")
-  done
-
+  
   # Calculate the total size of the backups
   local total_size_bytes=0
   for backup_file in "${backup_files[@]}"; do
     total_size_bytes=$((total_size_bytes + $(stat -c%s "$backup_file")))
   done
+  
+  echo "Current backup size for $instance_name: $(( total_size_bytes / 1024 / 1024 / 1024 ))GB / ${max_size_gb}GB ($(( total_size_bytes / 1024 / 1024 ))MB)"
+  echo "Current backup count for $instance_name: ${#backup_files[@]} / ${max_backups}"
 
-  # Check if the total size exceeds the maximum allowed
-  while [ $total_size_bytes -gt $max_size_bytes ]; do
+  # First priority: Enforce the MAX_SIZE_GB limit
+  # Remove oldest backups until we're under the size limit
+  while [ $total_size_bytes -gt $max_size_bytes ] && [ ${#backup_files[@]} -gt 0 ]; do
     # Remove the oldest backup
     local oldest_backup="${backup_files[0]}"
-    echo "Removing old backup due to size limit: $oldest_backup"
     local backup_size_bytes=$(stat -c%s "$oldest_backup")
+    echo "Size limit exceeded: Removing old backup: $oldest_backup ($(( backup_size_bytes / 1024 / 1024 ))MB)"
     rm "$oldest_backup"
     total_size_bytes=$((total_size_bytes - backup_size_bytes))
     # Remove the oldest backup from the array
     backup_files=("${backup_files[@]:1}")
   done
+
+  # Second priority: Enforce the MAX_BACKUPS limit only if we have space
+  # Only remove backups if we're under the size limit but over the count limit
+  if [ $total_size_bytes -le $max_size_bytes ]; then
+    while [ ${#backup_files[@]} -gt $max_backups ] && [ ${#backup_files[@]} -gt 0 ]; do
+      # Remove the oldest backup
+      local oldest_backup="${backup_files[0]}"
+      local backup_size_bytes=$(stat -c%s "$oldest_backup")
+      echo "Count limit exceeded: Removing old backup: $oldest_backup ($(( backup_size_bytes / 1024 / 1024 ))MB)"
+      rm "$oldest_backup"
+      total_size_bytes=$((total_size_bytes - backup_size_bytes))
+      # Remove the oldest backup from the array
+      backup_files=("${backup_files[@]:1}")
+    done
+  fi
+
+  # Final status report
+  echo "After rotation: $(( total_size_bytes / 1024 / 1024 / 1024 ))GB / ${max_size_gb}GB, ${#backup_files[@]} / ${max_backups} backups"
 }
 
 read_backup_config() {
   local instance_name="$1"
   local config_file="${BASE_DIR}/config/POK-manager/backup_${instance_name}.conf"
 
+  # Default values for cronjobs or when config doesn't exist
+  max_backups=10
+  max_size_gb=10
+
   # Check if the config file exists
   if [ -f "$config_file" ]; then
     source "$config_file"
+    # Ensure we have values even if the config file is malformed
     max_backups=${MAX_BACKUPS:-10}
     max_size_gb=${MAX_SIZE_GB:-10}
     echo "Using backup configuration from: $config_file"
+    echo "  - Maximum backups: $max_backups"
+    echo "  - Maximum size: ${max_size_gb}GB"
   else
-    # Use defaults if no config file exists
-    max_backups=10
-    max_size_gb=10
     # Create the config file with default values since it doesn't exist
     write_backup_config "$instance_name" "$max_backups" "$max_size_gb"
     echo "Created default backup configuration for instance $instance_name (MAX_BACKUPS=$max_backups, MAX_SIZE_GB=$max_size_gb)"
@@ -3844,6 +3787,9 @@ write_backup_config() {
   mkdir -p "$config_dir" 2>/dev/null || true
   
   if cat > "$config_file" <<EOF 2>/dev/null; then
+# Backup configuration for instance $instance_name
+# MAX_SIZE_GB is the primary constraint - backups will be removed to stay under this limit
+# MAX_BACKUPS is a secondary constraint only applied if size limit allows
 MAX_BACKUPS=$max_backups
 MAX_SIZE_GB=$max_size_gb
 EOF
@@ -3865,13 +3811,19 @@ EOF
 prompt_backup_config() {
   local instance_name="$1"
   
-  echo "Setting up backup configuration for instance $instance_name with default values"
-  echo "Maximum backups: 10, Maximum size: 10GB"
-  echo "You can change these settings by editing the configuration file at:"
-  echo "  ${BASE_DIR}/config/POK-manager/backup_${instance_name}.conf"
+  echo "Setting up backup configuration for instance $instance_name"
+  read -p "Enter maximum backup size in GB [10]: " max_size_gb
+  max_size_gb=${max_size_gb:-10}
   
-  # Set default values
-  write_backup_config "$instance_name" "10" "10"
+  read -p "Enter maximum number of backups to keep [10]: " max_backups
+  max_backups=${max_backups:-10}
+  
+  echo "Backup configuration for instance $instance_name:"
+  echo "  - Maximum size: ${max_size_gb}GB (primary constraint)"
+  echo "  - Maximum backups: $max_backups (secondary constraint)"
+  
+  # Write the configuration
+  write_backup_config "$instance_name" "$max_backups" "$max_size_gb"
 }
 
 backup_instance() {

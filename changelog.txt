@@ -1,6 +1,27 @@
 # POK-Manager Changelog
 
-## Version 2.1.67 (Latest)
+## Version 2.1.68 (Latest)
+### System Improvements
+- Removed host-based SteamCMD installation to reduce dependencies
+- Simplified system requirements by eliminating unnecessary SteamCMD functions
+- Enhanced containerization by relying exclusively on container's SteamCMD
+- Improved compatibility across different Linux distributions
+- Reduced potential points of failure by removing unused code
+- Ensured consistent server updates regardless of host environment
+### Backup System Improvements
+- Enhanced backup rotation system with prioritized constraints for better space management
+- Implemented smarter size-based rotation where maximum size is the primary constraint
+- Added secondary count-based rotation that only applies when size constraints allow
+- Improved backup reporting with detailed size information in both GB and MB
+- Enhanced backup configuration with persistent settings per instance
+- Added comprehensive status reporting before and after backup rotation
+- Implemented auto-creation of default backup settings when configuration is missing
+- Added intelligent ownership handling for backup configuration files
+- Improved permission management for backup configuration to prevent access issues
+- Maintained backward compatibility with existing backup configurations
+- Added default values for cronjob backups: 10GB maximum size and 10 backups retained when not specified
+
+## Version 2.1.67 (Previous)
 ### Improvements
 - stable release.
 - Added automatic Docker Compose installation for supported Linux distributions
