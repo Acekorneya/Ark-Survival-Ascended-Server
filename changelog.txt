@@ -1,6 +1,16 @@
 # POK-Manager Changelog
 
-## Version 2.1.68 (Latest)
+## Version 2.1.69 (Latest)
+### System Improvements
+- Fixed issue with `-restart` command prompting for password in non-interactive sessions
+- Improved automation support for cronjobs by avoiding password prompts
+- Added detection of non-interactive environments to prevent sudo password requests
+- Enhanced error handling when Docker commands fail in cronjob/automated environments
+- Ensured containers restart automatically without requiring manual intervention
+- Improved reliability of scheduled restarts through cron jobs
+- Eliminated manual password prompts for Docker operations in automated environments
+
+## Version 2.1.68 (Previous)
 ### System Improvements
 - Removed host-based SteamCMD installation to reduce dependencies
 - Simplified system requirements by eliminating unnecessary SteamCMD functions
