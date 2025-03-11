@@ -263,12 +263,6 @@ get_instance_container_id() {
   echo "$container_id"
 }
 
-# Function to get all running ASA containers
-get_all_asa_containers() {
-  # Get all running containers that match ASA server criteria
-  docker ps --format "{{.ID}}|{{.Names}}|{{.Image}}" | grep "asa_" | grep "acekorneya/asa_server"
-}
-
 # Define colors for pretty output
 RED='\033[0;31m'
 
@@ -469,12 +463,6 @@ validate_session_name() {
   while [[ "$input" =~ [\"\'] ]]; do
     read -rp "Invalid input. The session name cannot contain double quotes (\") or single quotes ('). Please enter a valid session name: " input
   done
-  echo "$input"
-}
-
-validate_generic() {
-  local input="$1"
-  # This function can be expanded to escape special characters or check for injection patterns
   echo "$input"
 }
 
@@ -1719,66 +1707,6 @@ adjust_docker_permissions() {
   # If we got here, use sudo for docker commands
   echo "true" > "$config_file" 2>/dev/null || true
   echo "Please ensure to use 'sudo' for Docker commands or run this script with 'sudo'."
-}
-
-get_docker_preference() {
-  local config_file=$(get_config_file_path)
-  local config_dir=$(dirname "$config_file")
-
-  # Quick check for post-migration permission issues
-  if [ "$(id -u)" -ne 0 ] && [ -f "${BASE_DIR}/config/POK-manager/migration_complete" ]; then
-    if [ -d "$config_dir" ]; then
-      local dir_owner=$(stat -c '%u' "$config_dir")
-      if [ "$dir_owner" = "7777" ] && [ "$(id -u)" -ne 7777 ]; then
-        # Return true (use sudo) if we're running with wrong permissions after migration
-        echo "true"
-        return
-      fi
-    fi
-  fi
-
-  # Ensure config directory exists with proper permissions
-  if [ ! -d "$config_dir" ]; then
-    mkdir -p "$config_dir"
-    # If running as root/sudo, set proper ownership
-    if [ "$(id -u)" -eq 0 ]; then
-      if [ -d "${BASE_DIR}/ServerFiles/arkserver" ]; then
-        local dir_owner=$(stat -c '%u' "${BASE_DIR}/ServerFiles/arkserver")
-        local dir_group=$(stat -c '%g' "${BASE_DIR}/ServerFiles/arkserver")
-        chown -R "${dir_owner}:${dir_group}" "$config_dir"
-      else
-        chown -R "${PUID}:${PGID}" "$config_dir"
-      fi
-    fi
-  fi
-
-  if [ -f "$config_file" ]; then
-    # Try to read the file
-    if [ -r "$config_file" ]; then
-      local use_sudo
-      use_sudo=$(cat "$config_file")
-      echo "$use_sudo"
-    else
-      # If we can't read the file due to permissions, try with sudo
-      if [ "$(id -u)" -eq 0 ]; then
-        local use_sudo
-        use_sudo=$(cat "$config_file" 2>/dev/null || echo "true")
-        echo "$use_sudo"
-      else
-        # Check if migration has been completed and user has incorrect UID
-        if [ -f "${BASE_DIR}/config/POK-manager/migration_complete" ] && [ "$(id -u)" -ne 7777 ] && [ "$(id -u)" -ne 0 ]; then
-          # We'll handle this with the main check_post_migration_permissions function
-          # Just return true here to use sudo by default
-          echo "true"
-        else
-          # Default to true if we can't read the file
-          echo "true"
-        fi
-      fi
-    fi
-  else
-    echo "true"
-  fi
 }
 
 prompt_for_instance_name() {
@@ -3336,76 +3264,6 @@ wait_for_shutdown() {
   return 1
 }
 
-inject_shutdown_flag_and_shutdown() {
-  local instance="$1"
-  local message="$2"
-  local wait_time="$3"
-  local container_name="asa_${instance}" # Assuming container naming convention
-  local base_dir="${BASE_DIR}"
-  local instance_dir="${base_dir}/Instance_${instance}"
-  local docker_compose_file="${instance_dir}/docker-compose-${instance}.yaml"
-
-  # Check if the container exists and is running
-  if docker ps -q -f name=^/${container_name}$ > /dev/null; then
-    echo "Preparing container for shutdown..."
-    
-    # Create a check file to verify if the server was already saved
-    docker exec "$container_name" touch /home/pok/shutdown_prepared.flag
-    
-    # First inject shutdown.flag into the container
-    # This signals to the container's monitoring scripts that shutdown is intended
-    echo "Injecting shutdown flag..."
-    docker exec "$container_name" touch /home/pok/shutdown.flag
-    
-    # Check if any wait time is left - rarely needed but good for safety
-    local current_time=$(date +%s)
-    local eta_time=$(date -d "@$((current_time + wait_time * 60))" "+%s")
-    local remaining_seconds=$((eta_time - current_time))
-    
-    if [ $remaining_seconds -gt 10 ]; then  # If more than 10 seconds left
-      echo "Waiting for server's internal countdown to complete..."
-      sleep $remaining_seconds
-    fi
-    
-    # Verify the game process is still running before trying to save again
-    if docker exec "$container_name" pgrep -f "ArkAscendedServer.exe" > /dev/null; then
-      # Send a final saveworld command to ensure latest data is saved
-      echo "Sending final save command to server..."
-      docker exec "$container_name" /bin/bash -c "/home/pok/scripts/rcon_interface.sh -saveworld" >/dev/null 2>&1 || true
-      
-      # Create a short wait to allow save to complete
-      sleep 5
-    else
-      echo "Game process has already stopped."
-    fi
-    
-    # Create a shutdown_complete flag for the wait function to check
-    docker exec "$container_name" touch /home/pok/shutdown_complete.flag 2>/dev/null || true
-    
-    # Wait for shutdown completion with timeout
-    echo "Waiting for server process to exit completely..."
-    if ! wait_for_shutdown "$instance" "$wait_time"; then
-      echo "Warning: Shutdown wait timed out. Forcing container shutdown."
-    fi
-    
-    # Get docker compose command
-    get_docker_compose_cmd
-    
-    # Shutdown the container using docker-compose
-    echo "Stopping container for $instance..."
-    if [ -f "$docker_compose_file" ]; then
-      $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down
-    else
-      # Fallback to docker stop if compose file not found
-      docker stop "$container_name"
-    fi
-    
-    echo "Instance ${instance} shutdown completed successfully."
-  else
-    echo "Instance ${instance} is not running or does not exist."
-  fi
-}
-
 # Add a new function to handle API-mode restart
 api_restart_instance() {
   local instance_name=$1
@@ -3874,24 +3732,6 @@ EOF
   else
     echo "Warning: Failed to create backup configuration file for instance $instance_name. Default values will be used: MAX_BACKUPS=10, MAX_SIZE_GB=10"
   fi
-}
-
-prompt_backup_config() {
-  local instance_name="$1"
-  
-  echo "Setting up backup configuration for instance $instance_name"
-  read -p "Enter maximum backup size in GB [10]: " max_size_gb
-  max_size_gb=${max_size_gb:-10}
-  
-  read -p "Enter maximum number of backups to keep [10]: " max_backups
-  max_backups=${max_backups:-10}
-  
-  echo "Backup configuration for instance $instance_name:"
-  echo "  - Maximum size: ${max_size_gb}GB (primary constraint)"
-  echo "  - Maximum backups: $max_backups (secondary constraint)"
-  
-  # Write the configuration
-  write_backup_config "$instance_name" "$max_backups" "$max_size_gb"
 }
 
 backup_instance() {
@@ -5163,47 +5003,6 @@ upgrade_pok_manager() {
   fi
 }
 
-# Function to validate a script file
-validate_script() {
-  local script_file="$1"
-  
-  # Check if the file exists
-  if [ ! -f "$script_file" ]; then
-    echo "Validation error: Script file does not exist" >&2
-    return 1
-  fi
-  
-  # Check if the file has reasonable size (at least 10KB)
-  local file_size=$(stat -c '%s' "$script_file")
-  if [ "$file_size" -lt 10240 ]; then
-    echo "Validation error: Script file is too small ($file_size bytes)" >&2
-    return 1
-  fi
-  
-  # Check for required shell header
-  if ! head -n 1 "$script_file" | grep -q "#!/bin/bash"; then
-    echo "Validation error: Missing proper shell header" >&2
-    return 1
-  fi
-  
-  # Check for critical functions
-  for func in "upgrade_pok_manager" "main" "list_instances" "start_instance" "stop_instance"; do
-    if ! grep -q "^[[:space:]]*${func}[[:space:]]*(" "$script_file"; then
-      echo "Validation error: Critical function '$func' not found" >&2
-      return 1
-    fi
-  done
-  
-  # Try to parse the script with bash -n (syntax check)
-  if ! bash -n "$script_file"; then
-    echo "Validation error: Script contains syntax errors" >&2
-    return 1
-  fi
-  
-  # All checks passed
-  return 0
-}
-
 # Function to handle automatic rollback if script fails to run
 check_for_rollback() {
   # Only check for rollbacks if both the flag file and backup file exist
@@ -5289,30 +5088,6 @@ force_restore_from_backup() {
   else
     echo "❌ ERROR: No backup file found at $backup_path"
     echo "Cannot restore the script. You may need to re-download it from GitHub."
-  fi
-}
-
-# Function to get the active container tag (latest or beta)
-get_container_tag() {
-  local instance_name="$1"
-  
-  # Determine the version based on instance name or file ownership
-  local image_tag_version="2_1"  # Default to the new version
-  
-  # Check ownership of files to determine version compatibility
-  if [ -d "${BASE_DIR}/ServerFiles/arkserver" ]; then
-    local file_ownership=$(stat -c '%u:%g' "${BASE_DIR}/ServerFiles/arkserver")
-    
-    if [ "$file_ownership" = "1000:1000" ]; then
-      image_tag_version="2_0"
-    fi
-  fi
-  
-  # If a beta flag file exists and POK_MANAGER_BRANCH is beta, use beta suffix
-  if [ -f "${BASE_DIR}/config/POK-manager/beta_mode" ] && [ "$POK_MANAGER_BRANCH" = "beta" ]; then
-    echo "${image_tag_version}_beta"
-  else
-    echo "${image_tag_version}_latest"
   fi
 }
 
