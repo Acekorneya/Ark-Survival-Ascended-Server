@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.69"
+POK_MANAGER_VERSION="2.1.70"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory for the script
@@ -6670,9 +6670,46 @@ fi
 enhanced_restart_command() {
   local minutes_arg="$1"
   local instance_arg="$2"
+  local skip_update=false  # New parameter to control whether to skip the update
   
   # Default to 5 minutes if not specified
   local countdown_minutes="${minutes_arg:-5}"
+  
+  # Determine if we should skip updating server files when a specific instance is specified
+  if [[ "${instance_arg,,}" != "-all" ]]; then
+    skip_update=true
+    echo "Restarting specific instance: Updates will be skipped to minimize downtime"
+    
+    # Enhanced validation for a specific instance
+    # Check if the instance directory exists
+    local instance_dir="${BASE_DIR}/Instance_${instance_arg}"
+    local docker_compose_file="${instance_dir}/docker-compose-${instance_arg}.yaml"
+    
+    if [ ! -d "$instance_dir" ]; then
+      echo "❌ ERROR: Instance directory not found at $instance_dir"
+      echo "The instance '${instance_arg}' does not exist. Please check for typos."
+      
+      # List available instances to help the user
+      echo ""
+      echo "Available instances:"
+      local available_instances=($(list_instances))
+      if [ ${#available_instances[@]} -eq 0 ]; then
+        echo "  No instances found. Use './POK-manager.sh -create <instance_name>' to create one."
+      else
+        for i in "${available_instances[@]}"; do
+          echo "  - $i"
+        done
+      fi
+      exit 1
+    fi
+    
+    # Check if the docker-compose file exists
+    if [ ! -f "$docker_compose_file" ]; then
+      echo "❌ ERROR: Docker Compose file not found at $docker_compose_file"
+      echo "The instance '${instance_arg}' exists but its configuration file is missing."
+      exit 1
+    fi
+  fi
   
   # Initialize arrays to track different types of instances
   local api_instances=()
@@ -6696,13 +6733,25 @@ enhanced_restart_command() {
     fi
     echo "Processing all running instances for restart: ${instances_to_process[*]}"
   else
-    # Verify the specific instance exists and is running
-    if ! validate_instance "$instance_arg"; then
-      echo "Instance '$instance_arg' is not running or does not exist."
-      exit 1  # Exit with error status
+    # We already validated the instance exists above, so now just check if it's running
+    if docker ps -q -f name=^/asa_${instance_arg}$ > /dev/null; then
+      instances_to_process=("$instance_arg")
+      echo "Processing instance for restart: $instance_arg"
+    else
+      # Instance exists but is not running
+      echo "⚠️ Warning: Instance '$instance_arg' exists but is not currently running."
+      echo "Do you want to start it before performing the restart operation?"
+      read -p "Start the instance? (y/n): " start_choice
+      if [[ "$start_choice" =~ ^[Yy]$ ]]; then
+        echo "Starting instance $instance_arg..."
+        start_instance "$instance_arg"
+        sleep 5  # Give it a moment to start
+        instances_to_process=("$instance_arg")
+      else
+        echo "Operation canceled. The instance must be running to perform a restart."
+        exit 1
+      fi
     fi
-    instances_to_process=("$instance_arg")
-    echo "Processing instance for restart: $instance_arg"
   fi
   
   # Categorize instances based on API mode
@@ -6823,35 +6872,78 @@ enhanced_restart_command() {
       
       # 1. Save world for all instances
       echo -e "${status_color}💾${reset_color} Saving world data for all instances..."
+      local save_error=false
       for instance in "${instances_to_process[@]}"; do
         echo "  - Saving world for ${instance}..."
-        run_in_container "$instance" "-saveworld"
+        # Check if the container exists before attempting to save
+        if docker ps -q -f name=^/asa_${instance}$ > /dev/null; then
+          run_in_container "$instance" "-saveworld"
+        else
+          echo "  ⚠️ Warning: Container for ${instance} is not running, skipping save operation"
+          save_error=true
+        fi
       done
       
       # Give some time for saves to complete
-      echo -e "${status_color}⏳${reset_color} Waiting for saves to complete (10 seconds)..."
+      if [ "$save_error" = true ]; then
+        echo -e "${status_color}⚠️${reset_color} Some instances couldn't be saved. Continuing with restart process..."
+      else
+        echo -e "${status_color}⏳${reset_color} Waiting for saves to complete (10 seconds)..."
+      fi
       sleep 10
       
       # 2. Stop all instances
       echo -e "${status_color}🛑${reset_color} Stopping all instances..."
+      local stop_error=false
       for instance in "${instances_to_process[@]}"; do
         echo "  - Stopping ${instance}..."
-        stop_instance "$instance"
+        # Check if the container exists before attempting to stop
+        if docker ps -a -q -f name=^/asa_${instance}$ > /dev/null; then
+          stop_instance "$instance"
+        else
+          echo "  ⚠️ Warning: Container for ${instance} does not exist, skipping stop operation"
+          stop_error=true
+        fi
       done
       
       # 3. Update server files if needed
       echo -e "${status_color}🔍${reset_color} Checking for server file updates..."
-      update_server_files_and_docker
+      if [ "$skip_update" = false ]; then
+        update_server_files_and_docker
+      else
+        echo "Skipping server updates as a specific instance was selected"
+      fi
       
       # 4. Start all instances
       echo -e "${status_color}🚀${reset_color} Starting all instances..."
+      local start_error=false
       for instance in "${instances_to_process[@]}"; do
         echo "  - Starting ${instance}..."
+        # Verify the instance directory and docker-compose file exist before starting
+        local instance_dir="${BASE_DIR}/Instance_${instance}"
+        local docker_compose_file="${instance_dir}/docker-compose-${instance}.yaml"
+        
+        if [ ! -d "$instance_dir" ]; then
+          echo "  ❌ ERROR: Instance directory not found at $instance_dir"
+          start_error=true
+          continue
+        fi
+        
+        if [ ! -f "$docker_compose_file" ]; then
+          echo "  ❌ ERROR: Docker Compose file not found at $docker_compose_file"
+          start_error=true
+          continue
+        fi
+        
         start_instance "$instance"
       done
       
       # 5. Verify all instances restarted successfully
-      echo -e "${status_color}✅${reset_color} Verifying all instances are running..."
+      if [ "$start_error" = true ]; then
+        echo -e "${status_color}⚠️${reset_color} Some instances could not be started. Please check the errors above."
+      else
+        echo -e "${status_color}✅${reset_color} Verifying all instances are running..."
+      fi
       ;;
       
     "standard")

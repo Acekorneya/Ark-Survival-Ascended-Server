@@ -1,6 +1,18 @@
 # POK-Manager Changelog
 
-## Version 2.1.69 (Latest)
+## Version 2.1.70 (Latest)
+### Enhanced Error Handling and Validation
+- Improved validation in the `-restart` command to catch typos in instance names
+- Added robust directory and file checks before attempting restart operations
+- Enhanced error messages with helpful suggestions when a non-existent instance is specified
+- Implemented instance listing when a typo is detected to help users identify correct names
+- Added option to start instances that exist but aren't running when attempting restart
+- Improved error handling during save, stop, and start operations in the restart process
+- Added container existence validation before each operation to prevent failures
+- Enhanced restart process to skip operations on non-existent instances rather than failing
+- Prevented unnecessary server file updates when restarting specific instances
+
+## Version 2.1.69 (Previous)
 ### System Improvements
 - Fixed issue with `-restart` command prompting for password in non-interactive sessions
 - Improved automation support for cronjobs by avoiding password prompts
