@@ -760,8 +760,18 @@ fi
   elapsed=0
   startup_message_displayed=false
   last_status_time=0
+  STARTUP_COMPLETE_FLAG="/home/pok/server_startup_complete.flag"
+  
+  # Remove any existing startup complete flag to start fresh
+  rm -f "$STARTUP_COMPLETE_FLAG"
   
   while [ $elapsed -lt $timeout ]; do
+    # First check if another process has already detected startup completion
+    if [ -f "$STARTUP_COMPLETE_FLAG" ]; then
+      echo "[INFO] Server startup has been detected by another process"
+      break
+    fi
+    
     # Check if server process is running
     server_pid=$(ps aux | grep -v grep | grep -E "AsaApiLoader.exe|ArkAscendedServer.exe" | awk '{print $2}' | head -1)
     if [ -n "$server_pid" ]; then
@@ -773,6 +783,8 @@ fi
         if screen -S ark_server -X hardcopy /tmp/ark_screen.log 2>/dev/null && grep -q "Server has completed startup and is now advertising for join" /tmp/ark_screen.log; then
           if [ "$startup_message_displayed" = "false" ]; then
             echo "[SUCCESS] SERVER STARTUP COMPLETE: Server is now advertising for join!"
+            # Create a flag file to indicate startup is complete
+            echo "$(date)" > "$STARTUP_COMPLETE_FLAG"
             startup_message_displayed=true
           fi
           break
@@ -782,6 +794,8 @@ fi
         if grep -q "Server has completed startup and is now advertising for join" /home/pok/logs/server_console.log 2>/dev/null; then
           if [ "$startup_message_displayed" = "false" ]; then
             echo "[SUCCESS] SERVER STARTUP COMPLETE: Server is now advertising for join!"
+            # Create a flag file to indicate startup is complete
+            echo "$(date)" > "$STARTUP_COMPLETE_FLAG"
             startup_message_displayed=true
           fi
           break
@@ -819,10 +833,42 @@ MONITOR_PID=$!
 # After the server has successfully started, set up a monitoring loop to detect when it exits
 # This will ensure that if the server issues its own restart command, we'll detect it and restart
 {
-  # Give the server time to fully start before monitoring
-  sleep 60
+  # Define the startup complete flag
+  STARTUP_COMPLETE_FLAG="/home/pok/server_startup_complete.flag"
   
+  # Wait for startup to complete before starting to monitor for restarts
+  echo "[INFO] Waiting for server to start completely before beginning restart detection..."
+  while [ ! -f "$STARTUP_COMPLETE_FLAG" ]; do
+    sleep 10
+    
+    # If it's been more than 5 minutes, proceed anyway (fallback)
+    if [ ! -f "$STARTUP_COMPLETE_FLAG" ] && [ -f "/home/pok/logs/server_console.log" ]; then
+      if grep -q "Server has completed startup and is now advertising for join" /home/pok/logs/server_console.log 2>/dev/null; then
+        echo "[INFO] Server appears to be started but flag is missing, proceeding with monitoring..."
+        # Create the flag in case it was missed
+        echo "$(date)" > "$STARTUP_COMPLETE_FLAG"
+        break
+      fi
+    fi
+    
+    # Abort waiting after 10 minutes to avoid hanging indefinitely
+    if [ -f "/tmp/restart_monitor_start_time" ]; then
+      start_time=$(cat /tmp/restart_monitor_start_time)
+      current_time=$(date +%s)
+      # If more than 10 minutes (600 seconds) have passed, proceed anyway
+      if [ $((current_time - start_time)) -gt 600 ]; then
+        echo "[WARNING] Timeout waiting for startup complete flag. Proceeding with monitoring anyway..."
+        break
+      fi
+    else
+      # Create timestamp file to track how long we've been waiting
+      date +%s > /tmp/restart_monitor_start_time
+    fi
+  done
+  
+  # Server has started, begin monitoring
   echo "[INFO] Starting server restart detection..."
+  rm -f /tmp/restart_monitor_start_time 2>/dev/null || true
   
   # Keep checking if the server process is running
   while true; do

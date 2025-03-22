@@ -232,32 +232,11 @@ prepare_for_container_restart() {
   echo "[INFO] Server is shut down. Killing container to trigger Docker restart..."
   
   # Force kill the container process with SIGKILL
-  echo "[INFO] Force killing ALL container processes for restart..."
-  
-  # Flush disk writes
-  sync 
+  echo "[INFO] Force killing the container with SIGKILL (-9) to trigger restart..."
+  sync # Ensure all buffers are flushed
   sleep 1
-  
-  # Super aggressive container kill approach:
-  
-  # 1. Kill all processes owned by our user
-  echo "[INFO] Killing all user processes with SIGKILL..."
-  killall -9 -u pok || true
-  
-  # 2. Kill all processes in our process group
-  echo "[INFO] Killing all processes in process group with SIGKILL..."
-  kill -9 -1 || true
-  
-  # 3. Force kill init process (tini)
-  echo "[INFO] Directly killing PID 1 (tini) with SIGKILL..."
-  kill -9 1 || true
-  
-  # 4. As absolute last resort, crash our own process with ABORT signal
-  echo "[INFO] Last resort: Sending SIGABRT to our own process to force container crash..."
-  kill -ABRT $$ || true
-  
-  # If we somehow get here, exit with failure code
-  exit 1
+  kill -9 1  # Direct kill of init process to trigger container restart
+  exit 1     # Fallback exit with error code to ensure Docker restarts
 }
 
 # Main update logic
