@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.70"
+POK_MANAGER_VERSION="2.1.71"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory for the script
@@ -959,12 +959,40 @@ adjust_ownership_and_permissions() {
   if [ "$(id -u)" -eq 0 ]; then
     local target_owner=""
     
-    # Determine the correct ownership based on migration status
-    # Always use either 7777:7777 or 1000:1000 regardless of who ran sudo
-    if [ -f "${BASE_DIR}/config/POK-manager/migration_complete" ]; then
-      target_owner="7777:7777"
-    else
-      target_owner="1000:1000"
+    # First try to determine ownership from parent directory
+    local parent_dir="$(dirname "$BASE_DIR")"
+    if [ -d "$parent_dir" ]; then
+      local parent_ownership="$(stat -c '%u:%g' "$parent_dir")"
+      
+      # Check if parent directory is owned by either 7777:7777 or 1000:1000
+      if [ "$parent_ownership" = "7777:7777" ]; then
+        target_owner="7777:7777"
+        echo "Setting ownership based on parent directory ownership: 7777:7777"
+      elif [ "$parent_ownership" = "1000:1000" ]; then
+        target_owner="1000:1000"
+        echo "Setting ownership based on parent directory ownership: 1000:1000"
+      else
+        # If parent directory has other ownership, check base dir
+        local base_ownership="$(stat -c '%u:%g' "$BASE_DIR")"
+        if [ "$base_ownership" = "7777:7777" ]; then
+          target_owner="7777:7777"
+          echo "Setting ownership based on base directory ownership: 7777:7777"
+        elif [ "$base_ownership" = "1000:1000" ]; then
+          target_owner="1000:1000"
+          echo "Setting ownership based on base directory ownership: 1000:1000"
+        fi
+      fi
+    fi
+    
+    # If we still don't have a target_owner, determine based on migration status as fallback
+    if [ -z "$target_owner" ]; then
+      if [ -f "${BASE_DIR}/config/POK-manager/migration_complete" ]; then
+        target_owner="7777:7777"
+        echo "Setting ownership based on migration status: 7777:7777"
+      else
+        target_owner="1000:1000"
+        echo "Setting ownership based on migration status: 1000:1000"
+      fi
     fi
     
     echo "Setting POK-manager.sh ownership to $target_owner"
@@ -2049,7 +2077,7 @@ find_editor() {
 
 # Function to start an instance
 start_instance() {
-  local instance_name=$1
+  local instance_name="$1"
   local instance_dir="${BASE_DIR}/Instance_${instance_name}"
   local docker_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
   local image_tag=$(get_docker_image_tag "$instance_name")
@@ -2761,7 +2789,7 @@ start_instance() {
 
 # Function to stop an instance
 stop_instance() {
-  local instance_name=$1
+  local instance_name="$1"
   local base_dir="${BASE_DIR}"
   local instance_dir="${base_dir}/Instance_${instance_name}"
   local docker_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
@@ -3606,7 +3634,57 @@ is_sudo() {
 }
 get_current_build_id() {
   local app_id="2430930"
-  local build_id=$(curl -sX GET "https://api.steamcmd.net/v1/info/$app_id" | jq -r ".data.\"$app_id\".depots.branches.public.buildid")
+  
+  # Create a temporary container to run SteamCMD
+  echo "Creating temporary container to check for server updates..." >&2
+  local temp_container_name="pok_steamcmd_check"
+  local image_tag=$(get_docker_image_tag "")
+  
+  # Check if user is in docker group or is root to avoid using sudo
+  local docker_cmd="docker"
+  if ! (groups | grep -q '\bdocker\b' || [ "$(id -u)" -eq 0 ]); then
+    docker_cmd="sudo docker"
+  fi
+  
+  # Run a temporary container
+  local temp_container_id=$($docker_cmd run -d --rm \
+    --name "$temp_container_name" \
+    "acekorneya/asa_server:${image_tag}" \
+    sleep infinity)
+  
+  if [ -z "$temp_container_id" ]; then
+    echo "error: could not create temporary container for SteamCMD check" >&2
+    return 1
+  fi
+  
+  # Wait a moment for container to initialize
+  sleep 2
+  
+  # Get build ID from SteamCMD inside the container
+  local steamcmd_output=$($docker_cmd exec "$temp_container_name" /opt/steamcmd/steamcmd.sh +login anonymous +app_info_print $app_id +quit 2>/dev/null)
+  
+  # Remove the temporary container
+  $docker_cmd rm -f "$temp_container_name" > /dev/null 2>&1 || true
+  
+  # Extract the build ID using the same approach as common.sh
+  local build_id=$(echo "$steamcmd_output" | 
+                 grep -A 150 "\"branches\"" | 
+                 grep -A 50 "\"public\"" | 
+                 grep -m 1 -oP "\"buildid\"\s*\"*\K[0-9]+" | 
+                 head -n 1 | 
+                 tr -d '[:space:]')
+  
+  if [ -z "$build_id" ]; then
+    echo "error: could not retrieve build ID from SteamCMD. Please check SteamCMD connection." >&2
+    return 1
+  fi
+  
+  # Final sanity check - ensure it only contains digits
+  if ! [[ "$build_id" =~ ^[0-9]+$ ]]; then
+    echo "error: invalid build ID format: '$build_id'" >&2
+    return 1
+  fi
+  
   echo "$build_id"
 }
 
@@ -3841,19 +3919,36 @@ restore_instance() {
 
   if [ -z "$instance_name" ]; then
     echo "No instance name specified. Please select an instance to restore from the list below."
-    local instances=($(find "$backup_dir" -maxdepth 1 -mindepth 1 -type d -exec basename {} \;))
-    if [ ${#instances[@]} -eq 0 ]; then
-      echo "No instances found with backups."
+    
+    # Get all instances with docker-compose files (actual existing instances)
+    local valid_instances=($(list_instances))
+    
+    # Get all backup directories
+    local backup_dirs=($(find "$backup_dir" -maxdepth 1 -mindepth 1 -type d -exec basename {} \;))
+    
+    # Initialize array to store instances that have both valid configs and backups
+    local restorable_instances=()
+    
+    # Find the intersection of valid instances and backup directories
+    for instance in "${valid_instances[@]}"; do
+      if [[ " ${backup_dirs[@]} " =~ " ${instance} " ]]; then
+        restorable_instances+=("$instance")
+      fi
+    done
+    
+    if [ ${#restorable_instances[@]} -eq 0 ]; then
+      echo "No instances found with both valid configurations and backups."
       return
     fi
       
-    for ((i=0; i<${#instances[@]}; i++)); do
-      echo "$((i+1)). ${instances[i]}"
+    # Show only the instances that have both configs and backups
+    for ((i=0; i<${#restorable_instances[@]}; i++)); do
+      echo "$((i+1)). ${restorable_instances[i]}"
     done
-    echo "----- Warning: This will stop the server if it is running. -----"
+    
     read -p "Enter the number of the instance to restore: " choice  
-    if [[ $choice =~ ^[0-9]+$ ]] && [ $choice -ge 1 ] && [ $choice -le ${#instances[@]} ]; then
-      instance_name="${instances[$((choice-1))]}"
+    if [[ $choice =~ ^[0-9]+$ ]] && [ $choice -ge 1 ] && [ $choice -le ${#restorable_instances[@]} ]; then
+      instance_name="${restorable_instances[$((choice-1))]}"
     else
       echo "Invalid choice. Exiting."
       return
@@ -3869,12 +3964,7 @@ restore_instance() {
       return
     fi
 
-    if [[ " $(list_running_instances) " =~ " $instance_name " ]]; then
-      echo "Stopping the server."
-      stop_instance "$instance_name"
-    fi
-
-    echo "Here is a list of all your backup archives:"
+    echo "Here is a list of all your backup archives for instance $instance_name:"
     for ((i=0; i<${#backup_files[@]}; i++)); do
       echo "$((i+1)) ------ File: $(basename "${backup_files[i]}")"
     done
@@ -3882,20 +3972,46 @@ restore_instance() {
     read -p "Please input the number of the archive you want to restore: " choice
     if [[ $choice =~ ^[0-9]+$ ]] && [ $choice -ge 1 ] && [ $choice -le ${#backup_files[@]} ]; then
       local selected_backup="${backup_files[$((choice-1))]}"
+      
+      # Check if instance is running and get confirmation before stopping
+      local is_running=false
+      if [[ " $(list_running_instances) " =~ " $instance_name " ]]; then
+        is_running=true
+        echo ""
+        echo "⚠️ WARNING: The server instance '$instance_name' is currently running."
+        echo "This operation will stop the server to restore the backup."
+        echo "Selected backup: $(basename "$selected_backup")"
+        echo ""
+        read -p "Do you want to continue with stopping the server and restoring this backup? (y/N): " confirm
+        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+          echo "Restore operation cancelled by user."
+          return
+        fi
+        
+        echo "Stopping the server instance '$instance_name'..."
+        stop_instance "$instance_name"
+      fi
+
       local instance_dir="${base_dir}/Instance_${instance_name}"
       local saved_arks_dir="${instance_dir}/Saved/SavedArks"
 
-      echo "$(basename "$selected_backup") is getting restored ..."
+      echo "Restoring backup: $(basename "$selected_backup") ..."
       mkdir -p "$saved_arks_dir"
       tar -xzf "$selected_backup" -C "$instance_dir/Saved"
       adjust_ownership_and_permissions "$saved_arks_dir"
       echo "Backup restored successfully!"
 
-      echo "Starting server..."
-      start_instance "$instance_name"
-      echo "Server should be up in a few minutes."
+      # Only start the server if it was running before
+      if [ "$is_running" = true ]; then
+        echo "Starting server..."
+        start_instance "$instance_name"
+        echo "Server should be up in a few minutes."
+      else
+        echo "The server instance was not running before the restore."
+        echo "If you want to start it, use: ./POK-manager.sh -start $instance_name"
+      fi
     else
-      echo "Invalid choice."
+      echo "Invalid choice. Restore operation cancelled."
     fi
   else
     echo "No backups found for instance $instance_name."
@@ -4013,7 +4129,7 @@ display_single_instance_logs() {
 manage_service() {
   get_docker_compose_cmd
   local action=$1
-  local instance_name=$2
+  local instance_name="$2"
   local additional_args="${@:3}"
   # Ensure root privileges for specific actions
   if [[ "$action" == "-setup" ]]; then
@@ -5121,91 +5237,60 @@ update_server_files_and_docker() {
   echo "----- Checking for ARK server files & Docker image updates -----"
   echo "Note: This WILL update server files and Docker images, but NOT the script itself"
 
-  # Pull the latest Docker image
-  local running_instances=($(list_running_instances))
-  local image_tag=""
-  local instance_for_update=""
-  local need_to_start_temp_container=true
-  
-  # First, pull the latest Docker image to ensure we have the latest version
-  if [ ${#running_instances[@]} -gt 0 ]; then
-    local instance_name="${running_instances[0]}"
-    echo "Using instance '$instance_name' to determine appropriate Docker image"
-    image_tag=$(get_docker_image_tag "$instance_name")
-    echo "Using Docker image tag: ${image_tag}"
-    pull_docker_image "$instance_name"
-    
-    # Get container ID using our more robust method
-    local container_id=$(get_instance_container_id "$instance_name")
-    if [ -n "$container_id" ]; then
-      instance_for_update="asa_${instance_name}"
-    else
-      instance_for_update="${instance_name}"
-    fi
-    echo "Using container: $instance_for_update for updates"
-    need_to_start_temp_container=false
-  else 
-    # No running instances, determine from file ownership
-    echo "Determining Docker image based on file ownership"
-    image_tag=$(get_docker_image_tag "")
-    echo "Using Docker image tag: ${image_tag}"
-    pull_docker_image ""
-  fi
+  # Pull the latest Docker image to ensure we have the latest version
+  local image_tag=$(get_docker_image_tag "")
+  echo "Using Docker image tag: ${image_tag}"
+  pull_docker_image ""
 
-  # Create a temporary container for update if no running instances
+  # Create a temporary container for update process
+  echo "Creating a temporary container for update..."
   local temp_container_id=""
-  if [ "$need_to_start_temp_container" = true ]; then
-    echo "No running instances found. Creating a temporary container for update..."
-    
-    # Create environment variables array for the container
-    local env_vars=(
-      "-e TZ=UTC"
-      "-e API=TRUE"  # Enable API to ensure proper setup inside container
-      "-e INSTANCE_NAME=pok_update_temp"
-    )
-    
-    # Check if user is in docker group or is root to avoid using sudo
-    if groups | grep -q '\bdocker\b' || [ "$(id -u)" -eq 0 ]; then
-      # User is in docker group or is root, no need for sudo
-      temp_container_id=$(docker run -d --rm \
-        -v "${BASE_DIR%/}/ServerFiles/arkserver:/home/pok/arkserver" \
-        ${env_vars[@]} \
-        --name "pok_update_temp_container" \
-        "acekorneya/asa_server:${image_tag}" \
-        sleep infinity)
-    else
-      # User is not in docker group and not root, need sudo
-      temp_container_id=$(sudo docker run -d --rm \
-        -v "${BASE_DIR%/}/ServerFiles/arkserver:/home/pok/arkserver" \
-        ${env_vars[@]} \
-        --name "pok_update_temp_container" \
-        "acekorneya/asa_server:${image_tag}" \
-        sleep infinity)
-    fi
-    
-    if [ -z "$temp_container_id" ]; then
-      echo "Failed to create temporary container for update. Aborting."
-      exit 1
-    fi
-    
-    echo "Temporary container created with ID: $temp_container_id"
-    echo "Waiting for container initialization..."
-    sleep 5  # Allow container to initialize
-    
-    instance_for_update="pok_update_temp_container"
-    
-    # Initialize the container environment properly, particularly for API mode
-    echo "Initializing container environment..."
-    # Use docker directly if user is in docker group or is root
-    if groups | grep -q '\bdocker\b' || [ "$(id -u)" -eq 0 ]; then
-      docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Binaries/Win64/logs' || true
-      docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Saved/Config/WindowsServer' || true
-      docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Saved/SavedArks' || true
-    else
-      sudo docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Binaries/Win64/logs' || true
-      sudo docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Saved/Config/WindowsServer' || true
-      sudo docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Saved/SavedArks' || true
-    fi
+  local instance_for_update="pok_update_temp_container"
+  
+  # Create environment variables array for the container
+  local env_vars=(
+    "-e TZ=UTC"
+    "-e INSTANCE_NAME=pok_update_temp"
+  )
+  
+  # Check if user is in docker group or is root to avoid using sudo
+  if groups | grep -q '\bdocker\b' || [ "$(id -u)" -eq 0 ]; then
+    # User is in docker group or is root, no need for sudo
+    temp_container_id=$(docker run -d --rm \
+      -v "${BASE_DIR%/}/ServerFiles/arkserver:/home/pok/arkserver" \
+      ${env_vars[@]} \
+      --name "$instance_for_update" \
+      "acekorneya/asa_server:${image_tag}" \
+      sleep infinity)
+  else
+    # User is not in docker group and not root, need sudo
+    temp_container_id=$(sudo docker run -d --rm \
+      -v "${BASE_DIR%/}/ServerFiles/arkserver:/home/pok/arkserver" \
+      ${env_vars[@]} \
+      --name "$instance_for_update" \
+      "acekorneya/asa_server:${image_tag}" \
+      sleep infinity)
+  fi
+  
+  if [ -z "$temp_container_id" ]; then
+    echo "Failed to create temporary container for update. Aborting."
+    exit 1
+  fi
+  
+  echo "Temporary container created with ID: $temp_container_id"
+  echo "Waiting for container initialization..."
+  sleep 5  # Allow container to initialize
+  
+  # Initialize the container environment
+  echo "Initializing container environment..."
+  if groups | grep -q '\bdocker\b' || [ "$(id -u)" -eq 0 ]; then
+    docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Binaries/Win64/logs' || true
+    docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Saved/Config/WindowsServer' || true
+    docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Saved/SavedArks' || true
+  else
+    sudo docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Binaries/Win64/logs' || true
+    sudo docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Saved/Config/WindowsServer' || true
+    sudo docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Saved/SavedArks' || true
   fi
 
   # Check current and latest build IDs
@@ -5213,269 +5298,102 @@ update_server_files_and_docker() {
   local current_build_id=$(get_build_id_from_acf)
   local latest_build_id=$(get_current_build_id)
   
-  # Check if the server files are installed
-  if [ ! -f "${BASE_DIR%/}/ServerFiles/arkserver/appmanifest_2430930.acf" ]; then
-    echo "---- ARK server files not found. Installing server files using container's SteamCMD -----"
+  echo "Current build ID: $current_build_id"
+  echo "Latest build ID:  $latest_build_id"
+  
+  # Function to handle the SteamCMD update with retries
+  perform_steamcmd_update() {
+    local max_retries=3
+    local retry_count=0
+    local success=false
     
-    # Use docker directly if user is in docker group or is root
-    if groups | grep -q '\bdocker\b' || [ "$(id -u)" -eq 0 ]; then
-      if docker exec "$instance_for_update" /opt/steamcmd/steamcmd.sh +force_install_dir "/home/pok/arkserver" +login anonymous +app_update 2430930 +quit; then
-        echo "----- ARK server files installed successfully -----"
-        # Make sure the appmanifest file is properly copied
-        if docker exec "$instance_for_update" bash -c '[ -f "/home/pok/arkserver/steamapps/appmanifest_2430930.acf" ] && cp "/home/pok/arkserver/steamapps/appmanifest_2430930.acf" "/home/pok/arkserver/"'; then
-          echo "Copied appmanifest_2430930.acf to the correct location inside container."
+    while [ $retry_count -lt $max_retries ] && [ "$success" = false ]; do
+      retry_count=$((retry_count + 1))
+      echo "SteamCMD update attempt $retry_count of $max_retries..."
+      
+      # Use docker directly if user is in docker group or is root
+      if groups | grep -q '\bdocker\b' || [ "$(id -u)" -eq 0 ]; then
+        if docker exec "$instance_for_update" /opt/steamcmd/steamcmd.sh +force_install_dir "/home/pok/arkserver" +login anonymous +app_update 2430930 +quit; then
+          echo "SteamCMD update completed successfully inside container."
+          
+          # Make sure the appmanifest file is properly copied
+          if docker exec "$instance_for_update" bash -c '[ -f "/home/pok/arkserver/steamapps/appmanifest_2430930.acf" ] && cp "/home/pok/arkserver/steamapps/appmanifest_2430930.acf" "/home/pok/arkserver/"'; then
+            echo "Copied appmanifest_2430930.acf to the correct location inside container."
+          else
+            echo "Warning: appmanifest_2430930.acf not found in steamapps directory or could not be copied."
+          fi
+          
+          success=true
         else
-          echo "Warning: appmanifest_2430930.acf not found in steamapps directory or could not be copied."
+          echo "SteamCMD update failed. Attempt $retry_count of $max_retries."
+          if [ $retry_count -lt $max_retries ]; then
+            echo "Retrying in 10 seconds..."
+            sleep 10
+          fi
         fi
       else
-        echo "Failed to install ARK server files using SteamCMD from container. Please check the logs for more information."
-        
-        # Clean up temporary container if we created one
-        if [ -n "$temp_container_id" ]; then
-          echo "Removing temporary update container..."
-          docker rm -f "$temp_container_id" > /dev/null 2>&1
+        if sudo docker exec "$instance_for_update" /opt/steamcmd/steamcmd.sh +force_install_dir "/home/pok/arkserver" +login anonymous +app_update 2430930 +quit; then
+          echo "SteamCMD update completed successfully inside container."
+          
+          # Make sure the appmanifest file is properly copied
+          if sudo docker exec "$instance_for_update" bash -c '[ -f "/home/pok/arkserver/steamapps/appmanifest_2430930.acf" ] && cp "/home/pok/arkserver/steamapps/appmanifest_2430930.acf" "/home/pok/arkserver/"'; then
+            echo "Copied appmanifest_2430930.acf to the correct location inside container."
+          else
+            echo "Warning: appmanifest_2430930.acf not found in steamapps directory or could not be copied."
+          fi
+          
+          success=true
+        else
+          echo "SteamCMD update failed. Attempt $retry_count of $max_retries."
+          if [ $retry_count -lt $max_retries ]; then
+            echo "Retrying in 10 seconds..."
+            sleep 10
+          fi
         fi
-        
-        exit 1
       fi
+    done
+    
+    return $([ "$success" = true ] && echo 0 || echo 1)
+  }
+  
+  # Check if the server files are installed or need update
+  if [ ! -f "${BASE_DIR%/}/ServerFiles/arkserver/appmanifest_2430930.acf" ]; then
+    echo "---- ARK server files not found. Installing server files using SteamCMD -----"
+    
+    if perform_steamcmd_update; then
+      echo "----- ARK server files installed successfully -----"
     else
-      if sudo docker exec "$instance_for_update" /opt/steamcmd/steamcmd.sh +force_install_dir "/home/pok/arkserver" +login anonymous +app_update 2430930 +quit; then
-        echo "----- ARK server files installed successfully -----"
-        # Make sure the appmanifest file is properly copied
-        if sudo docker exec "$instance_for_update" bash -c '[ -f "/home/pok/arkserver/steamapps/appmanifest_2430930.acf" ] && cp "/home/pok/arkserver/steamapps/appmanifest_2430930.acf" "/home/pok/arkserver/"'; then
-          echo "Copied appmanifest_2430930.acf to the correct location inside container."
-        else
-          echo "Warning: appmanifest_2430930.acf not found in steamapps directory or could not be copied."
-        fi
-      else
-        echo "Failed to install ARK server files using SteamCMD from container. Please check the logs for more information."
-        
-        # Clean up temporary container if we created one
-        if [ -n "$temp_container_id" ]; then
-          echo "Removing temporary update container..."
-          sudo docker rm -f "$temp_container_id" > /dev/null 2>&1
-        fi
-        
-        exit 1
-      fi
+      echo "Failed to install ARK server files after multiple attempts. Please check the logs for more information."
     fi
   elif [ "$current_build_id" != "$latest_build_id" ]; then
     echo "---- New server build available: $latest_build_id (current: $current_build_id) -----"
-    echo "Update required. Checking for running instances..."
     
-    # Get list of running instances (excluding our temp container)
-    local instances_to_stop=()
-    for inst in "${running_instances[@]}"; do
-      if [ "$inst" != "pok_update_temp_container" ]; then
-        instances_to_stop+=("$inst")
-      fi
-    done
-    
-    # Check for API-enabled instances that need special handling
-    local api_instances=()
-    for instance in "${instances_to_stop[@]}"; do
-      local docker_compose_file="${BASE_DIR}/Instance_${instance}/docker-compose-${instance}.yaml"
-      if [ -f "$docker_compose_file" ] && (grep -q "^ *- API=TRUE" "$docker_compose_file" || grep -q "^ *- API:TRUE" "$docker_compose_file"); then
-        echo "Detected API=TRUE for instance $instance - will use special shutdown process"
-        api_instances+=("$instance")
-      fi
-    done
-    
-    # Stop all running instances if any are found
-    if [ ${#instances_to_stop[@]} -gt 0 ]; then
-      echo "----- Stopping all running instances before update -----"
-      echo "Found ${#instances_to_stop[@]} running instances that need to be stopped:"
-      
-      for instance in "${instances_to_stop[@]}"; do
-        echo "- $instance"
-      done
-      
-      echo "Stopping all instances..."
-      for instance in "${instances_to_stop[@]}"; do
-        # Check if this is an API instance
-        if [[ " ${api_instances[*]} " =~ " ${instance} " ]]; then
-          echo "Stopping API-enabled instance: $instance with special handling"
-          # First, perform a normal stop
-          stop_instance "$instance"
-          
-          # Then ensure all container processes are completely killed
-          local container_name="asa_${instance}"
-          if docker ps -a -q -f name=^/${container_name}$ > /dev/null; then
-            echo "Forcing complete removal of API container: $container_name"
-            # Use docker directly if user is in docker group or is root
-            if groups | grep -q '\bdocker\b' || [ "$(id -u)" -eq 0 ]; then
-              docker rm -f "$container_name" > /dev/null 2>&1 || true
-            else
-              sudo docker rm -f "$container_name" > /dev/null 2>&1 || true
-            fi
-          fi
-          
-          # Make sure there are no leftover processes
-          echo "Ensuring no leftover processes remain..."
-          sleep 3
-        else
-          echo "Stopping instance: $instance"
-          stop_instance "$instance"
-        fi
-      done
-      
-      echo "----- All instances have been stopped. Proceeding with update... -----"
-      # Add a brief delay to ensure all containers are fully stopped
-      sleep 5
-    else
-      echo "No additional running instances found. Proceeding with update..."
-    fi
-
-    # Now perform the update using the container's steamcmd
-    echo "Updating server files using container's SteamCMD..."
-    
-    # Execute steamcmd inside the container to update server files
-    # Use docker directly if user is in docker group or is root
-    if groups | grep -q '\bdocker\b' || [ "$(id -u)" -eq 0 ]; then
-      if docker exec "$instance_for_update" /opt/steamcmd/steamcmd.sh +force_install_dir "/home/pok/arkserver" +login anonymous +app_update 2430930 +quit; then
-        echo "SteamCMD update completed successfully inside container."
-        
-        # Make sure the appmanifest file is properly copied
-        if docker exec "$instance_for_update" bash -c '[ -f "/home/pok/arkserver/steamapps/appmanifest_2430930.acf" ] && cp "/home/pok/arkserver/steamapps/appmanifest_2430930.acf" "/home/pok/arkserver/"'; then
-          echo "Copied appmanifest_2430930.acf to the correct location inside container."
-        else
-          echo "Warning: appmanifest_2430930.acf not found in steamapps directory or could not be copied."
-        fi
+    if perform_steamcmd_update; then
+      # Check if the server files were updated successfully
+      local updated_build_id=$(get_build_id_from_acf)
+      echo "Updated build ID: $updated_build_id"
+      if [ "$updated_build_id" == "$latest_build_id" ]; then
+        echo "----- ARK server files updated successfully to build id: $latest_build_id -----"
       else
-        echo "SteamCMD update failed inside container. Please check the logs for more information."
-        
-        # Clean up temporary container if we created one
-        if [ -n "$temp_container_id" ]; then
-          echo "Removing temporary update container..."
-          docker rm -f "$temp_container_id" > /dev/null 2>&1
-        fi
-        
-        exit 1
+        echo "----- Server files were updated but build ID doesn't match expected ($updated_build_id vs $latest_build_id) -----"
+        echo "----- This could be due to a delay in Steam database updates or other issues -----"
       fi
     else
-      if sudo docker exec "$instance_for_update" /opt/steamcmd/steamcmd.sh +force_install_dir "/home/pok/arkserver" +login anonymous +app_update 2430930 +quit; then
-        echo "SteamCMD update completed successfully inside container."
-        
-        # Make sure the appmanifest file is properly copied
-        if sudo docker exec "$instance_for_update" bash -c '[ -f "/home/pok/arkserver/steamapps/appmanifest_2430930.acf" ] && cp "/home/pok/arkserver/steamapps/appmanifest_2430930.acf" "/home/pok/arkserver/"'; then
-          echo "Copied appmanifest_2430930.acf to the correct location inside container."
-        else
-          echo "Warning: appmanifest_2430930.acf not found in steamapps directory or could not be copied."
-        fi
-      else
-        echo "SteamCMD update failed inside container. Please check the logs for more information."
-        
-        # Clean up temporary container if we created one
-        if [ -n "$temp_container_id" ]; then
-          echo "Removing temporary update container..."
-          if groups | grep -q '\bdocker\b' || [ "$(id -u)" -eq 0 ]; then
-            docker rm -f "$temp_container_id" > /dev/null 2>&1
-          else
-            sudo docker rm -f "$temp_container_id" > /dev/null 2>&1
-          fi
-        fi
-        
-        exit 1
-      fi
-    fi
-
-    # Check if the server files were updated successfully
-    local updated_build_id=$(get_build_id_from_acf)
-    if [ "$updated_build_id" == "$latest_build_id" ]; then
-      echo "----- ARK server files updated successfully to build id: $latest_build_id -----"
-      
-      # If instances were stopped, notify the user they need to restart them
-      if [ ${#instances_to_stop[@]} -gt 0 ]; then
-        echo ""
-        echo "----- IMPORTANT: Server instances were stopped for the update -----"
-        echo "The following instances were running before the update:"
-        for instance in "${instances_to_stop[@]}"; do
-          echo "- $instance"
-        done
-        echo ""
-        echo "You can restart them with:"
-        echo "./POK-manager.sh -start -all"
-        echo ""
-        echo "Or start them individually with:"
-        for instance in "${instances_to_stop[@]}"; do
-          echo "./POK-manager.sh -start $instance"
-        done
-      fi
-    else
-      echo "----- Failed to update ARK server files to the latest build. Current build id: $updated_build_id -----"
-      
-      # Clean up temporary container if we created one
-      if [ -n "$temp_container_id" ]; then
-        echo "Removing temporary update container..."
-        if groups | grep -q '\bdocker\b' || [ "$(id -u)" -eq 0 ]; then
-          docker rm -f "$temp_container_id" > /dev/null 2>&1
-        else
-          sudo docker rm -f "$temp_container_id" > /dev/null 2>&1
-        fi
-      fi
-      
-      exit 1
+      echo "Failed to update ARK server files after multiple attempts. Please check the logs for more information."
     fi
   else
     echo "----- ARK server files are already up to date with build id: $current_build_id -----"
   fi
   
-  # Clean up temporary container if we created one
-  if [ -n "$temp_container_id" ]; then
-    echo "Removing temporary update container..."
-    if groups | grep -q '\bdocker\b' || [ "$(id -u)" -eq 0 ]; then
-      docker rm -f "$temp_container_id" > /dev/null 2>&1
-    else
-      sudo docker rm -f "$temp_container_id" > /dev/null 2>&1
-    fi
+  # Clean up temporary container
+  echo "Removing temporary update container..."
+  if groups | grep -q '\bdocker\b' || [ "$(id -u)" -eq 0 ]; then
+    docker rm -f "$instance_for_update" > /dev/null 2>&1 || true
+  else
+    sudo docker rm -f "$instance_for_update" > /dev/null 2>&1 || true
   fi
 
   echo "----- Update process completed -----"
-}
-
-# Function to update the Docker image tag in a docker-compose.yaml file
-update_docker_compose_image_tag() {
-  local compose_file="$1"
-  local new_image_tag="$2"
-  
-  # Check if the file exists
-  if [ ! -f "$compose_file" ]; then
-    echo "Error: Docker compose file not found at $compose_file"
-    return 1
-  fi
-  
-  # Create a temporary file
-  local tmp_file="${compose_file}.tmp"
-  
-  # Record the original ownership
-  local file_owner=$(stat -c '%u' "$compose_file")
-  local file_group=$(stat -c '%g' "$compose_file")
-  local file_perms=$(stat -c '%a' "$compose_file")
-  
-  # Read the file line by line and update the image tag
-  while IFS= read -r line; do
-    if [[ "$line" =~ image:[[:space:]]*acekorneya/asa_server:[0-9]+_[0-9]+_(latest|beta) ]] || 
-       [[ "$line" =~ image:[[:space:]]*acekorneya/asa_server:.*$ ]]; then
-      # Replace the image tag with the new one, ensuring we only output the exact tag string
-      echo "    image: acekorneya/asa_server:${new_image_tag}" >> "$tmp_file"
-    else
-      # Keep the line as is
-      echo "$line" >> "$tmp_file"
-    fi
-  done < "$compose_file"
-  
-  # Set the same permissions on the temporary file
-  chmod "$file_perms" "$tmp_file"
-  
-  # Replace the original file with the updated one - using -f to force without prompting
-  mv -f "$tmp_file" "$compose_file"
-  
-  # Restore the original ownership if running as sudo
-  if is_sudo && [ -n "$file_owner" ] && [ -n "$file_group" ]; then
-    chown "${file_owner}:${file_group}" "$compose_file"
-  fi
-  
-  echo "Updated Docker Compose file to use image tag: ${new_image_tag}"
 }
 
 # Function to help users migrate file ownership

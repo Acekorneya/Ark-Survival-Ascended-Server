@@ -7,6 +7,14 @@ RESTART_NOTICE_MINUTES="${RESTART_NOTICE_MINUTES:-5}" # Default to 5 minutes for
 EXIT_ON_API_RESTART="${EXIT_ON_API_RESTART:-TRUE}" # Default to TRUE - controls container exit behavior
 SHUTDOWN_COMPLETE_FLAG="/home/pok/shutdown_complete.flag"
 SHOW_ANIMATED_COUNTDOWN="${SHOW_ANIMATED_COUNTDOWN:-FALSE}" # Can be set to TRUE by POK-manager.sh
+UPDATE_RESTART="${UPDATE_RESTART:-FALSE}" # Set to TRUE when called after an update
+
+# Check if we're being called after an update
+if [ -f "/home/pok/restart_reason.flag" ] && [ "$(cat /home/pok/restart_reason.flag)" = "UPDATE_RESTART" ]; then
+  UPDATE_RESTART="TRUE"
+  rm -f "/home/pok/restart_reason.flag"
+  echo "🔄 Server restarting after update..."
+fi
 
 # Function to display animated countdown - same as in rcon_interface.sh
 display_animated_countdown() {
@@ -223,149 +231,111 @@ cleanup_environment() {
 
 # Function to exit the container with a restart signal
 exit_container_for_restart() {
+  local restart_reason="${1:-NORMAL_RESTART}"
+  
+  # Send RCON commands to save world and shut down the server
+  echo "[INFO] Sending SaveWorld command to server..."
+  if send_rcon_command "SaveWorld"; then
+    echo "[SUCCESS] World save command sent. Waiting for completion..."
+    # Allow time for the save to complete
+    sleep 10
+    
+    # Now send the exit command to properly shut down the server
+    echo "[INFO] Sending DoExit command to server..."
+    send_rcon_command "DoExit"
+    echo "[INFO] DoExit command sent. Waiting for server to shut down..."
+    
+    # Wait for server process to exit
+    local timeout=60
+    local elapsed=0
+    local is_server_down=false
+    
+    echo "[INFO] Waiting for server to shut down (timeout: $timeout seconds)..."
+    while [ $elapsed -lt $timeout ]; do
+      # Check if server processes are still running
+      if ! pgrep -f "ArkAscendedServer.exe" >/dev/null 2>&1 && ! pgrep -f "AsaApiLoader.exe" >/dev/null 2>&1; then
+        echo "[SUCCESS] Server has shut down properly."
+        is_server_down=true
+        break
+      fi
+      
+      # Wait and increment counter
+      sleep 5
+      elapsed=$((elapsed + 5))
+      echo "[INFO] Still waiting for server shutdown... ($elapsed/$timeout seconds)"
+    done
+    
+    # If server didn't shut down gracefully, force kill it
+    if [ "$is_server_down" != "true" ]; then
+      echo "[WARNING] Server didn't shut down gracefully within timeout. Force killing processes..."
+      pkill -9 -f "ArkAscendedServer.exe" >/dev/null 2>&1 || true
+      pkill -9 -f "AsaApiLoader.exe" >/dev/null 2>&1 || true
+      pkill -9 -f "wine" >/dev/null 2>&1 || true
+      pkill -9 -f "wineserver" >/dev/null 2>&1 || true
+      sleep 2
+    fi
+  else
+    echo "[WARNING] Failed to send SaveWorld command. Server might not be running or RCON might be unavailable."
+    echo "[INFO] Will attempt to force stop any running server processes..."
+    pkill -9 -f "ArkAscendedServer.exe" >/dev/null 2>&1 || true
+    pkill -9 -f "AsaApiLoader.exe" >/dev/null 2>&1 || true
+    pkill -9 -f "wine" >/dev/null 2>&1 || true
+    pkill -9 -f "wineserver" >/dev/null 2>&1 || true
+    sleep 2
+  fi
+  
   # Create a flag file to indicate a clean exit for restart
   echo "$(date) - Container exiting for automatic restart by orchestration system" > /home/pok/container_restart.log
   
   # Create a flag file that will be detected on container restart
-  echo "API_RESTART" > /home/pok/restart_reason.flag
+  echo "$restart_reason" > /home/pok/restart_reason.flag
   
-  echo "🔄 API mode with restart requested - Container will now exit with code 0"
-  echo "⚠️ Container orchestration should restart the container automatically"
-  echo "📝 If container does not restart automatically, please restart it manually"
+  echo "🔄 Container will now exit for restart via Docker"
+  echo "⚠️ Docker will automatically restart the container"
   
-  # Allow some time for logs to be written
-  sleep 3
+  # Create a special flag to tell the monitor to stop as well
+  echo "true" > /home/pok/stop_monitor.flag
   
-  # Exit the container with success code (0) which should trigger restart by orchestration
-  exit 0
+  # Simplified container exit approach - no extensive cleanup needed
+  echo "[INFO] Server is shut down. Killing container to trigger Docker restart..."
+  
+  # Force kill the container process with SIGKILL
+  echo "[INFO] Force killing ALL container processes for restart..."
+  
+  # Flush disk writes
+  sync 
+  sleep 1
+  
+  # Super aggressive container kill approach:
+  
+  # 1. Kill all processes owned by our user
+  echo "[INFO] Killing all user processes with SIGKILL..."
+  killall -9 -u pok || true
+  
+  # 2. Kill all processes in our process group
+  echo "[INFO] Killing all processes in process group with SIGKILL..."
+  kill -9 -1 || true
+  
+  # 3. Force kill init process (tini)
+  echo "[INFO] Directly killing PID 1 (tini) with SIGKILL..."
+  kill -9 1 || true
+  
+  # 4. As absolute last resort, crash our own process with ABORT signal
+  echo "[INFO] Last resort: Sending SIGABRT to our own process to force container crash..."
+  kill -ABRT $$ || true
+  
+  # If we somehow get here, exit with failure code
+  exit 1
 }
 
 # Function to restart the server after cleanup
 restart_server_direct() {
-  # For API mode, implement the exit strategy if enabled
-  if [ "${API}" = "TRUE" ] && [ "${EXIT_ON_API_RESTART}" = "TRUE" ]; then
-    echo "API mode detected with EXIT_ON_API_RESTART=TRUE"
-    echo "Using container restart strategy for more reliable API mode restarts"
-    
-    # Exit the container to trigger restart by orchestration system
-    exit_container_for_restart
-    # This function will not return as it exits the container
-  fi
+  # Always use container restart strategy for all modes
+  echo "Using container restart strategy for clean, consistent server restarts"
   
-  echo "Starting server after cleanup..."
-  
-  # Critical: For API mode, don't start Xvfb here - let init.sh handle it
-  # This avoids conflicts where multiple scripts try to manage Xvfb
-  if [ "${API}" = "TRUE" ]; then
-    # Just set the display variable, but don't start Xvfb
-    export DISPLAY=:0.0
-    echo "API mode: Setting DISPLAY=:0.0 for init.sh to use"
-    
-    # Kill any existing Xvfb processes to ensure clean state for init.sh
-    if pgrep -f "Xvfb" >/dev/null 2>&1; then
-      echo "Cleaning up existing Xvfb processes before init.sh starts..."
-      pkill -9 -f "Xvfb" >/dev/null 2>&1 || true
-      sleep 3
-    fi
-  fi
-  
-  # Make sure the logs directory exists
-  mkdir -p /home/pok/logs
-  
-  # Export critical environment variables
-  export XDG_RUNTIME_DIR=/run/user/$(id -u)
-  export STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam"
-  export STEAM_COMPAT_DATA_PATH="/home/pok/.steam/steam/steamapps/compatdata/2430930"
-  export WINEDLLOVERRIDES="version=n,b"
-  
-  # Create a flag file to indicate restart is in progress
-  touch /tmp/restart_in_progress
-  
-  # For API mode, use direct execution with the restart flag
-  if [ "${API}" = "TRUE" ]; then
-    echo "Executing init.sh (API mode) with restart flag..."
-    nohup /home/pok/scripts/init.sh --from-restart > /home/pok/logs/restart_console.log 2>&1 &
-    INIT_PID=$!
-    echo "Started init.sh with PID: $INIT_PID"
-  else
-    echo "Executing init.sh to restart the server..."
-    nohup /home/pok/scripts/init.sh --from-restart > /home/pok/logs/restart_console.log 2>&1 &
-  fi
-  
-  echo "Server restart initiated. View logs with: tail -f /home/pok/logs/restart_console.log"
-  
-  # Add a slight delay to allow init.sh to start
-  sleep 5
-  
-  # Check if init.sh started successfully 
-  if [ "${API}" = "TRUE" ]; then
-    # For API mode, verify Xvfb started
-    if pgrep -f "Xvfb" >/dev/null 2>&1; then
-      echo "Xvfb process detected - init.sh appears to be running correctly"
-    else
-      echo "WARNING: No Xvfb process detected yet. init.sh might still be starting up."
-      echo "Restarting Xvfb manually to ensure proper environment..."
-      Xvfb :0 -screen 0 1024x768x16 2>/dev/null &
-      sleep 2
-    fi
-  fi
-  
-  # Start displaying logs in background - this is especially important for restarts
-  (
-    echo "Setting up log display after restart..."
-    # Wait a bit for the server to create logs
-    sleep 30
-    
-    # Define log paths
-    local game_log="${ASA_DIR}/ShooterGame/Saved/Logs/ShooterGame.log"
-    local api_log="${ASA_DIR}/ShooterGame/Binaries/Win64/logs"
-    local max_wait=60
-    
-    # Check for logs and start displaying them
-    if [ "${API}" = "TRUE" ]; then
-      # For API mode, show both API and game logs if available
-      echo "Checking for API logs after restart..."
-      if [ -d "$api_log" ] && [ "$(ls -A $api_log 2>/dev/null | grep -i .log)" ]; then
-        local newest_api_log=$(ls -t $api_log/*.log 2>/dev/null | head -1)
-        if [ -n "$newest_api_log" ]; then
-          echo "Found API log: $(basename $newest_api_log)"
-          echo "Tailing API log in background..."
-          tail -f "$newest_api_log" &
-        fi
-      fi
-    fi
-    
-    # Always try to show the main game logs
-    echo "Checking for ShooterGame logs after restart..."
-    local elapsed=0
-    local check_interval=5
-    
-    while [ $elapsed -lt $max_wait ]; do
-      if [ -f "$game_log" ]; then
-        echo "Found ShooterGame log at: $game_log"
-        echo "Tailing ShooterGame log to console..."
-        tail -f "$game_log" &
-        break
-      fi
-      
-      # Also check for the symlink we created
-      if [ -f "/home/pok/shooter_game.log" ]; then
-        echo "Found ShooterGame log via symlink"
-        echo "Tailing ShooterGame log to console..."
-        tail -f "/home/pok/shooter_game.log" &
-        break
-      fi
-      
-      sleep $check_interval
-      elapsed=$((elapsed + check_interval))
-      echo "Still waiting for ShooterGame log... ($elapsed seconds)"
-    done
-    
-    if [ $elapsed -ge $max_wait ]; then
-      echo "WARNING: ShooterGame logs not found after $max_wait seconds"
-      echo "To view logs later, check: $game_log"
-    fi
-  ) &
+  # Exit the container to trigger restart by orchestration system
+  exit_container_for_restart
+  # This function will not return as it exits the container
 }
 
 # Function to wait for shutdown flag
@@ -427,13 +397,26 @@ if [ "$RESTART_MODE" == "immediate" ]; then
   # Clean up environment thoroughly
   cleanup_environment
   
-  # Restart server
-  restart_server_direct
+  # Exit container to restart
+  echo "Triggering container restart for immediate server restart..."
+  exit_container_for_restart "IMMEDIATE_RESTART"
 else
   echo "Scheduled restart with a countdown of $RESTART_NOTICE_MINUTES minutes..."
 
+  # For update restarts, use a special handling approach
+  if [ "$UPDATE_RESTART" = "TRUE" ]; then
+    echo "🔄 Restart requested after update - handling with update-specific protocol"
+    
+    # For update restarts, we don't need to notify again as update_server.sh already did countdown
+    echo "Server is restarting after update..."
+    
+    # Clean up environment thoroughly
+    cleanup_environment
+    
+    # Exit container to trigger restart for a clean update
+    exit_container_for_restart "UPDATE_RESTART_COMPLETED"
   # For API mode with EXIT_ON_API_RESTART=TRUE, handle shutdown and container restart differently
-  if [ "${API}" = "TRUE" ] && [ "${EXIT_ON_API_RESTART}" = "TRUE" ]; then
+  elif [ "${API}" = "TRUE" ] && [ "${EXIT_ON_API_RESTART}" = "TRUE" ]; then
     echo "API mode with container restart strategy detected"
     echo "Will fully complete shutdown sequence before container restart"
     
@@ -460,11 +443,11 @@ else
     if wait_for_shutdown_completion; then
       # After shutdown completes, clean up and exit to trigger container restart
       cleanup_environment
-      exit_container_for_restart
+      exit_container_for_restart "UPDATE_RESTART_COMPLETED"
     else
       echo "WARNING: Shutdown did not complete properly. Forcing container restart anyway."
       cleanup_environment
-      exit_container_for_restart
+      exit_container_for_restart "UPDATE_RESTART_FAILED"
     fi
   else
     # For non-API mode or if EXIT_ON_API_RESTART=FALSE, use standard restart

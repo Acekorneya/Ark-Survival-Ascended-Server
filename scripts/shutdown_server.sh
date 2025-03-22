@@ -32,39 +32,51 @@ server_stopped_check() {
 # Function for safe container shutdown - used by POK-manager.sh -stop -all
 # Ensures world is saved before container is stopped
 safe_container_stop() {
-  if is_process_running; then
+  # First check if actual server process exists using pgrep
+  if pgrep -f "AsaApiLoader.exe" >/dev/null 2>&1 || pgrep -f "ArkAscendedServer.exe" >/dev/null 2>&1; then
     echo "---- Safe container stop initiated ----"
     echo "Performing world save before container stop..."
     
-    # Send a save command and notify players
-    send_rcon_command "ServerChat Server is being stopped! Saving world data..."
-    send_rcon_command "saveworld"
+    # Try to check if RCON is responsive before sending commands
+    local rcon_test_output
+    rcon_test_output=$(timeout 5 ${RCON_PATH} -a ${RCON_HOST}:${RCON_PORT} -p "${RCON_PASSWORD}" "info" 2>&1)
+    local rcon_status=$?
     
-    echo "Waiting for save completion..."
-    sleep 5
-    
-    # Wait for save to complete with a reasonable timeout
-    local save_wait=0
-    local max_save_wait=60  # 1 minute max wait for save
-    
-    while ! save_complete_check && [ $save_wait -lt $max_save_wait ]; do
+    if [ $rcon_status -eq 0 ] && ! echo "$rcon_test_output" | grep -q "Failed to connect"; then
+      # RCON is responsive, proceed with normal shutdown
+      # Send a save command and notify players
+      send_rcon_command "ServerChat Server is being stopped! Saving world data..."
+      send_rcon_command "saveworld"
+      
+      echo "Waiting for save completion..."
       sleep 5
-      save_wait=$((save_wait + 5))
-      echo "Still waiting for world save to complete... ($save_wait seconds elapsed)"
-    done
-    
-    if [ $save_wait -lt $max_save_wait ]; then
-      echo "✅ World save completed successfully."
+      
+      # Wait for save to complete with a reasonable timeout
+      local save_wait=0
+      local max_save_wait=60  # 1 minute max wait for save
+      
+      while ! save_complete_check && [ $save_wait -lt $max_save_wait ]; do
+        sleep 5
+        save_wait=$((save_wait + 5))
+        echo "Still waiting for world save to complete... ($save_wait seconds elapsed)"
+      done
+      
+      if [ $save_wait -lt $max_save_wait ]; then
+        echo "✅ World save completed successfully."
+      else
+        echo "⚠️ World save timed out, but proceeding with safe shutdown."
+      fi
+      
+      # Attempt to gracefully shut down the server
+      echo "Sending shutdown command to server..."
+      send_rcon_command "DoExit"
     else
-      echo "⚠️ World save timed out, but proceeding with safe shutdown."
+      echo "⚠️ RCON connection failed - server might be unresponsive. Using direct process termination."
     fi
     
     # Create the shutdown complete flag to signal that it's safe to stop the container
     touch "$SHUTDOWN_COMPLETE_FLAG"
     
-    # Attempt to gracefully shut down the server
-    echo "Sending shutdown command to server..."
-    send_rcon_command "DoExit"
     sleep 10
     
     # Wait for "Server stopped" message in logs with a timeout

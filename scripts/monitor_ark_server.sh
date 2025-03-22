@@ -10,39 +10,204 @@ INITIAL_STARTUP_DELAY=120  # Delay in seconds before starting the monitoring
 lock_file="$ASA_DIR/updating.flag"
 RECOVERY_LOG="/home/pok/server_recovery.log"
 EXIT_ON_API_RESTART="${EXIT_ON_API_RESTART:-TRUE}" # Default to TRUE - controls container exit behavior
+RESTART_TIMESTAMP_FILE="/tmp/restart_timestamp"
 
 # Restart update window
 RESTART_NOTICE_MINUTES=${RESTART_NOTICE_MINUTES:-30}  # Default to 30 minutes if not set
 UPDATE_WINDOW_MINIMUM_TIME=${UPDATE_WINDOW_MINIMUM_TIME:-12:00 AM} # Default to "12:00 AM" if not set
 UPDATE_WINDOW_MAXIMUM_TIME=${UPDATE_WINDOW_MAXIMUM_TIME:-11:59 PM} # Default to "11:59 PM" if not set
 
+# Check for restart timeout (nuclear option)
+check_restart_timeout() {
+  # If restart flag exists, check if we've been stuck for too long
+  if [ -f "/home/pok/restart_reason.flag" ]; then
+    # If timestamp file doesn't exist, create it with current time
+    if [ ! -f "$RESTART_TIMESTAMP_FILE" ]; then
+      date +%s > "$RESTART_TIMESTAMP_FILE"
+      return 0
+    fi
+    
+    # Otherwise, check how long it's been since the restart was initiated
+    local start_time=$(cat "$RESTART_TIMESTAMP_FILE")
+    local current_time=$(date +%s)
+    local elapsed_time=$((current_time - start_time))
+    
+    # If it's been more than 5 minutes (300 seconds), force kill the container
+    if [ $elapsed_time -gt 300 ]; then
+      echo "[CRITICAL] Restart timeout exceeded (${elapsed_time}s) - FORCING CONTAINER KILL"
+      
+      # Absolutely ensure container dies
+      echo "true" > /home/pok/stop_monitor.flag
+      sync
+      
+      # Execute most aggressive kill sequence
+      killall -9 -u pok || true
+      sleep 1
+      kill -9 -1 || true
+      sleep 1
+      kill -9 1 || true
+      sleep 1
+      kill -ABRT $$ || true
+      exec kill -SEGV $$ || exit 1
+    fi
+  else
+    # If no restart flag, remove the timestamp file if it exists
+    if [ -f "$RESTART_TIMESTAMP_FILE" ]; then
+      rm -f "$RESTART_TIMESTAMP_FILE"
+    fi
+  fi
+  
+  return 0
+}
+
+# Function to display monitor status with timestamp
+display_monitor_status() {
+  # Skip if display is disabled
+  if [ "${DISPLAY_POK_MONITOR_MESSAGE}" != "TRUE" ]; then
+    return 0
+  fi
+  
+  # Get current timestamp
+  local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+  
+  # Store parameters in local variables to avoid interpretation issues
+  local message="$1"
+  local level="${2:-INFO}"
+  local separator="${3:-false}"
+  
+  # Display a separator line if requested
+  if [ "$separator" = "true" ]; then
+    printf "┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ UPDATE MONITOR ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n"
+  fi
+  
+  # Format the message based on level - use printf for safer output
+  case "$level" in
+    "INFO")
+      printf "┃ ℹ️ [%s] %s\n" "$timestamp" "$message"
+      ;;
+    "SUCCESS")
+      printf "┃ ✅ [%s] %s\n" "$timestamp" "$message"
+      ;;
+    "WARNING")
+      printf "┃ ⚠️ [%s] %s\n" "$timestamp" "$message"
+      ;;
+    "ERROR")
+      printf "┃ ❌ [%s] %s\n" "$timestamp" "$message"
+      ;;
+    *)
+      printf "┃ [%s] %s\n" "$timestamp" "$message"
+      ;;
+  esac
+  
+  # Close the separator if requested
+  if [ "$separator" = "true" ]; then
+    printf "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n"
+  fi
+}
+
+# Function to convert the CHECK_FOR_UPDATE_INTERVAL to seconds
+# Simplified: whole numbers (1-24) are hours, decimals (0.01-0.99) are interpreted as minutes
+convert_interval_to_seconds() {
+  # Only calculate the value, no display here
+  local interval=${CHECK_FOR_UPDATE_INTERVAL:-1}
+  local seconds
+  
+  # Check if the interval is a decimal (contains a dot)
+  if [[ "$interval" == *.* ]]; then
+    # Get the digits after the decimal point (these are now minutes)
+    # Example: 0.05 -> extract 05 -> 5 minutes
+    local minutes=$(echo "$interval" | cut -d. -f2)
+    # Remove leading zeros (05 -> 5)
+    minutes=$(echo "$minutes" | sed 's/^0*//')
+    
+    # If empty (in case it was just .0), default to 1 minute
+    if [ -z "$minutes" ]; then
+      minutes=1
+    fi
+    
+    # Convert minutes to seconds (60 seconds per minute)
+    seconds=$((minutes * 60))
+    
+    # Enforce minimum of 1 minute
+    if [ $seconds -lt 60 ]; then
+      seconds=60
+    fi
+  else
+    # Whole number = hours, convert to seconds (3600 seconds per hour)
+    # Ensure it's a valid number by removing any non-digits
+    interval=$(echo "$interval" | tr -cd '0-9')
+    if [ -z "$interval" ] || [ "$interval" -lt 1 ]; then
+      interval=1
+    fi
+    seconds=$((interval * 3600))
+  fi
+  
+  echo "$seconds"
+}
+
+# Stand-alone function to display interval information to the user
+display_interval_info() {
+  # Only run if display is enabled
+  if [ "${DISPLAY_POK_MONITOR_MESSAGE}" != "TRUE" ]; then
+    return
+  fi
+  
+  local interval=${CHECK_FOR_UPDATE_INTERVAL:-1}
+  local seconds
+  local description
+  
+  # Calculate interval seconds using our conversion function
+  seconds=$(convert_interval_to_seconds)
+  
+  # Format as hours or minutes for display
+  if [ $seconds -ge 3600 ]; then
+    local hours=$((seconds / 3600))
+    if [ $hours -eq 1 ]; then
+      description="$hours hour ($seconds seconds)"
+    else
+      description="$hours hours ($seconds seconds)"
+    fi
+  else
+    local minutes=$((seconds / 60))
+    if [ $minutes -eq 1 ]; then
+      description="$minutes minute ($seconds seconds)"
+    else
+      description="$minutes minutes ($seconds seconds)"
+    fi
+  fi
+  
+  # Safely display
+  display_monitor_status "🕒 Check interval: $description" "INFO"
+}
+
 # Function to restart container for API mode
 exit_container_for_recovery() {
   local current_time=$(date "+%Y-%m-%d %H:%M:%S")
-  echo "[$current_time] [INFO] Using container exit/restart strategy for API mode recovery..." | tee -a "$RECOVERY_LOG"
+  echo "[$current_time] [INFO] Using container exit/restart strategy for recovery..." | tee -a "$RECOVERY_LOG"
   
   # Create a flag file to indicate a clean exit for restart
   echo "$(date) - Container exiting for automatic restart/recovery by orchestration system" > /home/pok/container_recovery.log
   
   # Create a flag file that will be detected on container restart
-  echo "API_RESTART" > /home/pok/restart_reason.flag
+  echo "CONTAINER_RECOVERY" > /home/pok/restart_reason.flag
   
-  echo "[$current_time] [WARNING] Container will now exit with code 0 for orchestration system to restart it" | tee -a "$RECOVERY_LOG"
-  echo "[$current_time] [INFO] If container does not restart automatically, please restart it manually" | tee -a "$RECOVERY_LOG"
+  echo "[$current_time] [WARNING] Container will now be killed to trigger Docker automatic restart" | tee -a "$RECOVERY_LOG"
   
-  # Before exiting, ensure world save is complete
-  # Use safe_container_stop function to ensure world save
-  echo "[$current_time] [INFO] Ensuring world data is saved before container exit..." | tee -a "$RECOVERY_LOG"
-  safe_container_stop
-  
-  # Kill any running server processes first
+  # First check if server processes are actually running before trying to save or send commands
   if pgrep -f "AsaApiLoader.exe" >/dev/null 2>&1 || pgrep -f "ArkAscendedServer.exe" >/dev/null 2>&1; then
-    echo "[$current_time] [INFO] Terminating any running server processes before exit..." | tee -a "$RECOVERY_LOG"
+    # Use safe_container_stop function to ensure world save
+    echo "[$current_time] [INFO] Server is running, ensuring world data is saved before container exit..." | tee -a "$RECOVERY_LOG"
+    safe_container_stop
+    
+    # Kill any running server processes after safe stop
+    echo "[$current_time] [INFO] Terminating any running server processes after save..." | tee -a "$RECOVERY_LOG"
     pkill -9 -f "AsaApiLoader.exe" >/dev/null 2>&1 || true
     pkill -9 -f "ArkAscendedServer.exe" >/dev/null 2>&1 || true
     pkill -9 -f "wine" >/dev/null 2>&1 || true
     pkill -9 -f "wineserver" >/dev/null 2>&1 || true
     sleep 2
+  else
+    echo "[$current_time] [INFO] Server not running, no world save needed" | tee -a "$RECOVERY_LOG"
   fi
   
   # Make sure any existing shutdown flag is removed so a fresh restart can occur
@@ -51,11 +216,37 @@ exit_container_for_recovery() {
     rm -f "$SHUTDOWN_COMPLETE_FLAG"
   fi
   
+  # Create a special flag to tell other monitors to stop
+  echo "true" > /home/pok/stop_monitor.flag
+  
+  # Flush any pending disk writes
+  sync
+  
   # Allow some time for logs to be written
   sleep 3
   
-  # Exit the container with success code (0) which should trigger restart by orchestration
-  exit 0
+  echo "[$current_time] [INFO] Force killing ALL container processes..." | tee -a "$RECOVERY_LOG"
+  
+  # Super aggressive container kill approach:
+  
+  # 1. Kill all processes owned by our user
+  echo "[$current_time] [INFO] Killing all user processes with SIGKILL..." | tee -a "$RECOVERY_LOG"
+  killall -9 -u pok || true
+  
+  # 2. Kill all processes in our process group
+  echo "[$current_time] [INFO] Killing all processes in process group with SIGKILL..." | tee -a "$RECOVERY_LOG"
+  kill -9 -1 || true
+  
+  # 3. Force kill init process (tini)
+  echo "[$current_time] [INFO] Directly killing PID 1 (tini) with SIGKILL..." | tee -a "$RECOVERY_LOG"
+  kill -9 1 || true
+  
+  # 4. As absolute last resort, crash our own process with ABORT signal
+  echo "[$current_time] [INFO] Last resort: Sending SIGABRT to our own process to force container crash..." | tee -a "$RECOVERY_LOG"
+  kill -ABRT $$ || true
+  
+  # If we somehow get here, exit with failure code
+  exit 1
 }
 
 # Enhanced recovery function with better logging and recovery 
@@ -78,57 +269,18 @@ recover_server() {
     return 0
   fi
   
-  # For API mode, use the container exit/restart strategy if enabled
-  if [ "${API}" = "TRUE" ] && [ "${EXIT_ON_API_RESTART}" = "TRUE" ]; then
-    echo "[$current_time] [INFO] API mode recovery - using container restart strategy..." | tee -a "$RECOVERY_LOG"
-    exit_container_for_recovery
-    # This function will not return as it exits the container
+  # Clean up any stale flags that might interfere with restart
+  echo "[$current_time] [INFO] Cleaning up any stale flags or files before container restart..." | tee -a "$RECOVERY_LOG"
+  if [ -f "$PID_FILE" ]; then
+    rm -f "$PID_FILE"
   fi
   
-  # Double-check server status with a more thorough approach
-  local server_running=false
-  
-  # Check for AsaApi processes first if in API mode
-  if [ "${API}" = "TRUE" ]; then
-    if pgrep -f "AsaApiLoader.exe" >/dev/null 2>&1; then
-      local api_pid=$(pgrep -f "AsaApiLoader.exe" | head -1)
-      echo "[$current_time] [INFO] AsaApi server is running (PID: $api_pid)" | tee -a "$RECOVERY_LOG"
-      echo "$api_pid" > "$PID_FILE"
-      server_running=true
-    fi
+  if [ -f "$ASA_DIR/updating.flag" ]; then
+    rm -f "$ASA_DIR/updating.flag"
   fi
   
-  # Check for main server process if API didn't find anything
-  if [ "$server_running" = "false" ]; then
-    if pgrep -f "ArkAscendedServer.exe" >/dev/null 2>&1; then
-      local server_pid=$(pgrep -f "ArkAscendedServer.exe" | head -1)
-      echo "[$current_time] [INFO] ARK server is running (PID: $server_pid)" | tee -a "$RECOVERY_LOG"
-      echo "$server_pid" > "$PID_FILE"
-      server_running=true
-    fi
-  fi
-  
-  # Check for Wine or Proton processes that could indicate the server is still starting up
-  if [ "$server_running" = "false" ]; then
-    if pgrep -f "wine" >/dev/null 2>&1; then
-      echo "[$current_time] [INFO] Wine/Proton processes found, server might still be initializing" | tee -a "$RECOVERY_LOG"
-      # Wait a bit more to see if server processes appear
-      sleep 30
-      
-      # Check again after waiting
-      if pgrep -f "AsaApiLoader.exe" >/dev/null 2>&1 || pgrep -f "ArkAscendedServer.exe" >/dev/null 2>&1; then
-        echo "[$current_time] [SUCCESS] Server processes appeared after waiting" | tee -a "$RECOVERY_LOG"
-        server_running=true
-      else
-        echo "[$current_time] [WARNING] No server processes appeared after waiting 30 seconds" | tee -a "$RECOVERY_LOG"
-      fi
-    fi
-  fi
-  
-  # If server is running, we're done
-  if [ "$server_running" = "true" ]; then
-    echo "[$current_time] [SUCCESS] Server processes are running, recovery not needed" | tee -a "$RECOVERY_LOG"
-    return 0
+  if [ -f "/tmp/restart_in_progress" ]; then
+    rm -f "/tmp/restart_in_progress"
   fi
   
   # Make sure any existing shutdown flag is removed for a clean restart
@@ -137,16 +289,15 @@ recover_server() {
     rm -f "$SHUTDOWN_COMPLETE_FLAG"
   fi
   
-  # Server is not running, using restart_server.sh for recovery
-  echo "[$current_time] [WARNING] Server is not running, using restart_server.sh for recovery..." | tee -a "$RECOVERY_LOG"
+  # Create a flag to ensure all monitors stop
+  echo "true" > /home/pok/stop_monitor.flag
   
-  # Use restart_server.sh for consistency - with "immediate" parameter for instant restart
-  echo "[$current_time] [INFO] Running restart_server.sh immediate..." | tee -a "$RECOVERY_LOG"
-  /home/pok/scripts/restart_server.sh immediate
+  # Use container exit/restart strategy for all modes
+  echo "[$current_time] [INFO] Server not running - using container restart strategy for clean recovery..." | tee -a "$RECOVERY_LOG"
   
-  # Return success, as we've delegated the restart to restart_server.sh
-  echo "[$current_time] [SUCCESS] Restart command issued via restart_server.sh" | tee -a "$RECOVERY_LOG"
-  return 0
+  # Exit the container to trigger Docker restart
+  exit_container_for_recovery
+  # This function will not return as it exits the container
 }
 
 # Function to check if the server is running
@@ -397,16 +548,79 @@ handle_first_launch_recovery() {
   return 0
 }
 
+# Function to format interval text for display
+format_interval_text() {
+  local seconds=$1
+  local interval_text=""
+  
+  if [ "$seconds" -ge 3600 ]; then
+    local hrs=$((seconds / 3600))
+    interval_text="$hrs hour"
+    [ "$hrs" -gt 1 ] && interval_text="${interval_text}s"
+  else
+    local mins=$((seconds / 60))
+    interval_text="$mins minute"
+    [ "$mins" -gt 1 ] && interval_text="${interval_text}s"
+  fi
+  
+  echo "$interval_text"
+}
+
 # Wait for the initial startup before monitoring
 sleep $INITIAL_STARTUP_DELAY
 
+# Show monitor startup message
+if [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
+  display_monitor_status "🔍 Update monitor started (interval value: ${CHECK_FOR_UPDATE_INTERVAL})" "INFO" "true"
+  display_interval_info
+  display_monitor_status "🕒 Update window: ${UPDATE_WINDOW_MINIMUM_TIME} to ${UPDATE_WINDOW_MAXIMUM_TIME}"
+  display_monitor_status "⏱️ Restart notice period: ${RESTART_NOTICE_MINUTES} minutes"
+fi
+
 # Monitoring loop
 while true; do
+  # Check for restart timeout (nuclear option for stuck restarts)
+  check_restart_timeout
+  
   # Check if there's an active shutdown in progress
   if [ -f "$SHUTDOWN_COMPLETE_FLAG" ]; then
     echo "[INFO] Server shutdown/restart in progress, waiting before continuing monitoring..."
     sleep 30
     continue
+  fi
+  
+  # Check for monitor stop flag - exit if we're being asked to stop
+  if [ -f "/home/pok/stop_monitor.flag" ]; then
+    display_monitor_status "Container restart/shutdown requested. Monitor stopping." "INFO" "true"
+    echo "[INFO] Monitor stop flag detected - exiting monitoring loop"
+    # Remove the flag so it doesn't affect next container start
+    rm -f "/home/pok/stop_monitor.flag"
+    exit 0
+  fi
+
+  # Check for failed restart attempts - if restart flag exists but server isn't running
+  if [ -f "/home/pok/restart_reason.flag" ] && ! is_process_running; then
+    current_time=$(date "+%Y-%m-%d %H:%M:%S")
+    echo "[$current_time] [WARNING] Detected a restart flag with server not running - forced container kill needed" | tee -a "$RECOVERY_LOG"
+    display_monitor_status "⚠️ Restart detected but server not running - forcing container kill" "WARNING" "true"
+    
+    # Ensure stop flag is created
+    echo "true" > /home/pok/stop_monitor.flag
+    
+    # Execute the most aggressive kill methods immediately
+    echo "[$current_time] [WARNING] Executing emergency container kill sequence" | tee -a "$RECOVERY_LOG"
+    
+    # Force sync to ensure all data is written
+    sync
+    
+    # Kill everything with maximum prejudice
+    killall -9 -u pok || true
+    kill -9 -1 || true
+    kill -9 1 || true
+    kill -ABRT $$ || true
+    
+    # If we somehow get here, try a second approach
+    exec kill -SEGV $$ || exit 1
   fi
 
   # Check for stale update flags (older than 6 hours) 
@@ -468,23 +682,118 @@ while true; do
     # Check for updates at the interval specified by CHECK_FOR_UPDATE_INTERVAL
     current_time=$(date +%s)
     last_update_check_time=${last_update_check_time:-0}
-    update_check_interval_seconds=$((CHECK_FOR_UPDATE_INTERVAL * 3600))
+    
+    # Get update interval in seconds (no display output)
+    update_check_interval_seconds=$(convert_interval_to_seconds)
+    
+    # Ensure we have a valid number
+    if ! [[ $update_check_interval_seconds =~ ^[0-9]+$ ]]; then
+      display_monitor_status "⚠️ Invalid interval value, using default of 1 hour" "WARNING"
+      update_check_interval_seconds=3600
+    fi
 
     # Put constraints around the update check interval to prevent it from running outside of desired time windows
     update_window_lower_bound=$(date -d "${UPDATE_WINDOW_MINIMUM_TIME}" +%s)
     update_window_upper_bound=$(date -d "${UPDATE_WINDOW_MAXIMUM_TIME}" +%s)
 
-    if ((current_time - last_update_check_time > update_check_interval_seconds)) && ((current_time >= update_window_lower_bound && current_time <= update_window_upper_bound)); then
+    # Display next check time if verbose logging is enabled
+    if [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
+      # Calculate when the next check will occur
+      next_check_time=$((last_update_check_time + update_check_interval_seconds))
+      
+      # Format for display
+      next_check_readable=$(date -d "@$next_check_time" "+%Y-%m-%d %H:%M:%S" 2>/dev/null)
+      if [ $? -ne 0 ]; then
+        # If date conversion failed, provide at least some information
+        display_monitor_status "⚠️ Next check: Error calculating time" "WARNING" "true"
+      else
+        # Calculate minutes until next check
+        time_until_next_check=$(( (next_check_time - current_time) / 60 ))
+        
+        # Get formatted interval text using the function
+        interval_text=$(format_interval_text "$update_check_interval_seconds")
+        
+        # Display with appropriate wording
+        if [ "$time_until_next_check" -le 0 ]; then
+          display_monitor_status "📡 Update check due now (checking every $interval_text)" "INFO" "true"
+        else
+          if [ "$time_until_next_check" -eq 1 ]; then
+            display_monitor_status "⏰ Next check: $next_check_readable (in $time_until_next_check minute, every $interval_text)" "INFO" "true"
+          else
+            display_monitor_status "⏰ Next check: $next_check_readable (in $time_until_next_check minutes, every $interval_text)" "INFO" "true"
+          fi
+        fi
+      fi
+      
+      # Display update window information
+      current_time_readable=$(date -d "@$current_time" "+%H:%M:%S" 2>/dev/null)
+      min_time_readable=$(date -d "@$update_window_lower_bound" "+%H:%M:%S" 2>/dev/null)
+      max_time_readable=$(date -d "@$update_window_upper_bound" "+%H:%M:%S" 2>/dev/null)
+      
+      # Make sure we have valid values for all variables
+      if [ -n "$current_time" ] && [ -n "$update_window_lower_bound" ] && [ -n "$update_window_upper_bound" ]; then
+        # Safe comparison with proper variable validation
+        if [ "$current_time" -ge "$update_window_lower_bound" ] && [ "$current_time" -le "$update_window_upper_bound" ]; then
+          display_monitor_status "🕒 Current time $current_time_readable is WITHIN update window ($min_time_readable - $max_time_readable)"
+        else
+          display_monitor_status "🕒 Current time $current_time_readable is OUTSIDE update window ($min_time_readable - $max_time_readable)" "WARNING"
+        fi
+      else
+        display_monitor_status "⚠️ Unable to validate update window times" "WARNING"
+      fi
+    fi
+
+    # Safe comparison with proper variable validation
+    if [ -n "$current_time" ] && [ -n "$last_update_check_time" ] && [ -n "$update_check_interval_seconds" ] && \
+       [ -n "$update_window_lower_bound" ] && [ -n "$update_window_upper_bound" ] && \
+       [ "$((current_time - last_update_check_time))" -gt "$update_check_interval_seconds" ] && \
+       [ "$current_time" -ge "$update_window_lower_bound" ] && [ "$current_time" -le "$update_window_upper_bound" ]; then
       # Make sure any stale shutdown flags are cleared before update check
       if [ -f "$SHUTDOWN_COMPLETE_FLAG" ]; then
-        echo "[INFO] Removing stale shutdown complete flag before update check..."
+        display_monitor_status "Removing stale shutdown complete flag before update check..." "WARNING"
         rm -f "$SHUTDOWN_COMPLETE_FLAG"
       fi
       
-      if /home/pok/scripts/POK_Update_Monitor.sh; then
+      # Use POK_Update_Monitor.sh which already uses get_current_build_id from common.sh
+      # The updated get_current_build_id now uses SteamCMD first and falls back to API
+      display_monitor_status "🔎 CHECKING FOR UPDATES using SteamCMD..." "INFO" "true"
+      
+      # Capture the output of POK_Update_Monitor.sh for display if enabled
+      if [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
+        # Run the command and capture both output and status in a safer way
+        update_output=$(/home/pok/scripts/POK_Update_Monitor.sh 2>&1)
+        update_status=$?
+        
+        # Display the output with each line properly formatted - handle the output carefully
+        if [ -n "$update_output" ]; then
+          # Use a safer method to process the output line by line
+          while IFS= read -r line; do
+            # Skip empty lines
+            if [ -n "$line" ]; then
+              display_monitor_status "$line"
+            fi
+          done <<< "$update_output"
+        fi
+      else
+        # Run silently when display is disabled
+        /home/pok/scripts/POK_Update_Monitor.sh >/dev/null 2>&1
+        update_status=$?
+      fi
+      
+      if [ $update_status -eq 0 ]; then
+        display_monitor_status "✅ UPDATE DETECTED! Starting update process" "SUCCESS" "true"
         # Set restart mode flag for proper messaging during restart
         export API_CONTAINER_RESTART="TRUE"
+        
+        # Start the update server script to handle the update process
+        display_monitor_status "🔄 Launching update_server.sh to handle the update process"
+        /home/pok/scripts/update_server.sh
+        
+        # After update is complete, restart the server with notice
+        display_monitor_status "🔄 Launching restart_server.sh with ${RESTART_NOTICE_MINUTES} minute notice"
         /home/pok/scripts/restart_server.sh $RESTART_NOTICE_MINUTES
+      else
+        display_monitor_status "✅ Server is up to date - no update needed" "SUCCESS" "true"
       fi
       last_update_check_time=$current_time
     fi
@@ -496,14 +805,22 @@ while true; do
     continue # Skip the rest of this loop iteration, avoiding the server running state check and restart
   fi
 
+  # Add status message with display conditions
+  if [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
+    if ! is_process_running false && ! is_server_updating; then
+      display_monitor_status "⚠️ SERVER NOT RUNNING - will attempt recovery" "WARNING"
+    fi
+  fi
+  
   # Restart the server if it's not running and not currently updating
   if ! is_process_running && ! is_server_updating; then
-    echo "[WARNING] Detected server is not running, performing thorough process check before restarting..."
+    display_monitor_status "⚠️ Detected server is not running, killing container for Docker restart..." "WARNING" "true"
     
     # Use the enhanced recovery function instead of simple restart
     recover_server
     
-    # Sleep a bit after recovery attempt to avoid rapid restart loops
+    # This should never be reached as recover_server now kills the container
+    # But just in case, sleep to avoid rapid restart attempts
     sleep 60
   else
     # Server is running normally, just do regular short sleep

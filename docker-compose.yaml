@@ -14,13 +14,15 @@ services:
       # - For 2_1_latest images: Files must be owned by UID:GID 7777:7777 on the host
       # Use 'sudo chown -R 1000:1000 /path/to/your/POK-manager/directory' or
       # Use 'sudo chown -R 7777:7777 /path/to/your/POK-manager/directory' to set permissions
-      - RANDOM_STARTUP_DELAY=TRUE            # Add a random delay (0-30s) during startup to prevent update conflicts
+      - RANDOM_STARTUP_DELAY=TRUE            # Add a random delay (0-10s) during startup to prevent update conflicts
       - BATTLEEYE=FALSE                      # Set to TRUE to use BattleEye, FALSE to not use BattleEye
       - API=FALSE                            # Set to TRUE to install and use ArkServerAPI, FALSE to disable ArkServerAPI
       - RCON_ENABLED=TRUE                    # Needed for Graceful Shutdown / Updates / Server Notifications
       - DISPLAY_POK_MONITOR_MESSAGE=FALSE    # Or TRUE to Show the Server Monitor Messages / Update Monitor 
       - UPDATE_SERVER=TRUE                   # Enable or disable update checks
-      - CHECK_FOR_UPDATE_INTERVAL=24         # Check for Updates interval in hours
+      - CHECK_FOR_UPDATE_INTERVAL=24         # Interval between update checks:
+                                             # - Use whole numbers (1-24) for hours: 1 = 1 hour, 24 = 24 hours
+                                             # - Use decimals for minutes: 0.01 = 1 minute, 0.05 = 5 minutes, 0.30 = 30 minutes
       - UPDATE_WINDOW_MINIMUM_TIME=12:00 AM  # Defines the minimum time, relative to server time, when an update check should run
       - UPDATE_WINDOW_MAXIMUM_TIME=11:59 PM  # Defines the maximum time, relative to server time, when an update 
       - RESTART_NOTICE_MINUTES=30            # Duration in minutes for notifying players before a server restart due to updates

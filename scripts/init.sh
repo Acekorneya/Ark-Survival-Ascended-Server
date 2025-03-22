@@ -2,6 +2,156 @@
 
 source /home/pok/scripts/common.sh
 
+# Add random startup delay if enabled
+if [ "${RANDOM_STARTUP_DELAY}" = "TRUE" ]; then
+  DELAY=$((RANDOM % 10 + 1))
+  echo "🕐 Random startup delay enabled. Waiting ${DELAY} seconds before proceeding..."
+  sleep ${DELAY}
+fi
+
+# Check if the server needs an update before starting
+check_and_update_before_launch() {
+  echo "🔍 Checking for updates before server launch using SteamCMD..."
+  
+  # Check for and remove stale locks first
+  remove_stale_lock
+  
+  # Get current build ID using the function in common.sh (now SteamCMD only)
+  echo "📡 Getting latest build ID from SteamCMD..."
+  local current_build_id=$(get_current_build_id)
+  
+  if [ -z "$current_build_id" ] || [[ "$current_build_id" == error* ]]; then
+    echo "⚠️ Could not get current build ID from SteamCMD. Will retry up to 3 times..."
+    
+    # Retry logic for getting build ID
+    for retry in {1..3}; do
+      echo "🔄 Retry $retry/3 getting build ID from SteamCMD..."
+      sleep 5
+      current_build_id=$(get_current_build_id)
+      if [ -n "$current_build_id" ] && [[ ! "$current_build_id" == error* ]]; then
+        echo "✅ Successfully got build ID on retry $retry: $current_build_id"
+        break
+      fi
+      
+      if [ $retry -eq 3 ] && ([ -z "$current_build_id" ] || [[ "$current_build_id" == error* ]]); then
+        echo "❌ Failed to get current build ID from SteamCMD after 3 retries. Will proceed with server launch but may need manual update."
+        return 0
+      fi
+    done
+  fi
+  
+  # Validate that the current build ID is numeric only
+  if ! [[ "$current_build_id" =~ ^[0-9]+$ ]]; then
+    echo "⚠️ SteamCMD returned invalid build ID format: '$current_build_id'. Proceeding with launch."
+    return 0
+  fi
+  
+  # Get saved build ID from ACF file
+  local saved_build_id=$(get_build_id_from_acf)
+  
+  # Validate that the saved build ID is numeric only
+  if ! [[ "$saved_build_id" =~ ^[0-9]+$ ]]; then
+    echo "⚠️ Saved build ID has invalid format: '$saved_build_id'. Will attempt update."
+    saved_build_id=""  # Force update by invalidating the saved ID
+  fi
+  
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "📊 🔵 SteamCMD Current Build ID: $current_build_id"
+  echo "📊 🟢 Server Installed Build ID: $saved_build_id"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  
+  # Diagnostic comparison for debugging
+  if [ "${VERBOSE_DEBUG}" = "TRUE" ]; then
+    echo "🔬 Debug comparison: "
+    echo "   - Current: '${current_build_id}' (length: ${#current_build_id})"
+    echo "   - Saved: '${saved_build_id}' (length: ${#saved_build_id})"
+    if [ "$current_build_id" = "$saved_build_id" ]; then
+      echo "   - String comparison result: MATCH"
+    else
+      echo "   - String comparison result: DIFFERENT"
+    fi
+  fi
+  
+  # Compare build IDs - ensure both are stripped of any whitespace
+  current_build_id=$(echo "$current_build_id" | tr -d '[:space:]')
+  saved_build_id=$(echo "$saved_build_id" | tr -d '[:space:]')
+  
+  if [[ -z "$saved_build_id" || "$saved_build_id" != "$current_build_id" ]]; then
+    echo "🔄 UPDATE REQUIRED: SteamCMD has newer build ($current_build_id) than installed ($saved_build_id)"
+    
+    # Create updating flag to prevent other instances from updating simultaneously
+    if ! acquire_update_lock; then
+      echo "⚠️ Another instance is currently updating. Waiting for update to complete..."
+      
+      # Wait for the update to complete instead of proceeding with current version
+      if wait_for_update_lock; then
+        echo "✅ Update completed by another instance. Checking installed version..."
+        
+        # Verify the update was successful by checking the build ID again
+        saved_build_id=$(get_build_id_from_acf)
+        saved_build_id=$(echo "$saved_build_id" | tr -d '[:space:]')
+        if [ "$saved_build_id" = "$current_build_id" ]; then
+          echo "✅ Server is now on the latest build ID: $current_build_id"
+          return 0
+        else
+          echo "⚠️ Server is still not on the latest build ID after waiting for update."
+          echo "   Will attempt to update again..."
+          # Recursive call to try updating again
+          check_and_update_before_launch
+          return $?
+        fi
+      else
+        echo "⚠️ Timed out waiting for update. Will attempt to acquire lock and update..."
+        # Try to remove any stale locks that might be preventing progress
+        remove_stale_lock
+        # Try again to acquire the lock
+        if ! acquire_update_lock; then
+          echo "❌ Still unable to acquire update lock. This is a critical error."
+          echo "   Server will exit to avoid running outdated version."
+          exit 1
+        fi
+        # If we get here, we acquired the lock and can proceed with the update
+      fi
+    fi
+    
+    echo "📥 Starting update process through SteamCMD..."
+    local update_success=false
+    local max_retries=3
+    
+    for retry in $(seq 1 $max_retries); do
+      echo "🔄 Update attempt $retry/$max_retries..."
+      /opt/steamcmd/steamcmd.sh +force_install_dir "$ASA_DIR" +login anonymous +app_update "$APPID" +quit
+      update_result=$?
+      
+      # Check if update was successful
+      if [[ $update_result -eq 0 && -f "$ASA_DIR/steamapps/appmanifest_$APPID.acf" ]]; then
+        cp "$ASA_DIR/steamapps/appmanifest_$APPID.acf" "$PERSISTENT_ACF_FILE"
+        echo "✅ Server updated successfully to SteamCMD build ID: $current_build_id"
+        update_success=true
+        break
+      else
+        echo "⚠️ Server update attempt $retry failed with exit code: $update_result"
+        sleep 5  # Wait before retry
+      fi
+    done
+    
+    # Remove the updating flag
+    rm -f "$ASA_DIR/updating.flag"
+    
+    if [ "$update_success" = true ]; then
+      echo "🚀 Proceeding with server launch..."
+      return 0
+    else
+      echo "❌ Server update failed after $max_retries attempts. This is a critical error."
+      echo "   Server will exit to avoid running outdated version."
+      exit 1
+    fi
+  else
+    echo "✅ Server is already on the latest SteamCMD build ID: $current_build_id. No update needed."
+    return 0
+  fi
+}
+
 # Add disk space cleanup function to remove non-essential data
 cleanup_disk_space() {
   echo "🧹 Performing disk space cleanup..."
@@ -194,6 +344,11 @@ ulimit -n 100000
 echo ""
 echo "🎮 ==== ARK SURVIVAL ASCENDED SERVER STARTING ==== 🎮"
 echo ""
+
+# Check for updates before launching the server (if UPDATE_SERVER is enabled)
+if [ "${UPDATE_SERVER}" = "TRUE" ]; then
+  check_and_update_before_launch
+fi
 
 # Handle log rotation on startup
 echo "🔄 Checking for old log files to rotate..."
@@ -743,6 +898,27 @@ MONITOR_PID=$!
   done
 } &
 RESTART_MONITOR_PID=$!
+
+# Launch the update monitor in background if API mode is not enabled
+if [ "${UPDATE_SERVER}" = "TRUE" ] && [ "${API}" != "TRUE" ]; then
+  echo "[INFO] Starting update monitor in background..."
+  
+  if [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
+    # When display is enabled, redirect output to both console and log file
+    nohup /home/pok/scripts/monitor_ark_server.sh > >(tee -a /home/pok/logs/monitor.log) 2>&1 &
+  else
+    # When display is disabled, redirect output only to log file
+    nohup /home/pok/scripts/monitor_ark_server.sh > /home/pok/logs/monitor.log 2>&1 &
+  fi
+  
+  MONITOR_PID=$!
+  echo "[INFO] Update monitor started with PID: $MONITOR_PID"
+elif [ "${API}" = "TRUE" ] && [ "${UPDATE_SERVER}" = "TRUE" ]; then
+  echo "⚠️ [WARNING] Update monitor is disabled when API=TRUE"
+  echo "⚠️ [WARNING] You must manually update the server using the POK-manager.sh script with:"
+  echo "⚠️           ./POK-manager.sh -stop <instance_name>"
+  echo "⚠️           ./POK-manager.sh -start <instance_name>"
+fi
 
 # Keep the init.sh script running to prevent container from exiting
 # This will not block log display since logs are handled separately

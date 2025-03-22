@@ -1,6 +1,29 @@
 # POK-Manager Changelog
 
-## Version 2.1.70 (Latest)
+## Version 2.1.71 (Latest)
+### Server Update System Improvements
+- Completely redesigned the update system to use SteamCMD directly instead of API
+- Added retry logic (up to 3 attempts) for more reliable SteamCMD updates
+- Implemented temporary container approach for all server updates
+- Enhanced build ID comparison with proper error handling
+- Added clearer logging of build IDs during update checks
+- Improved error messages and debugging output during update process
+- Fixed RCON connection issue during container shutdown when server is already stopped
+- Added more robust server process detection to prevent failed RCON attempts
+- Enhanced the `-restore` command to show backup options before stopping servers
+- Fixed `-restore` command to only show valid instances that have backups
+- Added confirmation prompt before stopping running servers during restore operations
+- Only restart servers that were already running before restore operation
+- Added clear instructions for manually starting servers after restore if needed
+- Improved interactive command flow to prevent accidental server shutdowns
+- Enhanced temporary container creation and cleanup for SteamCMD operations
+- Implemented safer error handling throughout the update and restore processes
+- Improved RCON connection testing before attempting to send commands
+- Removed unnecessary code to improve script maintainability
+- Fixed issue where POK-manager.sh ownership was reset to 1000:1000 during instance creation
+- Enhanced parent directory ownership detection to respect existing directory permissions
+
+## Version 2.1.70 (Previous)
 ### Enhanced Error Handling and Validation
 - Improved validation in the `-restart` command to catch typos in instance names
 - Added robust directory and file checks before attempting restart operations

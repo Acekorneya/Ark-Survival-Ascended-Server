@@ -13,28 +13,71 @@ sendChat() {
   echo "Chat message sent: $message"
 }
 
-send_rcon_command() {
-  local command="$1"
-
-  # Capture the output and error of the rcon command
-  local output
-  output=$(${RCON_PATH} -a ${RCON_HOST}:${RCON_PORT} -p "${RCON_PASSWORD}" "$command" 2>&1)
-
-  # Only print output if not in quiet mode or if output contains actual content beyond status messages
-  if [ "${RCON_QUIET_MODE:-FALSE}" != "TRUE" ] || ! echo "$output" | grep -q "Server received"; then
-    echo "$output" # Print the output for visibility
-  fi
-
-  # Check if the output contains a critical failure message
-  if echo "$output" | grep -q "Failed to connect"; then
-    echo "Error: Failed to connect to RCON server. Terminating script." >&2
-    exit 1 # Exit the script with an error status
-  elif [ "${RCON_QUIET_MODE:-FALSE}" != "TRUE" ] && echo "$output" | grep -q "Server received, But no response!!"; then
-    echo "Warning: Command received by server, but no response was provided." >&2
-    # Optionally, you can handle this case differently, such as logging the incident or sending a notification.
-  fi
+# Function to initiate server shutdown
+shutdownServer() {
+  send_rcon_command "DoExit"
+  echo "Server shutdown command issued."
 }
 
+# Enhanced RCON command function with better error handling
+send_rcon_command() {
+  local command="$1"
+  local max_retries=3
+  local retry=0
+  local success=false
+
+  # Configure timeout for rcon command to prevent hanging
+  local timeout_seconds=10
+  
+  while [ $retry -lt $max_retries ] && [ "$success" = "false" ]; do
+    # Capture the output and error of the rcon command with timeout
+    local output
+    output=$(timeout $timeout_seconds ${RCON_PATH} -a ${RCON_HOST}:${RCON_PORT} -p "${RCON_PASSWORD}" "$command" 2>&1)
+    local status=$?
+    
+    # Check for timeout
+    if [ $status -eq 124 ]; then
+      echo "Warning: RCON command timed out after $timeout_seconds seconds. Retrying..." >&2
+      retry=$((retry + 1))
+      sleep 1
+      continue
+    fi
+
+    # Check if the output contains a critical failure message
+    if echo "$output" | grep -q "Failed to connect"; then
+      if [ $retry -lt $((max_retries - 1)) ]; then
+        echo "Warning: Failed to connect to RCON server (attempt $((retry + 1))/$max_retries). Retrying..." >&2
+        retry=$((retry + 1))
+        sleep 1
+      else
+        echo "Error: Failed to connect to RCON server after $max_retries attempts." >&2
+        return 1
+      fi
+    elif [ "${RCON_QUIET_MODE:-FALSE}" != "TRUE" ] && echo "$output" | grep -q "Server received, But no response!!"; then
+      # For commands that don't return responses (like DoExit), this is normal
+      echo "Command received by server, but no response was provided." >&2
+      success=true
+      break
+    else
+      # Command succeeded
+      success=true
+      
+      # Only print output if not in quiet mode or if output contains actual content beyond status messages
+      if [ "${RCON_QUIET_MODE:-FALSE}" != "TRUE" ] || ! echo "$output" | grep -q "Server received"; then
+        echo "$output" # Print the output for visibility
+      fi
+      
+      break
+    fi
+  done
+  
+  # Return success or failure
+  if [ "$success" = "true" ]; then
+    return 0
+  else
+    return 1
+  fi
+}
 
 # Function for interactive mode
 interactive_mode() {

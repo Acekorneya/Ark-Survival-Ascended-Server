@@ -380,10 +380,157 @@ check_lock_status() {
   fi
 }
 
-# Function to get the current build ID from SteamCMD API
+# Function to get the current build ID from SteamCMD only (no API fallback)
 get_current_build_id() {
-  local build_id=$(curl -sX GET "https://api.steamcmd.net/v1/info/$APPID" | jq -r ".data.\"$APPID\".depots.branches.public.buildid")
+  # Only print debug message if VERBOSE_DEBUG is enabled
+  if [ "${VERBOSE_DEBUG}" = "TRUE" ]; then
+    echo "[DEBUG] Retrieving build ID directly from SteamCMD (not using API)..."
+  fi
+  
+  local steamcmd_output=$(/opt/steamcmd/steamcmd.sh +login anonymous +app_info_print ${APPID} +quit 2>/dev/null)
+  
+  # More precise extraction to avoid multiple matches
+  # 1. Find the "branches" section
+  # 2. Extract only the "public" branch section
+  # 3. Look for buildid within that specific section
+  # 4. Take only the first match and trim whitespace
+  local build_id=$(echo "$steamcmd_output" | 
+                  grep -A 150 "\"branches\"" | 
+                  grep -A 50 "\"public\"" | 
+                  grep -m 1 -oP "\"buildid\"\s*\"*\K[0-9]+" | 
+                  head -n 1 | 
+                  tr -d '[:space:]')
+  
+  if [ -z "$build_id" ]; then
+    echo "error: could not retrieve build ID from SteamCMD. Please check SteamCMD connection."
+    return 1
+  fi
+  
+  # Final sanity check - ensure it only contains digits
+  if ! [[ "$build_id" =~ ^[0-9]+$ ]]; then
+    echo "error: invalid build ID format: '$build_id'"
+    return 1
+  fi
+  
   echo "$build_id"
+}
+
+# Function to acquire the update lock with retry logic
+acquire_update_lock() {
+  local lock_file="$ASA_DIR/updating.flag"
+  local max_attempts=10
+  local attempt=1
+  local retry_delay=5
+  
+  echo "[INFO] Attempting to acquire update lock..."
+  
+  while [ $attempt -le $max_attempts ]; do
+    # Check if lock file exists
+    if [ -f "$lock_file" ]; then
+      # Check if it's a stale lock (older than 2 hours)
+      local file_age=$((($(date +%s) - $(stat -c %Y "$lock_file")) / 3600))
+      if [ $file_age -ge 2 ]; then
+        echo "[WARNING] Found stale lock file (${file_age} hours old), removing it..."
+        rm -f "$lock_file"
+        # Try again immediately after removing stale lock
+        continue
+      else
+        echo "[WARNING] Update lock is held by another process (attempt $attempt/$max_attempts)..."
+        sleep $retry_delay
+        attempt=$((attempt + 1))
+        continue
+      fi
+    fi
+    
+    # Try to create the lock file atomically
+    if ! touch "$lock_file" 2>/dev/null; then
+      echo "[WARNING] Failed to create lock file (attempt $attempt/$max_attempts)..."
+      sleep $retry_delay
+      attempt=$((attempt + 1))
+      continue
+    fi
+    
+    # Write the current timestamp and process info to the lock file for tracking
+    echo "$(date +"%Y-%m-%d %H:%M:%S") - Lock acquired by instance: ${INSTANCE_NAME:-unknown} (PID: $$)" > "$lock_file"
+    echo "[SUCCESS] Update lock acquired successfully"
+    return 0
+  done
+  
+  echo "[ERROR] Failed to acquire update lock after $max_attempts attempts."
+  return 1
+}
+
+# Function to wait for update lock to be released
+wait_for_update_lock() {
+  local lock_file="$ASA_DIR/updating.flag"
+  local max_wait_time=3600  # 1 hour maximum wait time
+  local wait_time=0
+  local check_interval=30  # Check every 30 seconds
+  local stale_threshold=7200  # 2 hours in seconds
+  
+  echo "[INFO] Waiting for update lock to be released..."
+  
+  while [ -f "$lock_file" ] && [ $wait_time -lt $max_wait_time ]; do
+    # Check if lock is stale (older than 2 hours)
+    local file_age=$(($(date +%s) - $(stat -c %Y "$lock_file")))
+    
+    if [ $file_age -ge $stale_threshold ]; then
+      echo "[WARNING] Found stale lock file ($(($file_age / 3600)) hours old), removing it..."
+      rm -f "$lock_file"
+      break
+    fi
+    
+    # Show status message every 5 minutes
+    if [ $((wait_time % 300)) -eq 0 ]; then
+      echo "[INFO] Still waiting for update lock to be released... ($(($wait_time / 60)) minutes elapsed)"
+      
+      # Show information about the lock holder
+      if [ -f "$lock_file" ]; then
+        echo "[INFO] Lock holder information:"
+        cat "$lock_file"
+      fi
+    fi
+    
+    sleep $check_interval
+    wait_time=$((wait_time + check_interval))
+  done
+  
+  if [ $wait_time -ge $max_wait_time ]; then
+    echo "[WARNING] Timeout waiting for update lock to be released after $(($max_wait_time / 60)) minutes."
+    
+    # If timeout occurs, check if lock is very old, and if so, force remove it
+    if [ -f "$lock_file" ]; then
+      local file_age=$(($(date +%s) - $(stat -c %Y "$lock_file")))
+      if [ $file_age -ge $stale_threshold ]; then
+        echo "[WARNING] Force removing stale lock file ($(($file_age / 3600)) hours old)..."
+        rm -f "$lock_file"
+        return 0
+      fi
+    fi
+    
+    return 1
+  fi
+  
+  echo "[INFO] Update lock has been released, can proceed."
+  return 0
+}
+
+# Function to remove stale lock file
+remove_stale_lock() {
+  local lock_file="$ASA_DIR/updating.flag"
+  
+  if [ ! -f "$lock_file" ]; then
+    return 0
+  fi
+  
+  local file_age=$(( ($(date +%s) - $(stat -c %Y "$lock_file")) / 3600 ))
+  if [ $file_age -ge 2 ]; then
+    echo "[WARNING] Removing stale lock file (${file_age} hours old)..."
+    rm -f "$lock_file"
+    return 0
+  fi
+  
+  return 1
 }
 
 # Execute initialization functions
