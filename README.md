@@ -609,6 +609,7 @@ When creating a new server instance using POK-manager.sh, a Docker Compose confi
 | `API`                         | `FALSE`           | Set to TRUE to install and use AsaApi, FALSE to disable AsaApi                |
 | `RCON_ENABLED`                | `TRUE`            | Needed for Graceful Shutdown                                                              |
 | `DISPLAY_POK_MONITOR_MESSAGE` | `FALSE`           | TRUE to Show the Server Monitor Messages / Update Monitor Shutdown                        |
+| `CPU_OPTIMIZATION`            | `FALSE`           | Set to TRUE to enable CPU optimization helps reduce high CPU usage on some systems, FALSE to disable |
 | `UPDATE_SERVER`               | `TRUE`            | Enable or disable update checks                                                           |
 | `CHECK_FOR_UPDATE_INTERVAL`   | `24`              | Check for Updates interval in hours                                                       |
 | `UPDATE_WINDOW_MINIMUM_TIME`  | `12:00 AM`        | Defines the minimum time, relative to server time, when an update check should run        |
