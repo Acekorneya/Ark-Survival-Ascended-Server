@@ -1,12 +1,13 @@
 # POK-Manager Changelog
 
-## Version 2.1.75 (Latest)
-### Simplified Log Display - Clean Race Condition Fix
-- **CLEAN SOLUTION**: Use exec to hand control directly from init.sh to launch_ASA.sh
-- **Native Log Display**: launch_ASA.sh handles all log display exactly as before the race condition
-- **Eliminated Conflicts**: No competing background processes or flag management
-- **Simple & Robust**: Minimal changes that maintain all original functionality
-- **Perfect Log Visibility**: Users see the exact same log experience as before, without race conditions
+## Version 2.1.76 (Latest)
+### Complete Race Condition Fix with Full Functionality Restored
+- **TARGETED FIX**: Resolved race condition by avoiding competing startup flag creation, not removing functionality
+- **Full Monitoring Restored**: monitor_ark_server.sh, restart detection, update monitoring all working as before
+- **Smart Coordination**: init.sh avoids creating startup completion flags that compete with launch_ASA.sh
+- **Delayed Restart Monitoring**: Waits 2 minutes before starting restart detection to avoid startup conflicts
+- **Complete Log Display**: Background log tailing restored while preventing race conditions
+- **All Features Working**: Screen support, nohup fallback, API monitoring warnings, and container lifecycle management
 
 ## Version 2.1.73
 ### Log Display Race Condition Fix

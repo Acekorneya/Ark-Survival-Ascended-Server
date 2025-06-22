@@ -735,6 +735,161 @@ else
   fi
 fi
 
-# Launch the server directly with launch_ASA.sh to handle log display
-echo "[INFO] Starting ARK server with launch_ASA.sh (handles log display)..."
-exec /home/pok/scripts/launch_ASA.sh
+# Launch the server differently based on whether screen is available
+if [ "$SCREEN_AVAILABLE" = true ]; then
+  # Use screen for better log management and visibility
+  echo "[INFO] Starting server in screen session..."
+  screen -dmS ark_server bash -c "/home/pok/scripts/launch_ASA.sh 2>&1 | tee -a /home/pok/launch_output.log; exec bash"
+  echo "[INFO] ARK server launched in screen session. View logs with: screen -r ark_server"
+else
+  # Fallback method - use nohup to run in background while still capturing logs
+  echo "[INFO] Starting server with fallback method (nohup)..."
+  mkdir -p /home/pok/logs
+  nohup /home/pok/scripts/launch_ASA.sh > /home/pok/logs/server_console.log 2>&1 &
+  SERVER_PID=$!
+  echo "[INFO] ARK server launched with PID: $SERVER_PID"
+  echo "[INFO] View logs with: tail -f /home/pok/logs/server_console.log"
+  
+  # Start a background process to tail the log file to console
+  # This will show logs in the container's output while allowing the server to run in background
+  (tail -f /home/pok/logs/server_console.log 2>/dev/null &)
+fi
+
+# Simple server startup notification without creating competing flags
+{
+  # Wait for basic server process detection without interfering with launch_ASA.sh startup flag creation
+  timeout=120  # 2 minutes timeout - shorter to avoid conflicts
+  elapsed=0
+  last_status_time=0
+  
+  while [ $elapsed -lt $timeout ]; do
+    # Simple check if server process is running without creating startup flags
+    server_pid=$(ps aux | grep -v grep | grep -E "AsaApiLoader.exe|ArkAscendedServer.exe" | awk '{print $2}' | head -1)
+    if [ -n "$server_pid" ]; then
+      echo "[INFO] ARK Server process detected with PID: $server_pid"
+      echo "[INFO] Server startup monitoring transferred to launch_ASA.sh"
+      break
+    else
+      # Only display status message every 30 seconds to reduce log spam
+      if [ $elapsed -eq 0 ] || [ $((elapsed - last_status_time)) -ge 30 ]; then
+        echo "[INFO] SERVER STARTING: Waiting for process... (${elapsed}s elapsed)"
+        last_status_time=$elapsed
+      fi
+    fi
+    
+    sleep 10
+    elapsed=$((elapsed + 10))
+  done
+  
+  # Final status check
+  if [ $elapsed -ge $timeout ]; then
+    echo "[INFO] Initial process detection timeout. launch_ASA.sh will handle detailed monitoring."
+  fi
+} &
+MONITOR_PID=$!
+
+# Simple restart monitoring without flag conflicts
+{
+  # Wait longer before starting restart monitoring to avoid conflicts with launch_ASA.sh
+  echo "[INFO] Waiting for server startup to stabilize before beginning restart detection..."
+  sleep 120  # Wait 2 minutes before starting restart monitoring
+  
+  # Keep checking if the server process is running
+  while true; do
+    # Check if server process is running
+    if ! pgrep -f "AsaApiLoader.exe" >/dev/null 2>&1 && ! pgrep -f "ArkAscendedServer.exe" >/dev/null 2>&1; then
+      # Server process not found, check if this is a deliberate shutdown
+      if [ -f "/home/pok/shutdown.flag" ]; then
+        echo "[INFO] Detected shutdown flag. Not restarting server."
+        break
+      else
+        # This might be a server-initiated restart, wait a moment to be sure
+        echo "[WARNING] Server process not found. Waiting to confirm if this is a restart..."
+        sleep 10
+        
+        # Check again to make sure the server is really gone
+        if ! pgrep -f "AsaApiLoader.exe" >/dev/null 2>&1 && ! pgrep -f "ArkAscendedServer.exe" >/dev/null 2>&1; then
+          echo "[INFO] Detected server self-restart. Initiating simplified restart process..."
+          
+          # If in API mode and EXIT_ON_API_RESTART is enabled, trigger container restart
+          if [ "${API}" = "TRUE" ] && [ "${EXIT_ON_API_RESTART:-TRUE}" = "TRUE" ]; then
+            echo "[INFO] API mode detected - using container restart strategy for self-restart"
+            
+            # Create flag files for container restart detection
+            echo "$(date) - Container exiting for automatic restart due to server self-restart" > /home/pok/container_restart.log
+            echo "API_RESTART" > /home/pok/restart_reason.flag
+            
+            # Perform basic cleanup
+            echo "[INFO] Cleaning up processes before container restart..."
+            pkill -9 -f "wine" >/dev/null 2>&1 || true
+            pkill -9 -f "wineserver" >/dev/null 2>&1 || true
+            
+            # Remove PID file if it exists
+            if [ -f "$PID_FILE" ]; then
+              echo "[INFO] Removing stale PID file..."
+              rm -f "$PID_FILE"
+            fi
+            
+            echo "[INFO] Exiting container for automatic restart..."
+            sleep 3
+            exit 0
+          else
+            # Perform basic cleanup - but don't handle Xvfb, let restart_server.sh do that
+            echo "[INFO] Performing basic process cleanup..."
+            
+            # Kill any Wine/Proton processes
+            if pgrep -f "wine" >/dev/null 2>&1 || pgrep -f "wineserver" >/dev/null 2>&1; then
+              echo "[INFO] Cleaning up Wine/Proton processes..."
+              pkill -9 -f "wine" >/dev/null 2>&1 || true
+              pkill -9 -f "wineserver" >/dev/null 2>&1 || true
+              sleep 2
+            fi
+            
+            # Remove PID file if it exists
+            if [ -f "$PID_FILE" ]; then
+              echo "[INFO] Removing stale PID file..."
+              rm -f "$PID_FILE"
+            fi
+            
+            echo "[INFO] Process cleanup completed. Running restart_server.sh immediate..."
+            
+            # Use the restart_server.sh script with the restart flag
+            /home/pok/scripts/restart_server.sh immediate
+            
+            echo "[INFO] Restart command issued. Exiting monitoring loop."
+            break
+          fi
+        fi
+      fi
+    fi
+    
+    # Check every 30 seconds
+    sleep 30
+  done
+} &
+RESTART_MONITOR_PID=$!
+
+# Launch the update monitor in background if API mode is not enabled
+if [ "${UPDATE_SERVER}" = "TRUE" ] && [ "${API}" != "TRUE" ]; then
+  echo "[INFO] Starting update monitor in background..."
+  
+  if [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
+    # When display is enabled, redirect output to both console and log file
+    nohup /home/pok/scripts/monitor_ark_server.sh > >(tee -a /home/pok/logs/monitor.log) 2>&1 &
+  else
+    # When display is disabled, redirect output only to log file
+    nohup /home/pok/scripts/monitor_ark_server.sh > /home/pok/logs/monitor.log 2>&1 &
+  fi
+  
+  MONITOR_PID=$!
+  echo "[INFO] Update monitor started with PID: $MONITOR_PID"
+elif [ "${API}" = "TRUE" ] && [ "${UPDATE_SERVER}" = "TRUE" ]; then
+  echo "⚠️ [WARNING] Update monitor is disabled when API=TRUE"
+  echo "⚠️ [WARNING] You must manually update the server using the POK-manager.sh script with:"
+  echo "⚠️           ./POK-manager.sh -stop <instance_name>"
+  echo "⚠️           ./POK-manager.sh -start <instance_name>"
+fi
+
+# Keep the init.sh script running to prevent container from exiting
+# This will not block log display since logs are handled separately
+tail -f /dev/null
