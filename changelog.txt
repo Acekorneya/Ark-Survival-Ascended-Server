@@ -1,8 +1,8 @@
 # POK-Manager Changelog
 
-## Version 2.1.76 (Latest)
+## Version 2.1.75 (Latest)
 ### Complete Race Condition Fix with Full Functionality Restored
-- **TARGETED FIX**: Resolved race condition by avoiding competing startup flag creation, not removing functionality
+- **TARGETED FIX**: Resolved race condition by avoiding competing startup flag creation, not removing functionality  
 - **Full Monitoring Restored**: monitor_ark_server.sh, restart detection, update monitoring all working as before
 - **Smart Coordination**: init.sh avoids creating startup completion flags that compete with launch_ASA.sh
 - **Delayed Restart Monitoring**: Waits 2 minutes before starting restart detection to avoid startup conflicts
