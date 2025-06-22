@@ -1,6 +1,14 @@
 # POK-Manager Changelog
 
-## Version 2.1.73 (Latest)
+## Version 2.1.75 (Latest)
+### Simplified Log Display - Clean Race Condition Fix
+- **CLEAN SOLUTION**: Use exec to hand control directly from init.sh to launch_ASA.sh
+- **Native Log Display**: launch_ASA.sh handles all log display exactly as before the race condition
+- **Eliminated Conflicts**: No competing background processes or flag management
+- **Simple & Robust**: Minimal changes that maintain all original functionality
+- **Perfect Log Visibility**: Users see the exact same log experience as before, without race conditions
+
+## Version 2.1.73
 ### Log Display Race Condition Fix
 - **CRITICAL FIX**: Resolved race condition between init.sh and launch_ASA.sh that caused logs to stop displaying
 - **Simplified Monitoring**: Removed competing startup flag creation and log management processes
