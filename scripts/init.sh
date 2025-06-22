@@ -787,7 +787,7 @@ MONITOR_PID=$!
 # Simple restart monitoring without flag conflicts
 {
   # Wait longer before starting restart monitoring to avoid conflicts with launch_ASA.sh
-  echo "[INFO] Waiting for server startup to stabilize before beginning restart detection..."
+  echo "[INFO] Waiting for server startup to stabilize before beginning restart detection.."
   sleep 120  # Wait 2 minutes before starting restart monitoring
   
   # Keep checking if the server process is running
