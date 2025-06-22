@@ -1,6 +1,14 @@
 # POK-Manager Changelog
 
-## Version 2.1.73 (Latest)
+## Version 2.1.74 (Latest)
+### Complete Log Display Restoration
+- **FIXED**: Restored proper log display that shows both startup progress and ShooterGame.log
+- **Smart Log Switching**: Initially shows launch_ASA.sh console output, then switches to ShooterGame.log when available
+- **Continuous Visibility**: Users now see server startup progress and then live game logs seamlessly
+- **No Race Conditions**: Maintains the race condition fix while ensuring logs are always visible
+- **Fallback Handling**: If ShooterGame.log doesn't appear, continues showing console output
+
+## Version 2.1.73
 ### Log Display Race Condition Fix
 - **CRITICAL FIX**: Resolved race condition between init.sh and launch_ASA.sh that caused logs to stop displaying
 - **Simplified Monitoring**: Removed competing startup flag creation and log management processes

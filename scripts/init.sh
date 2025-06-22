@@ -748,7 +748,7 @@ else
   nohup /home/pok/scripts/launch_ASA.sh > /home/pok/logs/server_console.log 2>&1 &
   SERVER_PID=$!
   echo "[INFO] ARK server launched with PID: $SERVER_PID"
-  echo "[INFO] Log display will be handled by launch_ASA.sh to avoid conflicts"
+  echo "[INFO] Waiting for ShooterGame.log to be created, then will display logs..."
 fi
 
 # Simple server startup notification without flag conflicts
@@ -886,6 +886,68 @@ elif [ "${API}" = "TRUE" ] && [ "${UPDATE_SERVER}" = "TRUE" ]; then
   echo "⚠️           ./POK-manager.sh -start <instance_name>"
 fi
 
+# Set up log display to show server startup and then game logs
+{
+  LOG_FILE="$ASA_DIR/ShooterGame/Saved/Logs/ShooterGame.log" 
+  CONSOLE_LOG="/home/pok/logs/server_console.log"
+  
+  # Initially show console output from launch_ASA.sh to see startup progress
+  echo "[INFO] Displaying server startup progress..."
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "📋 SERVER STARTUP (launch_ASA.sh output):"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  
+  # Start tailing console log immediately to show startup progress
+  if [ -f "$CONSOLE_LOG" ]; then
+    tail -f "$CONSOLE_LOG" 2>/dev/null &
+    CONSOLE_TAIL_PID=$!
+  fi
+  
+  # Wait for ShooterGame.log to be created and then switch to it
+  echo "[INFO] Monitoring for ShooterGame.log creation..."
+  timeout=300
+  elapsed=0
+  log_switched=false
+  
+  while [ $elapsed -lt $timeout ] && [ "$log_switched" = false ]; do
+    if [ -f "$LOG_FILE" ] && [ -s "$LOG_FILE" ]; then
+      echo ""
+      echo "[INFO] ShooterGame.log created! Switching to game logs..."
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "📋 ARK SERVER LOGS (ShooterGame.log):"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      
+      # Stop the console tail and start game log tail
+      if [ -n "$CONSOLE_TAIL_PID" ]; then
+        kill $CONSOLE_TAIL_PID 2>/dev/null || true
+      fi
+      
+      # Show recent content if file already has data
+      if [ -s "$LOG_FILE" ]; then
+        echo "📄 Recent log entries:"
+        tail -20 "$LOG_FILE" 2>/dev/null || true
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "📋 LIVE GAME LOGS:"
+      fi
+      
+      # Start tailing the ShooterGame.log file
+      tail -f "$LOG_FILE" 2>/dev/null &
+      LOG_TAIL_PID=$!
+      log_switched=true
+      break
+    fi
+    
+    sleep 5
+    elapsed=$((elapsed + 5))
+  done
+  
+  # If ShooterGame.log never appeared, keep showing console output
+  if [ "$log_switched" = false ]; then
+    echo ""
+    echo "[WARNING] ShooterGame.log not found after ${timeout}s"
+    echo "[INFO] Continuing to show console output - server may still be starting up"
+  fi
+} &
+
 # Keep the init.sh script running to prevent container from exiting
-# Let launch_ASA.sh handle all log display to avoid conflicts
 wait
