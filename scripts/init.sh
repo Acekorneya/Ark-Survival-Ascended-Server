@@ -748,130 +748,47 @@ else
   nohup /home/pok/scripts/launch_ASA.sh > /home/pok/logs/server_console.log 2>&1 &
   SERVER_PID=$!
   echo "[INFO] ARK server launched with PID: $SERVER_PID"
-  echo "[INFO] View logs with: tail -f /home/pok/logs/server_console.log"
-  
-  # Start a background process to tail the log file to console
-  # This will show logs in the container's output while allowing the server to run in background
-  (tail -f /home/pok/logs/server_console.log 2>/dev/null &)
+  echo "[INFO] Log display will be handled by launch_ASA.sh to avoid conflicts"
 fi
 
-# Wait for server to start up and become responsive
-# Monitor in background to check for server startup
+# Simple server startup notification without flag conflicts
 {
-  # Wait for server to be responsive or exit if launch fails
-  timeout=300  # 5 minutes timeout
+  # Wait for basic server process detection without interfering with launch_ASA.sh
+  timeout=120  # 2 minutes timeout - shorter to avoid conflicts
   elapsed=0
-  startup_message_displayed=false
   last_status_time=0
-  STARTUP_COMPLETE_FLAG="/home/pok/server_startup_complete.flag"
-  
-  # Remove any existing startup complete flag to start fresh
-  rm -f "$STARTUP_COMPLETE_FLAG"
   
   while [ $elapsed -lt $timeout ]; do
-    # First check if another process has already detected startup completion
-    if [ -f "$STARTUP_COMPLETE_FLAG" ]; then
-      echo "[INFO] Server startup has been detected by another process"
-      break
-    fi
-    
-    # Check if server process is running
+    # Simple check if server process is running without creating flags
     server_pid=$(ps aux | grep -v grep | grep -E "AsaApiLoader.exe|ArkAscendedServer.exe" | awk '{print $2}' | head -1)
     if [ -n "$server_pid" ]; then
-      if [ "$startup_message_displayed" = "false" ]; then
-        echo "[SUCCESS] ARK Server process detected with PID: $server_pid"
-      fi
-      # If using screen, try to check for startup complete message
-      if [ "$SCREEN_AVAILABLE" = true ]; then
-        if screen -S ark_server -X hardcopy /tmp/ark_screen.log 2>/dev/null && grep -q "Server has completed startup and is now advertising for join" /tmp/ark_screen.log; then
-          if [ "$startup_message_displayed" = "false" ]; then
-            echo "[SUCCESS] SERVER STARTUP COMPLETE: Server is now advertising for join!"
-            # Create a flag file to indicate startup is complete
-            echo "$(date)" > "$STARTUP_COMPLETE_FLAG"
-            startup_message_displayed=true
-          fi
-          break
-        fi
-      else
-        # For fallback method, check log file
-        if grep -q "Server has completed startup and is now advertising for join" /home/pok/logs/server_console.log 2>/dev/null; then
-          if [ "$startup_message_displayed" = "false" ]; then
-            echo "[SUCCESS] SERVER STARTUP COMPLETE: Server is now advertising for join!"
-            # Create a flag file to indicate startup is complete
-            echo "$(date)" > "$STARTUP_COMPLETE_FLAG"
-            startup_message_displayed=true
-          fi
-          break
-        fi
-      fi
+      echo "[INFO] ARK Server process detected with PID: $server_pid"
+      echo "[INFO] Server startup monitoring transferred to launch_ASA.sh"
+      break
     else
       # Only display status message every 30 seconds to reduce log spam
       if [ $elapsed -eq 0 ] || [ $((elapsed - last_status_time)) -ge 30 ]; then
-        echo "[INFO] SERVER STARTING: No server process detected yet. Waiting for startup... (${elapsed}s elapsed)"
+        echo "[INFO] SERVER STARTING: Waiting for process... (${elapsed}s elapsed)"
         last_status_time=$elapsed
       fi
     fi
     
     sleep 10
     elapsed=$((elapsed + 10))
-    
-    # Only show progress messages at reasonable intervals to avoid log spam
-    if [ "$startup_message_displayed" = "false" ] && [ $((elapsed % 30)) -eq 0 ]; then
-      echo "[INFO] SERVER STARTING: In progress... (${elapsed}s elapsed)"
-    fi
   done
   
   # Final status check
   if [ $elapsed -ge $timeout ]; then
-    echo -e "\n[WARNING] Timeout reached while waiting for server startup."
-    if [ "$SCREEN_AVAILABLE" = true ]; then
-      echo "[INFO] Server may still be starting. Check logs with: screen -r ark_server"
-    else
-      echo "[INFO] Server may still be starting. Check logs with: tail -f /home/pok/logs/server_console.log"
-    fi
+    echo "[INFO] Initial process detection timeout. launch_ASA.sh will handle detailed monitoring."
   fi
 } &
 MONITOR_PID=$!
 
-# After the server has successfully started, set up a monitoring loop to detect when it exits
-# This will ensure that if the server issues its own restart command, we'll detect it and restart
+# Simple restart monitoring without flag conflicts
 {
-  # Define the startup complete flag
-  STARTUP_COMPLETE_FLAG="/home/pok/server_startup_complete.flag"
-  
-  # Wait for startup to complete before starting to monitor for restarts
-  echo "[INFO] Waiting for server to start completely before beginning restart detection..."
-  while [ ! -f "$STARTUP_COMPLETE_FLAG" ]; do
-    sleep 10
-    
-    # If it's been more than 5 minutes, proceed anyway (fallback)
-    if [ ! -f "$STARTUP_COMPLETE_FLAG" ] && [ -f "/home/pok/logs/server_console.log" ]; then
-      if grep -q "Server has completed startup and is now advertising for join" /home/pok/logs/server_console.log 2>/dev/null; then
-        echo "[INFO] Server appears to be started but flag is missing, proceeding with monitoring..."
-        # Create the flag in case it was missed
-        echo "$(date)" > "$STARTUP_COMPLETE_FLAG"
-        break
-      fi
-    fi
-    
-    # Abort waiting after 10 minutes to avoid hanging indefinitely
-    if [ -f "/tmp/restart_monitor_start_time" ]; then
-      start_time=$(cat /tmp/restart_monitor_start_time)
-      current_time=$(date +%s)
-      # If more than 10 minutes (600 seconds) have passed, proceed anyway
-      if [ $((current_time - start_time)) -gt 600 ]; then
-        echo "[WARNING] Timeout waiting for startup complete flag. Proceeding with monitoring anyway..."
-        break
-      fi
-    else
-      # Create timestamp file to track how long we've been waiting
-      date +%s > /tmp/restart_monitor_start_time
-    fi
-  done
-  
-  # Server has started, begin monitoring
-  echo "[INFO] Starting server restart detection..."
-  rm -f /tmp/restart_monitor_start_time 2>/dev/null || true
+  # Wait longer before starting restart monitoring to avoid conflicts with launch_ASA.sh
+  echo "[INFO] Waiting for server startup to stabilize before beginning restart detection..."
+  sleep 120  # Wait 2 minutes before starting restart monitoring
   
   # Keep checking if the server process is running
   while true; do
@@ -970,5 +887,5 @@ elif [ "${API}" = "TRUE" ] && [ "${UPDATE_SERVER}" = "TRUE" ]; then
 fi
 
 # Keep the init.sh script running to prevent container from exiting
-# This will not block log display since logs are handled separately
-tail -f /dev/null
+# Let launch_ASA.sh handle all log display to avoid conflicts
+wait

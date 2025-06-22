@@ -1,6 +1,14 @@
 # POK-Manager Changelog
 
-## Version 2.1.72 (Latest)
+## Version 2.1.73 (Latest)
+### Log Display Race Condition Fix
+- **CRITICAL FIX**: Resolved race condition between init.sh and launch_ASA.sh that caused logs to stop displaying
+- **Simplified Monitoring**: Removed competing startup flag creation and log management processes
+- **Clean Log Display**: Only launch_ASA.sh now manages log display to avoid conflicts
+- **Reduced Background Processes**: Streamlined init.sh monitoring to prevent process conflicts
+- **Improved Stability**: Server startup and log display now work consistently without race conditions
+
+## Version 2.1.72
 ### Multi-Instance Update Coordination & Flag Management Improvements
 - **MAJOR FIX**: Implemented "dirty flag" system to ensure all instances restart when one updates server files
 - **Enhanced Lock Management**: Improved updating.flag cleanup with PID validation and multiple stale detection criteria
