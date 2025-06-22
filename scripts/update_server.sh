@@ -30,77 +30,84 @@ cleanup() {
 # Set up trap to call cleanup on exit (including normal exit, crashes, and signals)
 trap cleanup EXIT INT TERM
 
-# Function to check if the server needs to be updated - using get_current_build_id from common.sh
+# Function to check if the server needs to be updated - enhanced with dirty flag support
 server_needs_update() {
-  echo "[INFO] Checking for updates using SteamCMD (via get_current_build_id function)..."
+  echo "[INFO] Checking for updates using enhanced system (SteamCMD + dirty flags)..."
   
-  # Get current build ID from common.sh function (which now only uses SteamCMD)
-  local current_build=$(get_current_build_id)
-  
-  if [ -z "$current_build" ] || [[ "$current_build" == error* ]]; then
-    echo "[WARNING] Could not get current build ID from SteamCMD. Retrying up to 3 times..."
-    
-    # Retry logic for getting build ID
-    for retry in {1..3}; do
-      echo "[INFO] Retry $retry/3 getting build ID from SteamCMD..."
-      sleep 5
-      current_build=$(get_current_build_id)
-      if [ -n "$current_build" ] && [[ ! "$current_build" == error* ]]; then
-        echo "[SUCCESS] Successfully got build ID on retry $retry: $current_build"
-        break
+  # Use the enhanced function from common.sh that includes dirty flag check
+  if server_needs_update_or_restart; then
+    # Check if this is due to a dirty flag (other instance updated) vs actual update
+    if has_dirty_flag; then
+      echo "[INFO] ✅ RESTART REQUIRED - Instance marked dirty by another instance that updated server files"
+      current_build_id=$(get_current_build_id)  # Get current for consistency
+      return 0  # Restart needed
+    else
+      # This is a real update case
+      local current_build=$(get_current_build_id)
+      
+      if [ -z "$current_build" ] || [[ "$current_build" == error* ]]; then
+        echo "[WARNING] Could not get current build ID from SteamCMD. Retrying up to 3 times..."
+        
+        # Retry logic for getting build ID
+        for retry in {1..3}; do
+          echo "[INFO] Retry $retry/3 getting build ID from SteamCMD..."
+          sleep 5
+          current_build=$(get_current_build_id)
+          if [ -n "$current_build" ] && [[ ! "$current_build" == error* ]]; then
+            echo "[SUCCESS] Successfully got build ID on retry $retry: $current_build"
+            break
+          fi
+          
+          if [ $retry -eq 3 ] && ([ -z "$current_build" ] || [[ "$current_build" == error* ]]); then
+            echo "[ERROR] Failed to get current build ID from SteamCMD after 3 retries."
+            return 1
+          fi
+        done
       fi
       
-      if [ $retry -eq 3 ] && ([ -z "$current_build" ] || [[ "$current_build" == error* ]]); then
-        echo "[ERROR] Failed to get current build ID from SteamCMD after 3 retries."
+      # Validate that the current build ID is numeric only
+      if ! [[ "$current_build" =~ ^[0-9]+$ ]]; then
+        echo "[WARNING] SteamCMD returned invalid build ID format: '$current_build'"
         return 1
       fi
-    done
-  fi
-  
-  # Validate that the current build ID is numeric only
-  if ! [[ "$current_build" =~ ^[0-9]+$ ]]; then
-    echo "[WARNING] SteamCMD returned invalid build ID format: '$current_build'"
-    return 1
-  fi
-  
-  # Get saved build ID from ACF file
-  local saved_build_id=$(get_build_id_from_acf)
-  
-  # Validate that the saved build ID is numeric only
-  if ! [[ "$saved_build_id" =~ ^[0-9]+$ ]]; then
-    echo "[WARNING] Saved build ID has invalid format: '$saved_build_id'. Will attempt update."
-    saved_build_id=""  # Force update by invalidating the saved ID
-  fi
-  
-  # Ensure both IDs are stripped of any whitespace
-  current_build=$(echo "$current_build" | tr -d '[:space:]')
-  saved_build_id=$(echo "$saved_build_id" | tr -d '[:space:]')
-  
-  echo "========================================================"
-  echo "[INFO] 🔵 SteamCMD Current Build ID: $current_build"
-  echo "[INFO] 🟢 Server Installed Build ID: $saved_build_id"
-  echo "========================================================"
-  
-  # Diagnostic comparison for debugging
-  if [ "${VERBOSE_DEBUG}" = "TRUE" ]; then
-    echo "[DEBUG] Detailed comparison:"
-    echo "   - Current: '${current_build}' (length: ${#current_build})"
-    echo "   - Saved: '${saved_build_id}' (length: ${#saved_build_id})"
-    if [ "$current_build" = "$saved_build_id" ]; then
-      echo "   - String comparison result: MATCH"
-    else
-      echo "   - String comparison result: DIFFERENT"
+      
+      # Get saved build ID from ACF file
+      local saved_build_id=$(get_build_id_from_acf)
+      
+      # Validate that the saved build ID is numeric only
+      if ! [[ "$saved_build_id" =~ ^[0-9]+$ ]]; then
+        echo "[WARNING] Saved build ID has invalid format: '$saved_build_id'. Will attempt update."
+        saved_build_id=""  # Force update by invalidating the saved ID
+      fi
+      
+      # Ensure both IDs are stripped of any whitespace
+      current_build=$(echo "$current_build" | tr -d '[:space:]')
+      saved_build_id=$(echo "$saved_build_id" | tr -d '[:space:]')
+      
+      echo "========================================================"
+      echo "[INFO] 🔵 SteamCMD Current Build ID: $current_build"
+      echo "[INFO] 🟢 Server Installed Build ID: $saved_build_id"
+      echo "========================================================"
+      
+      # Diagnostic comparison for debugging
+      if [ "${VERBOSE_DEBUG}" = "TRUE" ]; then
+        echo "[DEBUG] Detailed comparison:"
+        echo "   - Current: '${current_build}' (length: ${#current_build})"
+        echo "   - Saved: '${saved_build_id}' (length: ${#saved_build_id})"
+        if [ "$current_build" = "$saved_build_id" ]; then
+          echo "   - String comparison result: MATCH"
+        else
+          echo "   - String comparison result: DIFFERENT"
+        fi
+      fi
+      
+      echo "[INFO] ✅ UPDATE AVAILABLE - SteamCMD has newer build ($current_build) than installed ($saved_build_id)"
+      current_build_id=$current_build  # Update global variable for later use
+      return 0  # Update needed
     fi
-  fi
-  
-  # Compare build IDs
-  if [[ -z "$saved_build_id" || "$saved_build_id" != "$current_build" ]]; then
-    echo "[INFO] ✅ UPDATE AVAILABLE - SteamCMD has newer build ($current_build) than installed ($saved_build_id)"
-    current_build_id=$current_build  # Update global variable for later use
-    return 0  # Update needed (0 = true in bash)
   else
-    echo "[INFO] ✅ Server is up to date with SteamCMD build ID: $current_build"
-    return 1  # No update needed (1 = false in bash)
+    echo "[INFO] ✅ Server is up to date - no update or restart needed"
+    return 1  # No update needed
   fi
 }
 
@@ -245,40 +252,67 @@ echo "[INFO] Checking for ARK server updates..."
 # First check for and remove any stale lock files
 remove_stale_lock
 
-# Check if update is needed using the function that uses get_current_build_id
+# Check if update is needed using the enhanced function
 if server_needs_update; then
-  echo "[INFO] Server update available: Current build ID: $current_build_id, Installed build ID: $(get_build_id_from_acf)"
+  echo "[INFO] Server update/restart required: Current build ID: $current_build_id, Installed build ID: $(get_build_id_from_acf)"
   
-  # Attempt to acquire the update lock using common.sh function
-  if ! acquire_update_lock; then
-    echo "[WARNING] Another instance is currently updating. Waiting for update to complete..."
+  # Check if this is just a dirty flag restart (no actual update needed)
+  if has_dirty_flag; then
+    echo "[INFO] This instance needs restart due to server files updated by another instance"
+    echo "[INFO] No download required - just restarting to load updated files"
     
-    # Wait for the update to complete
-    if wait_for_update_lock; then
-      echo "[INFO] Update completed by another instance. Checking if server restart is still needed..."
+    # Clear the dirty flag since we're handling it
+    clear_dirty_flag
+    
+    # Notify players about the restart (shorter notice for dirty flag restarts)
+    local dirty_restart_notice=${DIRTY_RESTART_NOTICE_MINUTES:-5}  # Default 5 minutes for dirty restarts
+    echo "[INFO] Notifying players about restart (dirty flag) with $dirty_restart_notice minute notice"
+    notify_players_of_update $dirty_restart_notice
+    
+    # After countdown completes, trigger container restart
+    echo "[INFO] Countdown completed. Initiating container restart to load updated server files..."
+    prepare_for_container_restart
+    # This function will exit the script
+  else
+    # This is an actual update that requires downloading
+    echo "[INFO] Actual server update required - will download new files"
+    
+    # Attempt to acquire the update lock using common.sh function
+    if ! acquire_update_lock; then
+      echo "[WARNING] Another instance is currently updating. Waiting for update to complete..."
       
-      # Check if the server is now up to date
-      if ! server_needs_update; then
-        echo "[INFO] Server is now up to date. No restart needed."
-        exit 0
+      # Wait for the update to complete
+      if wait_for_update_lock; then
+        echo "[INFO] Update completed by another instance. Checking if server restart is still needed..."
+        
+        # Check if the server is now up to date
+        if ! server_needs_update; then
+          echo "[INFO] Server is now up to date. No restart needed."
+          exit 0
+        else
+          echo "[WARNING] Server is still not up to date after waiting. Will attempt update again."
+        fi
       else
-        echo "[WARNING] Server is still not up to date after waiting. Will attempt update again."
+        echo "[ERROR] Timed out waiting for update lock. Aborting update."
+        exit 1
       fi
-    else
-      echo "[ERROR] Timed out waiting for update lock. Aborting update."
-      exit 1
     fi
+    
+    # We now have the update lock and need to perform actual update
+    echo "[INFO] Acquired update lock. Performing server files update..."
+    
+    # Notify players about the upcoming update and initiate countdown
+    notify_players_of_update $RESTART_NOTICE_MINUTES
+    
+    # Mark other instances as dirty since we're about to update shared server files
+    echo "[INFO] Marking other instances as dirty before updating server files..."
+    mark_other_instances_dirty
+    
+    # After countdown completes, trigger container restart (which will download updates)
+    echo "[INFO] Countdown completed. Initiating container restart for update..."
+    prepare_for_container_restart
+    # This function will exit the script, and the cleanup function will be called via the trap
   fi
-  
-  # We now have the update lock
-  
-  # Notify players about the upcoming update and initiate countdown
-  notify_players_of_update $RESTART_NOTICE_MINUTES
-  
-  # After countdown completes, trigger container restart
-  echo "[INFO] Countdown completed. Initiating container restart for update..."
-  prepare_for_container_restart
-  # This function will exit the script, and the cleanup function will be called via the trap
 else
   echo "[INFO] Server is already running the latest build ID: $current_build_id; no update needed."
 fi

@@ -245,6 +245,9 @@ if [ "$1" = "--from-restart" ] || [ -f "/tmp/restart_in_progress" ]; then
   rm -f "/tmp/restart_in_progress" 2>/dev/null || true
   echo "🔄 Running in restart mode - using specialized environment setup..."
   
+  # Clear dirty flag for this instance since we're restarting (loading fresh files)
+  clear_dirty_flag || true  # Don't fail if there's no dirty flag
+  
   # Force reset environment variables that are critical for API mode
   if [ "${API}" = "TRUE" ]; then
     echo "🖥️ Forcing Xvfb setup for API restart mode..."

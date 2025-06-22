@@ -415,7 +415,7 @@ get_current_build_id() {
   echo "$build_id"
 }
 
-# Function to acquire the update lock with retry logic
+# Function to acquire the update lock with enhanced retry logic and PID validation
 acquire_update_lock() {
   local lock_file="$ASA_DIR/updating.flag"
   local max_attempts=10
@@ -427,22 +427,52 @@ acquire_update_lock() {
   while [ $attempt -le $max_attempts ]; do
     # Check if lock file exists
     if [ -f "$lock_file" ]; then
-      # Check if it's a stale lock (older than 2 hours)
+      # Enhanced stale lock detection with PID validation
       local file_age=$((($(date +%s) - $(stat -c %Y "$lock_file")) / 3600))
+      local lock_content=$(cat "$lock_file" 2>/dev/null || echo "")
+      local lock_pid=$(echo "$lock_content" | grep -o "PID: [0-9]*" | cut -d' ' -f2)
+      
+      # Check if lock is stale based on multiple criteria
+      local is_stale=false
+      
+      # Criterion 1: File is older than 2 hours
       if [ $file_age -ge 2 ]; then
-        echo "[WARNING] Found stale lock file (${file_age} hours old), removing it..."
+        echo "[WARNING] Lock file is ${file_age} hours old (stale threshold: 2 hours)"
+        is_stale=true
+      fi
+      
+      # Criterion 2: PID in lock file is not running
+      if [ -n "$lock_pid" ]; then
+        if ! kill -0 "$lock_pid" 2>/dev/null; then
+          echo "[WARNING] Process PID $lock_pid from lock file is no longer running"
+          is_stale=true
+        else
+          echo "[INFO] Lock held by running process PID $lock_pid"
+        fi
+      fi
+      
+      # Criterion 3: Lock file is older than 30 minutes and no PID found
+      if [ -z "$lock_pid" ] && [ $file_age -ge 1 ]; then
+        echo "[WARNING] Lock file has no PID info and is ${file_age} hours old"
+        is_stale=true
+      fi
+      
+      if [ "$is_stale" = "true" ]; then
+        echo "[INFO] Removing stale lock file..."
+        echo "[INFO] Previous lock content: $lock_content"
         rm -f "$lock_file"
         # Try again immediately after removing stale lock
         continue
       else
         echo "[WARNING] Update lock is held by another process (attempt $attempt/$max_attempts)..."
+        echo "[INFO] Lock details: $lock_content"
         sleep $retry_delay
         attempt=$((attempt + 1))
         continue
       fi
     fi
     
-    # Try to create the lock file atomically
+    # Try to create the lock file atomically with enhanced information
     if ! touch "$lock_file" 2>/dev/null; then
       echo "[WARNING] Failed to create lock file (attempt $attempt/$max_attempts)..."
       sleep $retry_delay
@@ -450,9 +480,16 @@ acquire_update_lock() {
       continue
     fi
     
-    # Write the current timestamp and process info to the lock file for tracking
-    echo "$(date +"%Y-%m-%d %H:%M:%S") - Lock acquired by instance: ${INSTANCE_NAME:-unknown} (PID: $$)" > "$lock_file"
+    # Write comprehensive tracking information to the lock file
+    {
+      echo "$(date +"%Y-%m-%d %H:%M:%S") - Lock acquired by instance: ${INSTANCE_NAME:-unknown} (PID: $$)"
+      echo "Container ID: ${HOSTNAME:-unknown}"
+      echo "Update initiated at: $(date)"
+      echo "Lock file created by: acquire_update_lock function"
+    } > "$lock_file"
+    
     echo "[SUCCESS] Update lock acquired successfully"
+    echo "[INFO] Lock file created with PID $$ for instance ${INSTANCE_NAME:-unknown}"
     return 0
   done
   
@@ -531,6 +568,138 @@ remove_stale_lock() {
   fi
   
   return 1
+}
+
+# Function to create instance-specific dirty flag (for multi-instance coordination)
+create_dirty_flag() {
+  local instance_name="${INSTANCE_NAME:-default}"
+  local dirty_flag_dir="$ASA_DIR/instance_flags"
+  local dirty_flag_file="$dirty_flag_dir/${instance_name}.dirty"
+  
+  # Create directory if it doesn't exist
+  mkdir -p "$dirty_flag_dir"
+  
+  # Create the dirty flag with timestamp and reason
+  {
+    echo "$(date +"%Y-%m-%d %H:%M:%S") - Instance $instance_name marked dirty"
+    echo "Reason: Server files updated by another instance"
+    echo "Created by: $(hostname)"
+    echo "Requires restart: true"
+  } > "$dirty_flag_file"
+  
+  echo "[INFO] Created dirty flag for instance $instance_name at $dirty_flag_file"
+}
+
+# Function to check if instance has a dirty flag
+has_dirty_flag() {
+  local instance_name="${INSTANCE_NAME:-default}"
+  local dirty_flag_dir="$ASA_DIR/instance_flags"
+  local dirty_flag_file="$dirty_flag_dir/${instance_name}.dirty"
+  
+  [ -f "$dirty_flag_file" ]
+}
+
+# Function to clear instance dirty flag
+clear_dirty_flag() {
+  local instance_name="${INSTANCE_NAME:-default}"
+  local dirty_flag_dir="$ASA_DIR/instance_flags"
+  local dirty_flag_file="$dirty_flag_dir/${instance_name}.dirty"
+  
+  if [ -f "$dirty_flag_file" ]; then
+    echo "[INFO] Clearing dirty flag for instance $instance_name"
+    rm -f "$dirty_flag_file"
+    return 0
+  fi
+  
+  return 1
+}
+
+# Function to mark all other instances as dirty when server files are updated
+mark_other_instances_dirty() {
+  local updating_instance="${INSTANCE_NAME:-default}"
+  local dirty_flag_dir="$ASA_DIR/instance_flags"
+  local docker_compose_file="/home/pok/docker-compose.yaml"
+  
+  echo "[INFO] Marking other instances as dirty after server files update..."
+  
+  # Create directory if it doesn't exist
+  mkdir -p "$dirty_flag_dir"
+  
+  # Try to extract instance names from docker-compose.yaml if it exists
+  if [ -f "$docker_compose_file" ]; then
+    # Look for service names that might be ARK instances
+    local instance_names=$(grep -E "^\s+[a-zA-Z0-9_-]+:" "$docker_compose_file" | sed 's/://g' | sed 's/^[[:space:]]*//' | grep -v "version\|services\|volumes\|networks")
+    
+    while IFS= read -r instance_name; do
+      # Skip empty lines and the instance that's doing the update
+      if [ -n "$instance_name" ] && [ "$instance_name" != "$updating_instance" ]; then
+        local dirty_flag_file="$dirty_flag_dir/${instance_name}.dirty"
+        {
+          echo "$(date +"%Y-%m-%d %H:%M:%S") - Instance $instance_name marked dirty"
+          echo "Reason: Server files updated by instance $updating_instance"
+          echo "Updated by: $(hostname)"
+          echo "Requires restart: true"
+          echo "Update completed at: $(date)"
+        } > "$dirty_flag_file"
+        echo "[INFO] Marked instance '$instance_name' as dirty"
+      fi
+    done <<< "$instance_names"
+  else
+    # Fallback: create dirty flags for common instance names
+    local common_instances="ark-server ark-server-1 ark-server-2 ark-server-3 default"
+    for instance_name in $common_instances; do
+      if [ "$instance_name" != "$updating_instance" ]; then
+        local dirty_flag_file="$dirty_flag_dir/${instance_name}.dirty"
+        {
+          echo "$(date +"%Y-%m-%d %H:%M:%S") - Instance $instance_name marked dirty"
+          echo "Reason: Server files updated by instance $updating_instance"
+          echo "Updated by: $(hostname)"
+          echo "Requires restart: true"
+          echo "Update completed at: $(date)"
+        } > "$dirty_flag_file"
+        echo "[INFO] Marked instance '$instance_name' as dirty (fallback method)"
+      fi
+    done
+  fi
+  
+  echo "[INFO] Finished marking other instances as dirty"
+}
+
+# Enhanced function to check if server needs update (includes dirty flag check)
+server_needs_update_or_restart() {
+  # First check if this instance has a dirty flag (marked by another instance)
+  if has_dirty_flag; then
+    echo "[INFO] Instance has dirty flag - restart required due to server files update by another instance"
+    return 0  # Needs restart
+  fi
+  
+  # Then do the normal build ID comparison
+  local current_build_id=$(get_current_build_id)
+  local saved_build_id=$(get_build_id_from_acf)
+  
+  # Validate build IDs
+  if [ -z "$current_build_id" ] || [[ "$current_build_id" == error* ]] || ! [[ "$current_build_id" =~ ^[0-9]+$ ]]; then
+    echo "[WARNING] Could not get valid current build ID: '$current_build_id'"
+    return 1
+  fi
+  
+  if ! [[ "$saved_build_id" =~ ^[0-9]+$ ]]; then
+    echo "[WARNING] Saved build ID has invalid format: '$saved_build_id'. Will attempt update."
+    return 0  # Force update
+  fi
+  
+  # Strip whitespace
+  current_build_id=$(echo "$current_build_id" | tr -d '[:space:]')
+  saved_build_id=$(echo "$saved_build_id" | tr -d '[:space:]')
+  
+  # Compare build IDs
+  if [[ -z "$saved_build_id" || "$saved_build_id" != "$current_build_id" ]]; then
+    echo "[INFO] Update needed: Current build $current_build_id differs from installed $saved_build_id"
+    return 0  # Update needed
+  else
+    echo "[INFO] Server is up to date with build ID: $current_build_id"
+    return 1  # No update needed
+  fi
 }
 
 # Execute initialization functions

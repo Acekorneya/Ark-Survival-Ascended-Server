@@ -89,6 +89,10 @@ if [[ -z "$saved_build_id" || "$saved_build_id" != "$current_build_id" ]]; then
   if [[ -f "$ASA_DIR/steamapps/appmanifest_$APPID.acf" ]]; then
     cp "$ASA_DIR/steamapps/appmanifest_$APPID.acf" "$PERSISTENT_ACF_FILE"
     echo "Server installation or update completed."
+    
+    # Mark other instances as dirty since server files were updated
+    echo "-----Marking other instances as dirty after server files installation-----"
+    mark_other_instances_dirty
   else
     echo "Error: appmanifest_$APPID.acf was not found after installation."
     exit 1

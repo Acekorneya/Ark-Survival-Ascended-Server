@@ -754,46 +754,60 @@ while true; do
         rm -f "$SHUTDOWN_COMPLETE_FLAG"
       fi
       
-      # Use POK_Update_Monitor.sh which already uses get_current_build_id from common.sh
-      # The updated get_current_build_id now uses SteamCMD first and falls back to API
-      display_monitor_status "🔎 CHECKING FOR UPDATES using SteamCMD..." "INFO" "true"
+      # Use enhanced update checking that includes dirty flag support
+      display_monitor_status "🔎 CHECKING FOR UPDATES using enhanced system (SteamCMD + dirty flags)..." "INFO" "true"
       
-      # Capture the output of POK_Update_Monitor.sh for display if enabled
-      if [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
-        # Run the command and capture both output and status in a safer way
-        update_output=$(/home/pok/scripts/POK_Update_Monitor.sh 2>&1)
-        update_status=$?
+      # Check for dirty flag first (other instance updated shared files)
+      if has_dirty_flag; then
+        display_monitor_status "🔄 DIRTY FLAG DETECTED! Another instance updated server files - restart required" "WARNING" "true"
         
-        # Display the output with each line properly formatted - handle the output carefully
-        if [ -n "$update_output" ]; then
-          # Use a safer method to process the output line by line
-          while IFS= read -r line; do
-            # Skip empty lines
-            if [ -n "$line" ]; then
-              display_monitor_status "$line"
-            fi
-          done <<< "$update_output"
-        fi
-      else
-        # Run silently when display is disabled
-        /home/pok/scripts/POK_Update_Monitor.sh >/dev/null 2>&1
-        update_status=$?
-      fi
-      
-      if [ $update_status -eq 0 ]; then
-        display_monitor_status "✅ UPDATE DETECTED! Starting update process" "SUCCESS" "true"
         # Set restart mode flag for proper messaging during restart
         export API_CONTAINER_RESTART="TRUE"
         
-        # Start the update server script to handle the update process
-        display_monitor_status "🔄 Launching update_server.sh to handle the update process"
+        # Start the update server script to handle the dirty flag restart
+        display_monitor_status "🔄 Launching update_server.sh to handle dirty flag restart"
         /home/pok/scripts/update_server.sh
         
-        # After update is complete, restart the server with notice
-        display_monitor_status "🔄 Launching restart_server.sh with ${RESTART_NOTICE_MINUTES} minute notice"
-        /home/pok/scripts/restart_server.sh $RESTART_NOTICE_MINUTES
+        # This will handle the restart with appropriate notification
       else
-        display_monitor_status "✅ Server is up to date - no update needed" "SUCCESS" "true"
+        # Check for actual updates using POK_Update_Monitor.sh
+        # Capture the output of POK_Update_Monitor.sh for display if enabled
+        if [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
+          # Run the command and capture both output and status in a safer way
+          update_output=$(/home/pok/scripts/POK_Update_Monitor.sh 2>&1)
+          update_status=$?
+          
+          # Display the output with each line properly formatted - handle the output carefully
+          if [ -n "$update_output" ]; then
+            # Use a safer method to process the output line by line
+            while IFS= read -r line; do
+              # Skip empty lines
+              if [ -n "$line" ]; then
+                display_monitor_status "$line"
+              fi
+            done <<< "$update_output"
+          fi
+        else
+          # Run silently when display is disabled
+          /home/pok/scripts/POK_Update_Monitor.sh >/dev/null 2>&1
+          update_status=$?
+        fi
+        
+        if [ $update_status -eq 0 ]; then
+          display_monitor_status "✅ UPDATE DETECTED! Starting update process" "SUCCESS" "true"
+          # Set restart mode flag for proper messaging during restart
+          export API_CONTAINER_RESTART="TRUE"
+          
+          # Start the update server script to handle the update process
+          display_monitor_status "🔄 Launching update_server.sh to handle the update process"
+          /home/pok/scripts/update_server.sh
+          
+          # After update is complete, restart the server with notice
+          display_monitor_status "🔄 Launching restart_server.sh with ${RESTART_NOTICE_MINUTES} minute notice"
+          /home/pok/scripts/restart_server.sh $RESTART_NOTICE_MINUTES
+        else
+          display_monitor_status "✅ Server is up to date - no update needed" "SUCCESS" "true"
+        fi
       fi
       last_update_check_time=$current_time
     fi

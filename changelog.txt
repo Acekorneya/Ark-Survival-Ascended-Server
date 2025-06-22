@@ -1,6 +1,34 @@
 # POK-Manager Changelog
 
-## Version 2.1.71 (Latest)
+## Version 2.1.72 (Latest)
+### Multi-Instance Update Coordination & Flag Management Improvements
+- **MAJOR FIX**: Implemented "dirty flag" system to ensure all instances restart when one updates server files
+- **Enhanced Lock Management**: Improved updating.flag cleanup with PID validation and multiple stale detection criteria
+- **Multi-Instance Coordination**: When one instance updates, all other instances are automatically marked for restart
+- **Reduced Redundant Downloads**: Only one instance downloads updates, others restart to load shared updated files
+- **Configurable Restart Notices**: Different notification periods for actual updates vs dirty flag restarts (default 5 min for dirty restarts)
+- **Automatic Instance Detection**: Works with docker-compose service discovery and fallback methods
+- **Robust Stale Lock Cleanup**: Prevents stuck updating states with enhanced process validation
+- **Enhanced Update Checking**: New server_needs_update_or_restart() function includes dirty flag detection
+- **Container Restart Integration**: Dirty flags are cleared automatically when instances restart
+- **Backward Compatible**: Works seamlessly with existing single and multi-instance setups
+
+### Technical Improvements
+- Added create_dirty_flag(), has_dirty_flag(), clear_dirty_flag(), and mark_other_instances_dirty() functions
+- Enhanced acquire_update_lock() with PID validation and comprehensive tracking information
+- Updated update_server.sh to handle both actual updates and dirty flag restarts differently
+- Modified monitor_ark_server.sh to check dirty flags before checking for updates
+- Updated install_server.sh to mark other instances dirty after server file installations
+- Enhanced init.sh to clear dirty flags on restart for fresh file loading
+
+### User Benefits
+- **Solves multi-instance sync issue**: All instances now properly restart when server files are updated
+- **Prevents stuck updates**: Robust lock cleanup prevents indefinite "updating" states
+- **Reduces server downtime**: Faster restarts for instances that just need to reload updated files
+- **Better coordination**: No more manual intervention needed for multi-instance setups
+- **Automatic detection**: System automatically discovers and coordinates between instances
+
+## Version 2.1.71 (Previous)
 ### Server Update System Improvements
 - Completely redesigned the update system to use SteamCMD directly instead of API
 - Added retry logic (up to 3 attempts) for more reliable SteamCMD updates
