@@ -654,6 +654,7 @@ services:
       - BATTLEEYE=FALSE                      # Set to TRUE to use BattleEye, FALSE to not use BattleEye
       - API=FALSE                            # Set to TRUE to install and use AsaApi, FALSE to disable AsaApi
       - RCON_ENABLED=TRUE                    # Needed for Graceful Shutdown / Updates / Server Notifications
+      - CPU_OPTIMIZATION=FALSE               # Set to TRUE to enable CPU optimization helps reduce high CPU usage on some systems, FALSE to disable
       - DISPLAY_POK_MONITOR_MESSAGE=FALSE    # Or TRUE to Show the Server Monitor Messages / Update Monitor 
       - UPDATE_SERVER=TRUE                   # Enable or disable update checks
       - CHECK_FOR_UPDATE_INTERVAL=24         # Check for Updates interval in hours
