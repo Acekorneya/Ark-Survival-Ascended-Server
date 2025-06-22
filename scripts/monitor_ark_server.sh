@@ -12,8 +12,7 @@ RECOVERY_LOG="/home/pok/server_recovery.log"
 EXIT_ON_API_RESTART="${EXIT_ON_API_RESTART:-TRUE}" # Default to TRUE - controls container exit behavior
 RESTART_TIMESTAMP_FILE="/tmp/restart_timestamp"
 
-# Restart update window
-RESTART_NOTICE_MINUTES=${RESTART_NOTICE_MINUTES:-30}  # Default to 30 minutes if not set
+# Note: RESTART_NOTICE_MINUTES is configured by user in docker-compose.yaml
 UPDATE_WINDOW_MINIMUM_TIME=${UPDATE_WINDOW_MINIMUM_TIME:-12:00 AM} # Default to "12:00 AM" if not set
 UPDATE_WINDOW_MAXIMUM_TIME=${UPDATE_WINDOW_MAXIMUM_TIME:-11:59 PM} # Default to "11:59 PM" if not set
 
@@ -574,7 +573,7 @@ if [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
   display_monitor_status "🔍 Update monitor started (interval value: ${CHECK_FOR_UPDATE_INTERVAL})" "INFO" "true"
   display_interval_info
   display_monitor_status "🕒 Update window: ${UPDATE_WINDOW_MINIMUM_TIME} to ${UPDATE_WINDOW_MAXIMUM_TIME}"
-  display_monitor_status "⏱️ Restart notice period: ${RESTART_NOTICE_MINUTES} minutes"
+  display_monitor_status "⏱️ Restart notice period: ${RESTART_NOTICE_MINUTES:-30} minutes"
 fi
 
 # Monitoring loop
@@ -803,8 +802,9 @@ while true; do
           /home/pok/scripts/update_server.sh
           
           # After update is complete, restart the server with notice
-          display_monitor_status "🔄 Launching restart_server.sh with ${RESTART_NOTICE_MINUTES} minute notice"
-          /home/pok/scripts/restart_server.sh $RESTART_NOTICE_MINUTES
+          local restart_notice=${RESTART_NOTICE_MINUTES:-30}
+          display_monitor_status "🔄 Launching restart_server.sh with ${restart_notice} minute notice"
+          /home/pok/scripts/restart_server.sh $restart_notice
         else
           display_monitor_status "✅ Server is up to date - no update needed" "SUCCESS" "true"
         fi

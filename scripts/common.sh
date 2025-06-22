@@ -571,6 +571,7 @@ remove_stale_lock() {
 }
 
 # Function to create instance-specific dirty flag (for multi-instance coordination)
+# Note: DIRTY_RESTART_NOTICE_MINUTES can be set in docker-compose.yaml to override default 5-minute notice for dirty restarts
 create_dirty_flag() {
   local instance_name="${INSTANCE_NAME:-default}"
   local dirty_flag_dir="$ASA_DIR/instance_flags"

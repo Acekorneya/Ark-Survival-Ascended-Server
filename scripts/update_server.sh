@@ -4,8 +4,8 @@ source /home/pok/scripts/rcon_commands.sh
 # Get the current build ID at the start to ensure it's defined for later use
 current_build_id=$(get_current_build_id)
 
-# Set default restart notice time if not defined
-RESTART_NOTICE_MINUTES=${RESTART_NOTICE_MINUTES:-30}
+# Note: RESTART_NOTICE_MINUTES is set by the user in docker-compose.yaml
+# We'll use it directly in the script with appropriate defaults where needed
 
 # Create a cleanup function to remove the updating.flag
 cleanup() {
@@ -265,7 +265,12 @@ if server_needs_update; then
     clear_dirty_flag
     
     # Notify players about the restart (shorter notice for dirty flag restarts)
+    # Use a shorter notice period for dirty restarts, but respect user's minimum setting
     local dirty_restart_notice=${DIRTY_RESTART_NOTICE_MINUTES:-5}  # Default 5 minutes for dirty restarts
+    # If user's RESTART_NOTICE_MINUTES is shorter than our default, use theirs
+    if [ -n "$RESTART_NOTICE_MINUTES" ] && [ "$RESTART_NOTICE_MINUTES" -lt "$dirty_restart_notice" ]; then
+      dirty_restart_notice=$RESTART_NOTICE_MINUTES
+    fi
     echo "[INFO] Notifying players about restart (dirty flag) with $dirty_restart_notice minute notice"
     notify_players_of_update $dirty_restart_notice
     
@@ -302,7 +307,10 @@ if server_needs_update; then
     echo "[INFO] Acquired update lock. Performing server files update..."
     
     # Notify players about the upcoming update and initiate countdown
-    notify_players_of_update $RESTART_NOTICE_MINUTES
+    # Use the user-configured restart notice time from docker-compose environment
+    local update_notice_minutes=${RESTART_NOTICE_MINUTES:-30}  # Default 30 minutes if not set
+    echo "[INFO] Notifying players about update with $update_notice_minutes minute notice"
+    notify_players_of_update $update_notice_minutes
     
     # Mark other instances as dirty since we're about to update shared server files
     echo "[INFO] Marking other instances as dirty before updating server files..."
