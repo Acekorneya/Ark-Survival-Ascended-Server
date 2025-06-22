@@ -2037,6 +2037,12 @@ generate_docker_compose() {
   fi
   # Set the timezone for the container
   set_timezone
+  
+  # Ensure ServerFiles directory has correct permissions to prevent SteamCMD error 0x602
+  echo "Ensuring ServerFiles directory has correct ownership..."
+  mkdir -p "${BASE_DIR}/ServerFiles/arkserver"
+  adjust_ownership_and_permissions "${BASE_DIR}/ServerFiles/arkserver"
+  
   # Generate or update Docker Compose file with the confirmed settings
   write_docker_compose_file "$instance_name"
 
@@ -4267,6 +4273,11 @@ manage_service() {
         fi
       fi
     fi
+    
+    # Ensure ServerFiles directory has correct permissions to prevent SteamCMD error 0x602
+    echo "Ensuring ServerFiles directory has correct ownership..."
+    mkdir -p "${BASE_DIR}/ServerFiles/arkserver"
+    adjust_ownership_and_permissions "${BASE_DIR}/ServerFiles/arkserver"
     
     # Then run the normal fix_root_owned_files function
     fix_root_owned_files
