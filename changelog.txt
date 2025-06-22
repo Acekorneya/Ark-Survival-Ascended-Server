@@ -8,6 +8,7 @@
 - **Delayed Restart Monitoring**: Waits 2 minutes before starting restart detection to avoid startup conflicts
 - **Complete Log Display**: Background log tailing restored while preventing race conditions
 - **All Features Working**: Screen support, nohup fallback, API monitoring warnings, and container lifecycle management
+- **Fixed -stable/-beta Commands**: Added missing update_docker_compose_image_tag function to properly update Docker image tags when switching between stable and beta modes
 
 ## Version 2.1.73
 ### Log Display Race Condition Fix

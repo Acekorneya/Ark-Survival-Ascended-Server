@@ -748,6 +748,27 @@ check_dependencies() {
   echo "Using Docker Compose command: '$DOCKER_COMPOSE_CMD'."
 }
 
+# Function to update Docker Compose image tag
+update_docker_compose_image_tag() {
+  local compose_file="$1"
+  local new_tag="$2"
+  
+  if [ ! -f "$compose_file" ]; then
+    echo "❌ ERROR: Docker compose file not found: $compose_file"
+    return 1
+  fi
+  
+  # Update the image tag in the docker-compose file
+  sed -i "s|image: acekorneya/asa_server:.*|image: acekorneya/asa_server:${new_tag}|g" "$compose_file"
+  
+  if [ $? -eq 0 ]; then
+    echo "✅ Updated image tag to '${new_tag}' in: $(basename "$compose_file")"
+  else
+    echo "❌ ERROR: Failed to update image tag in: $compose_file"
+    return 1
+  fi
+}
+
 get_docker_compose_cmd() {
   local cmd_file="./config/POK-manager/docker_compose_cmd"
   local config_dir="./config/POK-manager"
