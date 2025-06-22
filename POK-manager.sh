@@ -7132,42 +7132,45 @@ display_changelog() {
   local changelog_file="${BASE_DIR}/config/POK-manager/changelog.txt"
   local changelog_dir=$(dirname "$changelog_file")
   
-  # Check if changelog file exists
-  if [ ! -f "$changelog_file" ]; then
-    echo "Changelog file not found. Attempting to download it now..."
-    
-    mkdir -p "$changelog_dir"
-    
-    # Check if we're in beta mode
-    local branch="master"
-    if check_beta_mode; then
-      branch="beta"
+  echo "Downloading latest changelog from GitHub..."
+  
+  mkdir -p "$changelog_dir"
+  
+  # Check if we're in beta mode
+  local branch="master"
+  if check_beta_mode; then
+    branch="beta"
+  fi
+  
+  # Generate a unique timestamp and random string to prevent caching
+  local timestamp=$(date +%s)
+  local random_str=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 10)
+  local changelog_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/$branch/changelog.txt?nocache=${timestamp}_${random_str}"
+  
+  # Always attempt to download the latest changelog
+  local download_success=false
+  if command -v wget &>/dev/null; then
+    if wget -q --no-cache -O "$changelog_file" "$changelog_url"; then
+      download_success=true
     fi
-    
-    # Generate a unique timestamp and random string to prevent caching
-    local timestamp=$(date +%s)
-    local random_str=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 10)
-    local changelog_url="https://raw.githubusercontent.com/Acekorneya/Ark-Survival-Ascended-Server/$branch/changelog.txt?nocache=${timestamp}_${random_str}"
-    
-    # Download the changelog
-    local download_success=false
-    if command -v wget &>/dev/null; then
-      if wget -q --no-cache -O "$changelog_file" "$changelog_url"; then
-        download_success=true
-      fi
-    elif command -v curl &>/dev/null; then
-      if curl -s -H "Cache-Control: no-cache, no-store" -H "Pragma: no-cache" -o "$changelog_file" "$changelog_url"; then
-        download_success=true
-      fi
+  elif command -v curl &>/dev/null; then
+    if curl -s -H "Cache-Control: no-cache, no-store" -H "Pragma: no-cache" -o "$changelog_file" "$changelog_url"; then
+      download_success=true
     fi
-    
-    if [ "$download_success" != "true" ]; then
-      echo "Failed to download the changelog. Please check your internet connection."
+  fi
+  
+  if [ "$download_success" != "true" ]; then
+    echo "Failed to download the latest changelog. Please check your internet connection."
+    # Check if we have a cached version to fall back to
+    if [ -f "$changelog_file" ]; then
+      echo "Using cached changelog (may be outdated)..."
+    else
+      echo "No cached changelog available."
       echo "You can manually view the changelog at: https://github.com/Acekorneya/Ark-Survival-Ascended-Server/blob/$branch/changelog.txt"
       return 1
     fi
-    
-    echo "Changelog downloaded successfully."
+  else
+    echo "Latest changelog downloaded successfully."
   fi
   
   # Display the changelog with nice formatting
