@@ -323,6 +323,7 @@ declare -a config_order=(
     "RCON Enabled"
     "POK Monitor Message"
     "Random Startup Delay"
+    "CPU Optimization"
     "Update Server"
     "Update Interval"
     "Update Window Start"
@@ -353,6 +354,7 @@ declare -A default_config_values=(
     ["RCON Enabled"]="TRUE"
     ["POK Monitor Message"]="FALSE"
     ["Random Startup Delay"]="TRUE"
+    ["CPU Optimization"]="FALSE"
     ["Update Server"]="TRUE"
     ["Update Interval"]="24"
     ["Update Window Start"]="12:00 AM"
@@ -1608,6 +1610,7 @@ EOF
       "RCON Enabled") env_key="RCON_ENABLED" ;;
       "POK Monitor Message") env_key="DISPLAY_POK_MONITOR_MESSAGE" ;;
       "Random Startup Delay") env_key="RANDOM_STARTUP_DELAY" ;;
+      "CPU Optimization") env_key="CPU_OPTIMIZATION" ;;
       "Update Server") env_key="UPDATE_SERVER" ;;
       "Update Interval") env_key="CHECK_FOR_UPDATE_INTERVAL" ;;
       "Update Window Start") env_key="UPDATE_WINDOW_MINIMUM_TIME" ;;

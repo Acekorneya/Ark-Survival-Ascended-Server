@@ -273,6 +273,22 @@ start_server() {
     fi
   fi
   
+  # Handle CPU optimization with backward compatibility
+  local CPU_OPT="${CPU_OPTIMIZATION:-FALSE}"
+  if [ "$CPU_OPT" = "TRUE" ]; then
+    echo "🔧 CPU optimization enabled - applying Proton/Wine performance tweaks..."
+    export PROTON_NO_ESYNC=1
+    export PROTON_NO_FSYNC=1
+    export WINEDEBUG=-all
+    export WINE_CPU_TOPOLOGY=FALSE
+    echo "   - PROTON_NO_ESYNC=1 (disables eventfd-based synchronization)"
+    echo "   - PROTON_NO_FSYNC=1 (disables fsync-based synchronization)"
+    echo "   - WINEDEBUG=-all (disables Wine debug messages)"
+    echo "   - WINE_CPU_TOPOLOGY=FALSE (prevents CPU topology detection)"
+  else
+    echo "🔧 CPU optimization disabled (default)"
+  fi
+  
   # Launch the server using proton run directly, similar to test_script.sh
   # Using the same approach as in test_script.sh which we know works
   local STEAM_COMPAT_DIR="/home/pok/.steam/steam/compatibilitytools.d"
