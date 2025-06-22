@@ -1603,7 +1603,7 @@ EOF
 
   # Iterate over the config_order to maintain the order in Docker Compose
   for key in "${config_order[@]}"; do
-    # Convert the friendly name to the actual environment variable key
+    # Convert the friendly name to the actual environment variable key.
     case "$key" in
       "BattleEye") env_key="BATTLEEYE" ;;
       "API") env_key="API" ;;
