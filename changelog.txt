@@ -12,6 +12,7 @@
 - **Fixed -changelog Command**: Now always downloads latest changelog from GitHub instead of showing outdated cached version
 - **Added CPU Optimization**: New configurable option to reduce high CPU usage on some systems by applying community-tested Proton/Wine optimizations (PROTON_NO_ESYNC, PROTON_NO_FSYNC, WINEDEBUG=-all, WINE_CPU_TOPOLOGY=FALSE). Disabled by default for full backward compatibility.
 - **Fixed SteamCMD Permission Errors**: Enhanced POK-manager.sh to proactively fix ServerFiles directory permissions during instance creation and -fix command, preventing SteamCMD error 0x602 when Docker creates directories as root.
+- **Fixed RESTART_NOTICE_MINUTES Environment Variable**: Fixed issue where user-configured restart notice time from docker-compose.yaml was not being passed to update_server.sh, causing notification messages to show "Server will restart in  minutes" (missing number). Now properly exports the environment variable to ensure user's configured timing is respected for both dirty flag restarts and actual updates.
 
 ## Version 2.1.73
 ### Log Display Race Condition Fix
