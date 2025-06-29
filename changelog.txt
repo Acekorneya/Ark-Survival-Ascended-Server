@@ -13,6 +13,9 @@
 - **Added CPU Optimization**: New configurable option to reduce high CPU usage on some systems by applying community-tested Proton/Wine optimizations (PROTON_NO_ESYNC, PROTON_NO_FSYNC, WINEDEBUG=-all, WINE_CPU_TOPOLOGY=FALSE). Disabled by default for full backward compatibility.
 - **Fixed SteamCMD Permission Errors**: Enhanced POK-manager.sh to proactively fix ServerFiles directory permissions during instance creation and -fix command, preventing SteamCMD error 0x602 when Docker creates directories as root.
 - **Fixed RESTART_NOTICE_MINUTES Environment Variable**: Fixed issue where user-configured restart notice time from docker-compose.yaml was not being passed to update_server.sh, causing notification messages to show "Server will restart in  minutes" (missing number). Now properly exports the environment variable to ensure user's configured timing is respected for both dirty flag restarts and actual updates.
+- **Eliminated Multi-Instance SteamCMD Race Condition**: Fixed SteamCMD Error 0x606 when multiple containers (10+) start simultaneously by implementing filesystem sync after ACF file updates and retry logic for build ID detection
+- **Enhanced ACF File Synchronization**: Added `sync` command and delays after ACF file updates to ensure immediate visibility across container filesystems, preventing race conditions during multi-instance startup
+- **Improved Build ID Validation**: Enhanced `get_build_id_from_acf()` function with comprehensive error handling, file existence checks, and retry logic (5 attempts with 3-second delays) for containers waiting for lock release
 
 ## Version 2.1.73
 ### Log Display Race Condition Fix

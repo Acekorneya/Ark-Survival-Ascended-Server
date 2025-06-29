@@ -765,6 +765,7 @@ while true; do
         
         # Start the update server script to handle the dirty flag restart
         display_monitor_status "🔄 Launching update_server.sh to handle dirty flag restart"
+        # Ensure RESTART_NOTICE_MINUTES is exported before calling update_server.sh
         export RESTART_NOTICE_MINUTES="${RESTART_NOTICE_MINUTES:-30}"
         /home/pok/scripts/update_server.sh
         
@@ -800,6 +801,7 @@ while true; do
           
           # Start the update server script to handle the update process
           display_monitor_status "🔄 Launching update_server.sh to handle the update process"
+          # Ensure RESTART_NOTICE_MINUTES is exported before calling update_server.sh
           export RESTART_NOTICE_MINUTES="${RESTART_NOTICE_MINUTES:-30}"
           /home/pok/scripts/update_server.sh
           
