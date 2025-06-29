@@ -49,10 +49,26 @@ acquire_update_lock() {
 # Installation logic
 echo "Starting server installation process..."
 
-saved_build_id=$(get_build_id_from_acf)
-current_build_id=$(get_current_build_id)
+# Get build IDs with proper error handling
+saved_build_id=""
+current_build_id=""
 
-if [[ -z "$saved_build_id" || "$saved_build_id" != "$current_build_id" ]]; then
+if saved_build_id=$(get_build_id_from_acf); then
+  echo "Current saved build ID: $saved_build_id"
+else
+  echo "Could not read saved build ID (file may not exist): $saved_build_id"
+  saved_build_id=""  # Treat as missing, will trigger update
+fi
+
+if current_build_id=$(get_current_build_id); then
+  echo "Current available build ID: $current_build_id"
+else
+  echo "Could not read current build ID from SteamCMD: $current_build_id"
+  # This is a more serious error, but we'll continue and let the update attempt handle it
+fi
+
+# Check if installation is needed
+if [[ -z "$saved_build_id" || "$saved_build_id" =~ ^error || -z "$current_build_id" || "$current_build_id" =~ ^error || "$saved_build_id" != "$current_build_id" ]]; then
   echo "-----Installing ARK server-----"
   
   # Attempt to acquire the installation lock
@@ -66,18 +82,67 @@ if [[ -z "$saved_build_id" || "$saved_build_id" != "$current_build_id" ]]; then
       sleep 15
     done
     
-    # After the lock is released, check if installation is still needed
-    saved_build_id=$(get_build_id_from_acf)
-    current_build_id=$(get_current_build_id)
+    # After the lock is released, check if installation is still needed with retry logic
+    echo "Lock released. Re-checking if installation is still needed..."
     
-    if [[ -z "$saved_build_id" || "$saved_build_id" != "$current_build_id" ]]; then
-      echo "Still need to install/update after waiting. Retrying acquisition..."
+    # Allow time for ACF file to be fully written by the updating instance
+    sleep 3
+    
+    # Retry logic for build ID verification after lock release
+    local retry_count=0
+    local max_retries=5
+    local update_still_needed=true
+    
+    while [ $retry_count -lt $max_retries ]; do
+      # Get build IDs with proper error handling
+      saved_build_id=""
+      current_build_id=""
+      
+      if saved_build_id=$(get_build_id_from_acf); then
+        echo "Successfully read saved build ID: $saved_build_id"
+      else
+        echo "Failed to read saved build ID: $saved_build_id"
+      fi
+      
+      if current_build_id=$(get_current_build_id); then
+        echo "Successfully read current build ID: $current_build_id"
+      else
+        echo "Failed to read current build ID: $current_build_id"
+      fi
+      
+      echo "Retry $((retry_count + 1))/$max_retries: Saved ID: $saved_build_id, Current ID: $current_build_id"
+      
+      # Check if both build IDs are valid (not error messages) and equal
+      if [[ -n "$saved_build_id" && ! "$saved_build_id" =~ ^error ]] && [[ -n "$current_build_id" && ! "$current_build_id" =~ ^error ]]; then
+        if [[ "$saved_build_id" =~ ^[0-9]+$ ]] && [[ "$current_build_id" =~ ^[0-9]+$ ]]; then
+          if [[ "$saved_build_id" == "$current_build_id" ]]; then
+            echo "Server is now up to date after waiting. No installation needed."
+            update_still_needed=false
+            break
+          else
+            echo "Build IDs are different: saved=$saved_build_id, current=$current_build_id"
+          fi
+        else
+          echo "Build IDs are not in correct numeric format"
+        fi
+      else
+        echo "One or both build IDs could not be retrieved"
+      fi
+      
+      retry_count=$((retry_count + 1))
+      if [ $retry_count -lt $max_retries ]; then
+        echo "Build IDs don't match or invalid. Retrying in 3 seconds..."
+        sleep 3
+      fi
+    done
+    
+    if [ "$update_still_needed" = "true" ]; then
+      echo "Still need to install/update after waiting and retries. Retrying acquisition..."
       if ! acquire_update_lock; then
         echo "Failed to acquire lock after waiting. Aborting installation."
         exit 1
       fi
     else
-      echo "Server is now up to date after waiting. No installation needed."
       exit 0
     fi
   fi
@@ -88,6 +153,19 @@ if [[ -z "$saved_build_id" || "$saved_build_id" != "$current_build_id" ]]; then
   # Check for success and copy the appmanifest file
   if [[ -f "$ASA_DIR/steamapps/appmanifest_$APPID.acf" ]]; then
     cp "$ASA_DIR/steamapps/appmanifest_$APPID.acf" "$PERSISTENT_ACF_FILE"
+    
+    # Force filesystem sync to ensure ACF file is visible to other containers immediately
+    sync
+    
+    # Add small delay to ensure file visibility across container filesystems
+    sleep 2
+    
+    # Verify the ACF file is readable and contains valid build ID
+    if ! get_build_id_from_acf >/dev/null 2>&1; then
+      echo "Warning: ACF file copied but build ID not immediately readable. Waiting..."
+      sleep 3
+    fi
+    
     echo "Server installation or update completed."
     
     # Mark other instances as dirty since server files were updated

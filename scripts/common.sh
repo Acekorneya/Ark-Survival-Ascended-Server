@@ -327,14 +327,37 @@ validate_server_password() {
   fi
 }
 
-# Function to get the build ID from the appmanifest.acf file
+# Function to get the build ID from the appmanifest.acf file with enhanced reliability
 get_build_id_from_acf() {
-  if [[ -f "$PERSISTENT_ACF_FILE" ]]; then
-    local build_id=$(grep -E "^\s+\"buildid\"\s+" "$PERSISTENT_ACF_FILE" | grep -o '[[:digit:]]*')
-    echo "$build_id"
-  else
+  # Check if file exists and is readable
+  if [[ ! -f "$PERSISTENT_ACF_FILE" ]]; then
     echo "error: appmanifest.acf file not found"
+    return 1
   fi
+  
+  # Check if file is not empty and readable
+  if [[ ! -r "$PERSISTENT_ACF_FILE" ]] || [[ ! -s "$PERSISTENT_ACF_FILE" ]]; then
+    echo "error: appmanifest.acf file not readable or empty"
+    return 1
+  fi
+  
+  # Try to extract build ID with error handling
+  local build_id=$(grep -E "^\s+\"buildid\"\s+" "$PERSISTENT_ACF_FILE" 2>/dev/null | grep -o '[[:digit:]]*' | head -1)
+  
+  # Validate the extracted build ID
+  if [[ -z "$build_id" ]]; then
+    echo "error: could not extract build ID from acf file"
+    return 1
+  fi
+  
+  # Ensure it's numeric only
+  if ! [[ "$build_id" =~ ^[0-9]+$ ]]; then
+    echo "error: invalid build ID format in acf file: $build_id"
+    return 1
+  fi
+  
+  echo "$build_id"
+  return 0
 }
 
 # Check the lock status with enhanced details about the lock holder
