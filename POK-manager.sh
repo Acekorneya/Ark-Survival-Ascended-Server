@@ -6772,8 +6772,24 @@ enhanced_restart_command() {
       # Start countdown
       local total_seconds=$((countdown_minutes * 60))
       local remaining_seconds=$total_seconds
-      # Notification points to include every second from 10 to 1
-      local notification_points=(300 180 60 30 10 9 8 7 6 5 4 3 2 1)
+      # Generate notification points: 5-minute intervals + standard final countdown
+      local notification_points=()
+      
+      # Add 5-minute intervals (in seconds) from countdown_minutes down to 5 minutes
+      local current_minutes=$countdown_minutes
+      while [ $current_minutes -ge 5 ]; do
+        if [ $((current_minutes % 5)) -eq 0 ]; then
+          notification_points+=($((current_minutes * 60)))
+        fi
+        current_minutes=$((current_minutes - 1))
+      done
+      
+      # Add standard final countdown points (3min, 1min, 30sec, final 10 seconds)
+      notification_points+=(180 60 30 10 9 8 7 6 5 4 3 2 1)
+      
+      # Sort notification points in descending order (remove duplicates)
+      IFS=$'\n' notification_points=($(printf '%s\n' "${notification_points[@]}" | sort -nr | uniq))
+      unset IFS
       local spinner_idx=0
       
       echo -e "${status_color}⏱️${reset_color} Beginning restart countdown: $countdown_minutes minutes"
@@ -6950,8 +6966,24 @@ enhanced_restart_command() {
       # Start countdown
       local total_seconds=$((countdown_minutes * 60))
       local remaining_seconds=$total_seconds
-      # Notification points to include every second from 10 to 1
-      local notification_points=(300 180 60 30 10 9 8 7 6 5 4 3 2 1)
+      # Generate notification points: 5-minute intervals + standard final countdown
+      local notification_points=()
+      
+      # Add 5-minute intervals (in seconds) from countdown_minutes down to 5 minutes
+      local current_minutes=$countdown_minutes
+      while [ $current_minutes -ge 5 ]; do
+        if [ $((current_minutes % 5)) -eq 0 ]; then
+          notification_points+=($((current_minutes * 60)))
+        fi
+        current_minutes=$((current_minutes - 1))
+      done
+      
+      # Add standard final countdown points (3min, 1min, 30sec, final 10 seconds)
+      notification_points+=(180 60 30 10 9 8 7 6 5 4 3 2 1)
+      
+      # Sort notification points in descending order (remove duplicates)
+      IFS=$'\n' notification_points=($(printf '%s\n' "${notification_points[@]}" | sort -nr | uniq))
+      unset IFS
       local spinner_idx=0
       
       echo -e "${status_color}⏱️${reset_color} Beginning restart countdown: $countdown_minutes minutes"
