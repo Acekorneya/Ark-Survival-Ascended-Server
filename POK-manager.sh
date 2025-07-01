@@ -4279,6 +4279,11 @@ manage_service() {
     mkdir -p "${BASE_DIR}/ServerFiles/arkserver"
     adjust_ownership_and_permissions "${BASE_DIR}/ServerFiles/arkserver"
     
+    # Create FirstLaunchFlags directory structure to prevent container startup errors
+    echo "Ensuring FirstLaunchFlags directory structure exists..."
+    mkdir -p "${BASE_DIR}/ServerFiles/arkserver/ShooterGame/Saved/Config/FirstLaunchFlags"
+    adjust_ownership_and_permissions "${BASE_DIR}/ServerFiles/arkserver/ShooterGame/Saved/Config"
+    
     # Then run the normal fix_root_owned_files function
     fix_root_owned_files
     

@@ -17,6 +17,7 @@
 - **Enhanced ACF File Synchronization**: Added `sync` command and delays after ACF file updates to ensure immediate visibility across container filesystems, preventing race conditions during multi-instance startup
 - **Improved Build ID Validation**: Enhanced `get_build_id_from_acf()` function with comprehensive error handling, file existence checks, and retry logic (5 attempts with 3-second delays) for containers waiting for lock release
 - **Enhanced Restart Countdown Intervals**: Fixed restart countdown to show proper 5-minute intervals (30→25→20→15→10→5→final countdown) instead of jumping from initial time directly to 5 minutes
+- **Fixed FirstLaunchFlags Directory Creation**: Fixed container startup error "No such file or directory" when creating first launch completion flags. POK-manager.sh -fix command now automatically creates the required FirstLaunchFlags directory structure with proper permissions, preventing GitHub issue #103
 
 ## Version 2.1.73
 ### Log Display Race Condition Fix
