@@ -788,7 +788,7 @@ cleanup_legacy_locks() {
   local dirty_flag_dir="$ASA_DIR/instance_flags"
   local current_time=$(date +%s)
   local stale_threshold=7200  # 2 hours in seconds
-  local dirty_threshold=86400  # 24 hours in seconds
+  local dirty_threshold=3600  # 1 hour in seconds (more aggressive for legacy cleanup)
   
   # Clean up main update lock if it's stale
   if [ -f "$lock_file" ]; then
@@ -822,20 +822,42 @@ cleanup_legacy_locks() {
     fi
   fi
   
-  # Clean up stale dirty flags older than 24 hours
+  # Clean up ALL dirty flags on startup (aggressive cleanup for legacy systems)
   if [ -d "$dirty_flag_dir" ]; then
-    find "$dirty_flag_dir" -name "*.dirty" -type f -newermt "-24 hours" -delete 2>/dev/null || {
-      # Fallback for systems without -newermt
+    echo "[INFO] Cleaning up ALL dirty flags from directory: $dirty_flag_dir"
+    
+    # List what we're about to clean
+    local flag_count=$(find "$dirty_flag_dir" -name "*.dirty" -type f 2>/dev/null | wc -l)
+    if [ "$flag_count" -gt 0 ]; then
+      echo "[INFO] Found $flag_count dirty flags to clean up:"
+      find "$dirty_flag_dir" -name "*.dirty" -type f -exec basename {} \; 2>/dev/null | head -10
+      
+      # Show ages of the flags
       for dirty_file in "$dirty_flag_dir"/*.dirty; do
         if [ -f "$dirty_file" ]; then
           local dirty_age=$((current_time - $(stat -c %Y "$dirty_file")))
-          if [ $dirty_age -ge $dirty_threshold ]; then
-            echo "[INFO] Removing stale dirty flag: $(basename "$dirty_file")"
-            rm -f "$dirty_file"
-          fi
+          local age_days=$((dirty_age / 86400))
+          local age_hours=$(((dirty_age % 86400) / 3600))
+          echo "[INFO] Flag $(basename "$dirty_file") age: ${age_days}d ${age_hours}h"
         fi
       done
-    }
+      
+      # Remove ALL dirty flags (they should only exist during active updates)
+      echo "[INFO] Removing ALL dirty flags..."
+      rm -f "$dirty_flag_dir"/*.dirty 2>/dev/null || true
+      
+      # Verify cleanup
+      local remaining_count=$(find "$dirty_flag_dir" -name "*.dirty" -type f 2>/dev/null | wc -l)
+      if [ "$remaining_count" -eq 0 ]; then
+        echo "[SUCCESS] All dirty flags cleaned up successfully"
+      else
+        echo "[WARNING] $remaining_count dirty flags remain after cleanup"
+      fi
+    else
+      echo "[INFO] No dirty flags found to clean up"
+    fi
+  else
+    echo "[INFO] Dirty flag directory $dirty_flag_dir does not exist"
   fi
   
   # Clean up any orphaned temporary files
