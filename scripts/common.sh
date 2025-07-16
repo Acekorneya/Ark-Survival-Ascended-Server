@@ -782,13 +782,30 @@ server_needs_update_or_restart() {
 
 # Function to clean up legacy and stale lock files from previous system usage
 cleanup_legacy_locks() {
-  echo "[INFO] Cleaning up legacy and stale locks..."
+  local context="${1:-startup}"  # startup, monitor, or aggressive
+  echo "[INFO] Cleaning up legacy and stale locks (context: $context)..."
   
   local lock_file="$ASA_DIR/updating.flag"
   local dirty_flag_dir="$ASA_DIR/instance_flags"
   local current_time=$(date +%s)
   local stale_threshold=7200  # 2 hours in seconds
-  local dirty_threshold=3600  # 1 hour in seconds (more aggressive for legacy cleanup)
+  local dirty_threshold
+  
+  # Set different thresholds based on context
+  case "$context" in
+    "startup")
+      dirty_threshold=21600  # 6 hours - preserve fresh flags, clean legacy ones
+      ;;
+    "monitor")
+      dirty_threshold=1800   # 30 minutes - active maintenance
+      ;;
+    "aggressive")
+      dirty_threshold=0      # Clean all flags regardless of age
+      ;;
+    *)
+      dirty_threshold=3600   # 1 hour - default fallback
+      ;;
+  esac
   
   # Clean up main update lock if it's stale
   if [ -f "$lock_file" ]; then
@@ -822,37 +839,46 @@ cleanup_legacy_locks() {
     fi
   fi
   
-  # Clean up ALL dirty flags on startup (aggressive cleanup for legacy systems)
+  # Clean up dirty flags based on context and age
   if [ -d "$dirty_flag_dir" ]; then
-    echo "[INFO] Cleaning up ALL dirty flags from directory: $dirty_flag_dir"
+    local threshold_desc
+    case "$context" in
+      "startup") threshold_desc="6 hours (preserves fresh flags)" ;;
+      "monitor") threshold_desc="30 minutes (active maintenance)" ;;
+      "aggressive") threshold_desc="all ages (aggressive cleanup)" ;;
+      *) threshold_desc="1 hour (default)" ;;
+    esac
+    
+    echo "[INFO] Cleaning up dirty flags older than $threshold_desc from: $dirty_flag_dir"
     
     # List what we're about to clean
     local flag_count=$(find "$dirty_flag_dir" -name "*.dirty" -type f 2>/dev/null | wc -l)
     if [ "$flag_count" -gt 0 ]; then
-      echo "[INFO] Found $flag_count dirty flags to clean up:"
-      find "$dirty_flag_dir" -name "*.dirty" -type f -exec basename {} \; 2>/dev/null | head -10
+      echo "[INFO] Found $flag_count dirty flags to evaluate:"
       
-      # Show ages of the flags
+      local cleaned_count=0
+      local preserved_count=0
+      
+      # Process each flag individually
       for dirty_file in "$dirty_flag_dir"/*.dirty; do
         if [ -f "$dirty_file" ]; then
           local dirty_age=$((current_time - $(stat -c %Y "$dirty_file")))
           local age_days=$((dirty_age / 86400))
           local age_hours=$(((dirty_age % 86400) / 3600))
-          echo "[INFO] Flag $(basename "$dirty_file") age: ${age_days}d ${age_hours}h"
+          local age_minutes=$(((dirty_age % 3600) / 60))
+          
+          if [ "$context" = "aggressive" ] || [ $dirty_age -ge $dirty_threshold ]; then
+            echo "[INFO] Removing $(basename "$dirty_file") (age: ${age_days}d ${age_hours}h ${age_minutes}m)"
+            rm -f "$dirty_file"
+            cleaned_count=$((cleaned_count + 1))
+          else
+            echo "[INFO] Preserving $(basename "$dirty_file") (age: ${age_days}d ${age_hours}h ${age_minutes}m - under threshold)"
+            preserved_count=$((preserved_count + 1))
+          fi
         fi
       done
       
-      # Remove ALL dirty flags (they should only exist during active updates)
-      echo "[INFO] Removing ALL dirty flags..."
-      rm -f "$dirty_flag_dir"/*.dirty 2>/dev/null || true
-      
-      # Verify cleanup
-      local remaining_count=$(find "$dirty_flag_dir" -name "*.dirty" -type f 2>/dev/null | wc -l)
-      if [ "$remaining_count" -eq 0 ]; then
-        echo "[SUCCESS] All dirty flags cleaned up successfully"
-      else
-        echo "[WARNING] $remaining_count dirty flags remain after cleanup"
-      fi
+      echo "[SUCCESS] Cleaned up $cleaned_count dirty flags, preserved $preserved_count fresh flags"
     else
       echo "[INFO] No dirty flags found to clean up"
     fi
@@ -865,6 +891,12 @@ cleanup_legacy_locks() {
   rm -f /tmp/updating_* 2>/dev/null || true
   
   echo "[INFO] Legacy cleanup completed"
+}
+
+# Convenience function for aggressive cleanup (removes all flags regardless of age)
+cleanup_all_flags() {
+  echo "[INFO] Performing aggressive cleanup of all flags..."
+  cleanup_legacy_locks "aggressive"
 }
 
 # Execute initialization functions

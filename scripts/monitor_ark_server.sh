@@ -570,7 +570,7 @@ sleep $INITIAL_STARTUP_DELAY
 
 # Clean up any legacy locks from previous system usage
 if declare -f cleanup_legacy_locks >/dev/null 2>&1; then
-  cleanup_legacy_locks
+  cleanup_legacy_locks "monitor"
 else
   echo "[WARNING] cleanup_legacy_locks function not found in common.sh"
 fi

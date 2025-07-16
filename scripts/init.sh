@@ -5,7 +5,7 @@ source /home/pok/scripts/common.sh
 # Clean up any legacy locks and dirty flags from previous system usage
 echo "🧹 Cleaning up legacy locks and dirty flags..."
 if declare -f cleanup_legacy_locks >/dev/null 2>&1; then
-  cleanup_legacy_locks
+  cleanup_legacy_locks "startup"
 else
   echo "[WARNING] cleanup_legacy_locks function not found in common.sh"
 fi
