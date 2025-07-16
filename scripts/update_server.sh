@@ -11,10 +11,27 @@ current_build_id=$(get_current_build_id)
 cleanup() {
   local exit_code=$?
   
-  # Check if updating.flag exists and remove it
-  if [ -f "$ASA_DIR/updating.flag" ]; then
-    echo "[INFO] Cleaning up updating.flag due to script exit (code: $exit_code)"
-    rm -f "$ASA_DIR/updating.flag"
+  echo "[INFO] Update script cleanup triggered (exit code: $exit_code)"
+  
+  # Use the proper lock release function from common.sh if available
+  if declare -f release_update_lock >/dev/null 2>&1; then
+    echo "[INFO] Using proper lock release function..."
+    release_update_lock
+  else
+    # Fallback to manual cleanup
+    echo "[INFO] Using fallback lock cleanup..."
+    if [ -f "$ASA_DIR/updating.flag" ]; then
+      echo "[INFO] Removing updating.flag due to script exit"
+      rm -f "$ASA_DIR/updating.flag"
+    fi
+    
+    # Clean up any flock file descriptors
+    if [ -n "$UPDATE_LOCK_FD" ]; then
+      echo "[INFO] Closing update lock file descriptor $UPDATE_LOCK_FD"
+      flock -u $UPDATE_LOCK_FD 2>/dev/null || true
+      exec {UPDATE_LOCK_FD}>&- 2>/dev/null || true
+      unset UPDATE_LOCK_FD
+    fi
   fi
   
   # Clean up SteamCMD temporary files to save disk space
@@ -22,6 +39,8 @@ cleanup() {
   rm -rf /opt/steamcmd/Steam/logs/* 2>/dev/null || true
   rm -rf /opt/steamcmd/Steam/appcache/httpcache/* 2>/dev/null || true
   rm -rf /tmp/SteamCMD_* 2>/dev/null || true
+  
+  echo "[INFO] Update script cleanup completed"
   
   # Return the original exit code
   exit $exit_code
@@ -264,18 +283,21 @@ if server_needs_update; then
     # Clear the dirty flag since we're handling it
     clear_dirty_flag
     
-    # Notify players about the restart (shorter notice for dirty flag restarts)
-    # Use a shorter notice period for dirty restarts, but respect user's minimum setting
-    local dirty_restart_notice=${DIRTY_RESTART_NOTICE_MINUTES:-5}  # Default 5 minutes for dirty restarts
-    # If user's RESTART_NOTICE_MINUTES is shorter than our default, use theirs
-    if [ -n "$RESTART_NOTICE_MINUTES" ] && [ "$RESTART_NOTICE_MINUTES" -lt "$dirty_restart_notice" ]; then
-      dirty_restart_notice=$RESTART_NOTICE_MINUTES
-    fi
+    # Notify players about the restart 
+    # Use user's configured restart notice time, default to 5 minutes if not set
+    local dirty_restart_notice=${RESTART_NOTICE_MINUTES:-5}
     echo "[INFO] Notifying players about restart (dirty flag) with $dirty_restart_notice minute notice"
     notify_players_of_update $dirty_restart_notice
     
     # After countdown completes, trigger container restart
     echo "[INFO] Countdown completed. Initiating container restart to load updated server files..."
+    
+    # Explicitly release any locks before container restart (shouldn't have any for dirty restart)
+    if declare -f release_update_lock >/dev/null 2>&1; then
+      echo "[INFO] Releasing any update locks before container restart..."
+      release_update_lock
+    fi
+    
     prepare_for_container_restart
     # This function will exit the script
   else
@@ -318,10 +340,23 @@ if server_needs_update; then
     
     # After countdown completes, trigger container restart (which will download updates)
     echo "[INFO] Countdown completed. Initiating container restart for update..."
+    
+    # Explicitly release the lock before container restart
+    if declare -f release_update_lock >/dev/null 2>&1; then
+      echo "[INFO] Releasing update lock before container restart..."
+      release_update_lock
+    fi
+    
     prepare_for_container_restart
     # This function will exit the script, and the cleanup function will be called via the trap
   fi
 else
   echo "[INFO] Server is already running the latest build ID: $current_build_id; no update needed."
+  
+  # Release lock if we had one
+  if declare -f release_update_lock >/dev/null 2>&1; then
+    echo "[INFO] Releasing update lock (no update needed)..."
+    release_update_lock
+  fi
 fi
 echo "[INFO] Update check completed."

@@ -1,6 +1,18 @@
 # POK-Manager Changelog
 
-## Version 2.1.75 (Latest)
+## Version 2.1.76 (Latest)
+### Update Lock Race Condition Fix and Legacy Cleanup
+- **CRITICAL FIX**: Resolved race condition where multiple containers could acquire update locks simultaneously during startup
+- **Atomic Lock System**: Replaced `touch` with atomic `flock` operations to ensure only one container can hold the update lock
+- **Random Startup Delays**: Added 1-10 second random delays to prevent simultaneous lock attempts when multiple containers start together
+- **Legacy Lock Cleanup**: Added comprehensive cleanup system that removes stale locks and dirty flags from previous system usage on container startup
+- **Enhanced Lock Management**: Proper lock release functions with file descriptor management and explicit cleanup before container restarts
+- **Strengthened Update Script**: Enhanced trap functions in update_server.sh to ensure locks are always properly released on script exit
+- **Respects User Timing**: Fixes issue where containers weren't updating despite user-configured `CHECK_FOR_UPDATE_INTERVAL` due to stuck lock files
+- **Automatic Stale Detection**: Removes locks older than 2 hours or with dead PIDs, and dirty flags older than 24 hours
+- **Lock Duration Optimization**: Locks now only exist during actual updates (15-45 minutes max) and are automatically cleaned up
+
+## Version 2.1.75
 ### Complete Race Condition Fix with Full Functionality Restored
 - **TARGETED FIX**: Resolved race condition by avoiding competing startup flag creation, not removing functionality  
 - **Full Monitoring Restored**: monitor_ark_server.sh, restart detection, update monitoring all working as before

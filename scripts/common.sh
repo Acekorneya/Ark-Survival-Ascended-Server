@@ -445,6 +445,11 @@ acquire_update_lock() {
   local attempt=1
   local retry_delay=5
   
+  # Add random startup delay to prevent simultaneous lock attempts (1-10 seconds)
+  local random_delay=$(( (RANDOM % 10) + 1 ))
+  echo "[INFO] Adding random startup delay of $random_delay seconds to prevent race conditions..."
+  sleep $random_delay
+  
   echo "[INFO] Attempting to acquire update lock..."
   
   while [ $attempt -le $max_attempts ]; do
@@ -495,29 +500,78 @@ acquire_update_lock() {
       fi
     fi
     
-    # Try to create the lock file atomically with enhanced information
-    if ! touch "$lock_file" 2>/dev/null; then
-      echo "[WARNING] Failed to create lock file (attempt $attempt/$max_attempts)..."
+    # Atomic lock creation using flock with file descriptor
+    local lock_fd
+    exec {lock_fd}>"$lock_file" || {
+      echo "[WARNING] Failed to open lock file for writing (attempt $attempt/$max_attempts)..."
+      sleep $retry_delay
+      attempt=$((attempt + 1))
+      continue
+    }
+    
+    # Try to get exclusive lock with timeout
+    if flock -n $lock_fd; then
+      # Successfully acquired lock, write comprehensive tracking information
+      {
+        echo "$(date +"%Y-%m-%d %H:%M:%S") - Lock acquired by instance: ${INSTANCE_NAME:-unknown} (PID: $$)"
+        echo "Container ID: ${HOSTNAME:-unknown}"
+        echo "Update initiated at: $(date)"
+        echo "Lock file created by: acquire_update_lock function"
+        echo "Lock sequence: $attempt"
+      } >&$lock_fd
+      
+      # Don't close the file descriptor - keep lock held
+      echo "[SUCCESS] Update lock acquired successfully with flock"
+      echo "[INFO] Lock file created with PID $$ for instance ${INSTANCE_NAME:-unknown}"
+      
+      # Store the file descriptor globally so cleanup can close it
+      export UPDATE_LOCK_FD=$lock_fd
+      
+      # Verify we actually got the lock by checking if we can read our own content
+      local verify_content=$(cat "$lock_file" 2>/dev/null | grep "PID: $$" || echo "")
+      if [ -n "$verify_content" ]; then
+        echo "[SUCCESS] Lock verification successful - we are the lock holder"
+        return 0
+      else
+        echo "[ERROR] Lock verification failed - another process may have the lock"
+        flock -u $lock_fd 2>/dev/null || true
+        exec {lock_fd}>&- 2>/dev/null || true
+        rm -f "$lock_file" 2>/dev/null || true
+      fi
+    else
+      echo "[WARNING] Failed to acquire flock (attempt $attempt/$max_attempts)..."
+      exec {lock_fd}>&- 2>/dev/null || true
       sleep $retry_delay
       attempt=$((attempt + 1))
       continue
     fi
-    
-    # Write comprehensive tracking information to the lock file
-    {
-      echo "$(date +"%Y-%m-%d %H:%M:%S") - Lock acquired by instance: ${INSTANCE_NAME:-unknown} (PID: $$)"
-      echo "Container ID: ${HOSTNAME:-unknown}"
-      echo "Update initiated at: $(date)"
-      echo "Lock file created by: acquire_update_lock function"
-    } > "$lock_file"
-    
-    echo "[SUCCESS] Update lock acquired successfully"
-    echo "[INFO] Lock file created with PID $$ for instance ${INSTANCE_NAME:-unknown}"
-    return 0
   done
   
   echo "[ERROR] Failed to acquire update lock after $max_attempts attempts."
   return 1
+}
+
+# Function to properly release the update lock
+release_update_lock() {
+  local lock_file="$ASA_DIR/updating.flag"
+  
+  echo "[INFO] Releasing update lock..."
+  
+  # Release the flock if we have the file descriptor
+  if [ -n "$UPDATE_LOCK_FD" ]; then
+    echo "[INFO] Releasing flock and closing file descriptor $UPDATE_LOCK_FD"
+    flock -u $UPDATE_LOCK_FD 2>/dev/null || true
+    exec {UPDATE_LOCK_FD}>&- 2>/dev/null || true
+    unset UPDATE_LOCK_FD
+  fi
+  
+  # Remove the lock file
+  if [ -f "$lock_file" ]; then
+    echo "[INFO] Removing lock file: $lock_file"
+    rm -f "$lock_file"
+  fi
+  
+  echo "[SUCCESS] Update lock released successfully"
 }
 
 # Function to wait for update lock to be released
@@ -724,6 +778,71 @@ server_needs_update_or_restart() {
     echo "[INFO] Server is up to date with build ID: $current_build_id"
     return 1  # No update needed
   fi
+}
+
+# Function to clean up legacy and stale lock files from previous system usage
+cleanup_legacy_locks() {
+  echo "[INFO] Cleaning up legacy and stale locks..."
+  
+  local lock_file="$ASA_DIR/updating.flag"
+  local dirty_flag_dir="$ASA_DIR/instance_flags"
+  local current_time=$(date +%s)
+  local stale_threshold=7200  # 2 hours in seconds
+  local dirty_threshold=86400  # 24 hours in seconds
+  
+  # Clean up main update lock if it's stale
+  if [ -f "$lock_file" ]; then
+    local file_age=$((current_time - $(stat -c %Y "$lock_file")))
+    local lock_content=$(cat "$lock_file" 2>/dev/null || echo "")
+    local lock_pid=$(echo "$lock_content" | grep -o "PID: [0-9]*" | cut -d' ' -f2)
+    
+    local should_remove=false
+    
+    # Remove if older than 2 hours
+    if [ $file_age -ge $stale_threshold ]; then
+      echo "[INFO] Removing stale lock file ($(($file_age / 3600)) hours old)"
+      should_remove=true
+    fi
+    
+    # Remove if PID is dead
+    if [ -n "$lock_pid" ] && ! kill -0 "$lock_pid" 2>/dev/null; then
+      echo "[INFO] Removing lock file with dead PID $lock_pid"
+      should_remove=true
+    fi
+    
+    # Remove if no PID and older than 30 minutes
+    if [ -z "$lock_pid" ] && [ $file_age -ge 1800 ]; then
+      echo "[INFO] Removing lock file with no PID info ($(($file_age / 60)) minutes old)"
+      should_remove=true
+    fi
+    
+    if [ "$should_remove" = "true" ]; then
+      echo "[INFO] Previous lock content: $lock_content"
+      rm -f "$lock_file"
+    fi
+  fi
+  
+  # Clean up stale dirty flags older than 24 hours
+  if [ -d "$dirty_flag_dir" ]; then
+    find "$dirty_flag_dir" -name "*.dirty" -type f -newermt "-24 hours" -delete 2>/dev/null || {
+      # Fallback for systems without -newermt
+      for dirty_file in "$dirty_flag_dir"/*.dirty; do
+        if [ -f "$dirty_file" ]; then
+          local dirty_age=$((current_time - $(stat -c %Y "$dirty_file")))
+          if [ $dirty_age -ge $dirty_threshold ]; then
+            echo "[INFO] Removing stale dirty flag: $(basename "$dirty_file")"
+            rm -f "$dirty_file"
+          fi
+        fi
+      done
+    }
+  fi
+  
+  # Clean up any orphaned temporary files
+  rm -f /tmp/ark_update_lock_* 2>/dev/null || true
+  rm -f /tmp/updating_* 2>/dev/null || true
+  
+  echo "[INFO] Legacy cleanup completed"
 }
 
 # Execute initialization functions

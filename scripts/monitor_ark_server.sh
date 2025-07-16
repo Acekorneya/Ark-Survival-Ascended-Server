@@ -568,6 +568,13 @@ format_interval_text() {
 # Wait for the initial startup before monitoring
 sleep $INITIAL_STARTUP_DELAY
 
+# Clean up any legacy locks from previous system usage
+if declare -f cleanup_legacy_locks >/dev/null 2>&1; then
+  cleanup_legacy_locks
+else
+  echo "[WARNING] cleanup_legacy_locks function not found in common.sh"
+fi
+
 # Show monitor startup message
 if [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
   display_monitor_status "🔍 Update monitor started (interval value: ${CHECK_FOR_UPDATE_INTERVAL})" "INFO" "true"
