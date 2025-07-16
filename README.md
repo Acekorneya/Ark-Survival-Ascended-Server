@@ -1157,7 +1157,7 @@ We Also have Ark Servers for people who dont have the requirements to host a ful
 
 - Server Name: POK-Community-CrossARK. 
 
-- Running all Official Maps in Cluster and More to Come as they release and added to the cluster. 
+- Running all 8 Official Maps in Cluster and More to Come as they release and added to the cluster. 
 - PVE: A peaceful environment for your adventures.
 - Flyer Carry Enabled: Explore the skies with your tamed creatures.
 - Official Server Rates: Balanced gameplay for an enjoyable experience.
