@@ -285,7 +285,7 @@ if server_needs_update; then
     
     # Notify players about the restart 
     # Use user's configured restart notice time, default to 5 minutes if not set
-    local dirty_restart_notice=${RESTART_NOTICE_MINUTES:-5}
+    dirty_restart_notice=${RESTART_NOTICE_MINUTES:-5}
     echo "[INFO] Notifying players about restart (dirty flag) with $dirty_restart_notice minute notice"
     notify_players_of_update $dirty_restart_notice
     
@@ -330,7 +330,7 @@ if server_needs_update; then
     
     # Notify players about the upcoming update and initiate countdown
     # Use the user-configured restart notice time from docker-compose environment
-    local update_notice_minutes=${RESTART_NOTICE_MINUTES:-30}  # Default 30 minutes if not set
+    update_notice_minutes=${RESTART_NOTICE_MINUTES:-30}  # Default 30 minutes if not set
     echo "[INFO] Notifying players about update with $update_notice_minutes minute notice"
     notify_players_of_update $update_notice_minutes
     

@@ -1,6 +1,15 @@
 # POK-Manager Changelog
 
-## Version 2.1.76 (Latest)
+## Version 2.1.77 (Latest)
+### Timezone and Restart Notification Fixes
+- **CRITICAL FIX**: Fixed update system using UTC time instead of container timezone set by TZ environment variable in docker-compose.yaml
+- **Timezone Awareness**: All date commands in monitor_ark_server.sh now properly respect the TZ environment variable for accurate update window calculations
+- **RESTART_NOTICE_MINUTES Fix**: Fixed invalid 'local' usage in update_server.sh that caused empty restart notification messages ("Server will restart in  minutes")
+- **Proper Countdown Timing**: Restart notifications now display correct timing and execute full countdown sequence instead of immediate restarts
+- **Enhanced Time Display**: All monitor status timestamps and update window displays now show in user's configured timezone
+- **Variable Scope Fix**: Corrected script-level variable assignments in update_server.sh lines 288 and 333 to ensure proper parameter passing
+
+## Version 2.1.76
 ### Update Lock Race Condition Fix and Legacy Cleanup
 - **CRITICAL FIX**: Resolved race condition where multiple containers could acquire update locks simultaneously during startup
 - **Atomic Lock System**: Replaced `touch` with atomic `flock` operations to ensure only one container can hold the update lock
