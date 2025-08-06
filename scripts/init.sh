@@ -2,6 +2,57 @@
 
 source /home/pok/scripts/common.sh
 
+# Setup container timezone based on TZ environment variable
+setup_container_timezone() {
+  echo "🕐 Setting up container timezone..."
+  
+  if [ -z "$TZ" ]; then
+    echo "⚠️ TZ environment variable not set, using system default timezone"
+    local current_time=$(date)
+    echo "📅 Current system time: $current_time"
+    return 0
+  fi
+  
+  echo "📍 Configuring timezone: $TZ"
+  
+  # Check if the timezone is valid
+  if [ ! -f "/usr/share/zoneinfo/$TZ" ]; then
+    echo "❌ Invalid timezone: $TZ. Available timezones can be found in /usr/share/zoneinfo/"
+    echo "⚠️ Using system default timezone"
+    return 1
+  fi
+  
+  # Configure timezone using TZ environment variable (container has no root privileges)
+  echo "🔧 Configuring timezone via TZ environment variable..."
+  
+  # Export TZ environment variable for this session and all child processes
+  export TZ="$TZ"
+  
+  # Verify the timezone configuration
+  local current_time=$(date)
+  local tz_time=$(TZ="$TZ" date "+%Y-%m-%d %H:%M:%S %Z" 2>/dev/null)
+  
+  if [ -n "$tz_time" ]; then
+    echo "✅ Timezone configured successfully: $TZ"
+    echo "📅 Current local time: $current_time"
+    echo "🌍 Timezone-specific time: $tz_time"
+    
+    # Create a user-space timezone indicator file for scripts to reference
+    mkdir -p /home/pok/.timezone
+    echo "$TZ" > /home/pok/.timezone/current 2>/dev/null || true
+    echo "$(date +%s)" > /home/pok/.timezone/set_at 2>/dev/null || true
+    
+  else
+    echo "❌ Failed to configure timezone: $TZ"
+    return 1
+  fi
+  
+  return 0
+}
+
+# Setup timezone early in the initialization
+setup_container_timezone
+
 # Clean up any legacy locks and dirty flags from previous system usage
 echo "🧹 Cleaning up legacy locks and dirty flags..."
 if declare -f cleanup_legacy_locks >/dev/null 2>&1; then

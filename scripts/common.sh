@@ -134,6 +134,57 @@ initialize_proton_prefix() {
   return 0
 }
 
+# Timezone utility functions
+verify_timezone() {
+  local tz_name="$1"
+  
+  if [ -z "$tz_name" ]; then
+    return 1
+  fi
+  
+  # Check if the timezone exists
+  if [ ! -f "/usr/share/zoneinfo/$tz_name" ]; then
+    return 1
+  fi
+  
+  return 0
+}
+
+get_current_timezone() {
+  # First check user-space timezone file created by init.sh
+  if [ -f "/home/pok/.timezone/current" ]; then
+    cat /home/pok/.timezone/current 2>/dev/null | tr -d '\n'
+    return 0
+  fi
+  
+  # Try to get timezone from TZ environment variable
+  if [ -n "$TZ" ]; then
+    echo "$TZ"
+    return 0
+  fi
+  
+  # Try to get timezone from /etc/timezone
+  if [ -f "/etc/timezone" ] && [ -r "/etc/timezone" ]; then
+    cat /etc/timezone 2>/dev/null | tr -d '\n'
+    return 0
+  fi
+  
+  # Fallback to checking the symlink
+  if [ -L "/etc/localtime" ]; then
+    readlink /etc/localtime | sed 's|^.*/zoneinfo/||'
+    return 0
+  fi
+  
+  # Default fallback
+  echo "UTC"
+  return 1
+}
+
+format_timezone_time() {
+  local format="${1:-%Y-%m-%d %H:%M:%S %Z}"
+  date +"$format"
+}
+
 # check if the server is running
 is_process_running() {
   local display_message=${1:-false} # Default to not displaying the message
