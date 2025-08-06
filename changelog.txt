@@ -3,14 +3,11 @@
 ## Version 2.1.77 (Latest)
 ### Timezone and Restart Notification Fixes
 - **CRITICAL FIX**: Fixed update system using UTC time instead of container timezone set by TZ environment variable in docker-compose.yaml
-- **Container Timezone Setup**: Added automatic timezone configuration in init.sh that sets container timezone based on TZ environment variable without requiring root privileges
-- **Timezone Awareness**: All date commands in monitor_ark_server.sh now properly respect the container timezone for accurate update window calculations (removed 15 TZ="${TZ}" prefixes)
-- **No Root Privileges Required**: Timezone configuration works entirely through TZ environment variable and user-space files, compatible with rootless containers
-- **Comprehensive Testing**: Added test_timezone.sh script to validate all timezone functionality and update window parsing in different timezone scenarios
 - **RESTART_NOTICE_MINUTES Fix**: Fixed invalid 'local' usage in update_server.sh that caused empty restart notification messages ("Server will restart in  minutes")
 - **Proper Countdown Timing**: Restart notifications now display correct timing and execute full countdown sequence instead of immediate restarts
-- **Enhanced Time Display**: All monitor status timestamps and update window displays now show in user's configured timezone
-- **Variable Scope Fix**: Corrected script-level variable assignments in update_server.sh lines 288 and 333 to ensure proper parameter passing 
+- **Complete Timezone Support**: Docker image now includes timezone database (tzdata) ensuring TZ environment variable works correctly in all containers regardless of host system
+- **Simple Timezone Validation**: Invalid timezone entries are detected using the installed timezone database and automatically fall back to UTC with helpful error messages
+
 ## Version 2.1.76
 ### Update Lock Race Condition Fix and Legacy Cleanup
 - **CRITICAL FIX**: Resolved race condition where multiple containers could acquire update locks simultaneously during startup

@@ -13,39 +13,34 @@ setup_container_timezone() {
     return 0
   fi
   
-  echo "📍 Configuring timezone: $TZ"
+  echo "🕐 Configuring timezone: $TZ"
   
-  # Check if the timezone is valid
-  if [ ! -f "/usr/share/zoneinfo/$TZ" ]; then
-    echo "❌ Invalid timezone: $TZ. Available timezones can be found in /usr/share/zoneinfo/"
-    echo "⚠️ Using system default timezone"
-    return 1
-  fi
-  
-  # Configure timezone using TZ environment variable (container has no root privileges)
-  echo "🔧 Configuring timezone via TZ environment variable..."
-  
-  # Export TZ environment variable for this session and all child processes
-  export TZ="$TZ"
-  
-  # Verify the timezone configuration
-  local current_time=$(date)
-  local tz_time=$(TZ="$TZ" date "+%Y-%m-%d %H:%M:%S %Z" 2>/dev/null)
-  
-  if [ -n "$tz_time" ]; then
-    echo "✅ Timezone configured successfully: $TZ"
-    echo "📅 Current local time: $current_time"
-    echo "🌍 Timezone-specific time: $tz_time"
+  # Validate timezone by checking if it exists in the timezone database
+  if [ -f "/usr/share/zoneinfo/$TZ" ]; then
+    # Timezone file exists, so it's valid
+    export TZ="$TZ"
+    local current_time=$(TZ="$TZ" date)
+    local tz_abbrev=$(TZ="$TZ" date "+%Z")
     
-    # Create a user-space timezone indicator file for scripts to reference
-    mkdir -p /home/pok/.timezone
-    echo "$TZ" > /home/pok/.timezone/current 2>/dev/null || true
-    echo "$(date +%s)" > /home/pok/.timezone/set_at 2>/dev/null || true
-    
+    echo "✅ Container timezone: $current_time"
+    echo "ℹ️  ARK server logs show UTC time, but update windows use local time ($tz_abbrev)"
   else
-    echo "❌ Failed to configure timezone: $TZ"
-    return 1
+    # Invalid timezone, fallback to UTC with helpful message
+    echo "❌ Invalid timezone: '$TZ'"
+    echo "⚠️  Available timezones: America/Los_Angeles, America/New_York, Europe/London, etc."
+    echo "🔧 Falling back to UTC timezone for system stability"
+    
+    export TZ="UTC"
+    local current_time=$(TZ="$TZ" date)
+    
+    echo "✅ Container timezone: $current_time (UTC fallback)"
+    echo "ℹ️  To fix: Set a valid timezone in your docker-compose.yaml file"
   fi
+  
+  # Create a user-space timezone indicator file for scripts to reference
+  mkdir -p /home/pok/.timezone
+  echo "$TZ" > /home/pok/.timezone/current 2>/dev/null || true
+  echo "$(date +%s)" > /home/pok/.timezone/set_at 2>/dev/null || true
   
   return 0
 }

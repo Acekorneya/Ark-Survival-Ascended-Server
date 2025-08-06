@@ -142,12 +142,12 @@ verify_timezone() {
     return 1
   fi
   
-  # Check if the timezone exists
-  if [ ! -f "/usr/share/zoneinfo/$tz_name" ]; then
+  # Check if timezone file exists in the timezone database
+  if [ -f "/usr/share/zoneinfo/$tz_name" ]; then
+    return 0
+  else
     return 1
   fi
-  
-  return 0
 }
 
 get_current_timezone() {

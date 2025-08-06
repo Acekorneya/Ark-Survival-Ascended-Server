@@ -25,6 +25,8 @@ RUN set -ex; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
     jq curl wget tar unzip nano gzip iproute2 procps software-properties-common dbus \
+    tzdata \
+    # tzdata package provides timezone database for TZ environment variable support \
     lib32gcc-s1 libglib2.0-0 libglib2.0-0:i386 libvulkan1 libvulkan1:i386 \
     libnss3 libnss3:i386 libgconf-2-4 libgconf-2-4:i386 \
     libfontconfig1 libfontconfig1:i386 libfreetype6 libfreetype6:i386 \

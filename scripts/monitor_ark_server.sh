@@ -67,7 +67,7 @@ display_monitor_status() {
   fi
   
   # Get current timestamp using container timezone
-  local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+  local timestamp=$(TZ="${TZ}" date "+%Y-%m-%d %H:%M:%S")
   
   # Store parameters in local variables to avoid interpretation issues
   local message="$1"
@@ -686,7 +686,7 @@ while true; do
   
   if [ "${UPDATE_SERVER}" = "TRUE" ]; then
     # Check for updates at the interval specified by CHECK_FOR_UPDATE_INTERVAL
-    current_time=$(date +%s)
+    current_time=$(TZ="${TZ}" date +%s)
     last_update_check_time=${last_update_check_time:-0}
     
     # Get update interval in seconds (no display output)
@@ -700,8 +700,8 @@ while true; do
 
     # Put constraints around the update check interval to prevent it from running outside of desired time windows
     # Use TZ environment variable to ensure timezone-aware time conversion
-    update_window_lower_bound=$(date -d "${UPDATE_WINDOW_MINIMUM_TIME}" +%s)
-    update_window_upper_bound=$(date -d "${UPDATE_WINDOW_MAXIMUM_TIME}" +%s)
+    update_window_lower_bound=$(TZ="${TZ}" date -d "${UPDATE_WINDOW_MINIMUM_TIME}" +%s)
+    update_window_upper_bound=$(TZ="${TZ}" date -d "${UPDATE_WINDOW_MAXIMUM_TIME}" +%s)
 
     # Display next check time if verbose logging is enabled
     if [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
@@ -709,7 +709,7 @@ while true; do
       next_check_time=$((last_update_check_time + update_check_interval_seconds))
       
       # Format for display using container timezone
-      next_check_readable=$(date -d "@$next_check_time" "+%Y-%m-%d %H:%M:%S" 2>/dev/null)
+      next_check_readable=$(TZ="${TZ}" date -d "@$next_check_time" "+%Y-%m-%d %H:%M:%S" 2>/dev/null)
       if [ $? -ne 0 ]; then
         # If date conversion failed, provide at least some information
         display_monitor_status "⚠️ Next check: Error calculating time" "WARNING" "true"
@@ -733,9 +733,9 @@ while true; do
       fi
       
       # Display update window information using container timezone
-      current_time_readable=$(date -d "@$current_time" "+%H:%M:%S" 2>/dev/null)
-      min_time_readable=$(date -d "@$update_window_lower_bound" "+%H:%M:%S" 2>/dev/null)
-      max_time_readable=$(date -d "@$update_window_upper_bound" "+%H:%M:%S" 2>/dev/null)
+      current_time_readable=$(TZ="${TZ}" date -d "@$current_time" "+%H:%M:%S" 2>/dev/null)
+      min_time_readable=$(TZ="${TZ}" date -d "@$update_window_lower_bound" "+%H:%M:%S" 2>/dev/null)
+      max_time_readable=$(TZ="${TZ}" date -d "@$update_window_upper_bound" "+%H:%M:%S" 2>/dev/null)
       
       # Make sure we have valid values for all variables
       if [ -n "$current_time" ] && [ -n "$update_window_lower_bound" ] && [ -n "$update_window_upper_bound" ]; then
