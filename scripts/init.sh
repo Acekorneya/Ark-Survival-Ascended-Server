@@ -48,6 +48,38 @@ setup_container_timezone() {
 # Setup timezone early in the initialization
 setup_container_timezone
 
+verify_vcredist_runtime() {
+  if [ "${VERIFY_VC_RUNTIME_ON_BOOT:-FALSE}" != "TRUE" ]; then
+    return 0
+  fi
+
+  local checker="/home/pok/scripts/test_vcredist.sh"
+  if [ ! -x "$checker" ]; then
+    echo "⚠️ VC++ runtime checker not found at $checker"
+    return 0
+  fi
+
+  local prefix="${STEAM_COMPAT_DATA_PATH:-/home/pok/.steam/steam/steamapps/compatdata/2430930}/pfx"
+  if [ ! -f "$prefix/drive_c/windows/SysWOW64/msvcp140.dll" ] || \
+     [ ! -f "$prefix/drive_c/windows/SysWOW64/vcruntime140.dll" ] || \
+     [ ! -f "$prefix/drive_c/windows/system32/msvcp140.dll" ] || \
+     [ ! -f "$prefix/drive_c/windows/system32/vcruntime140.dll" ]; then
+    echo "🔧 VC++ runtime files missing; attempting winetricks vcrun2022 before verification..."
+    WINEPREFIX="$prefix" winetricks -q vcrun2022 >/dev/null 2>&1 || true
+  fi
+
+  echo "🔍 Verifying Visual C++ runtime (startup check enabled)..."
+  if output=$($checker 2>&1); then
+    echo "$output"
+    echo "✅ VC++ runtime verification succeeded"
+  else
+    echo "$output"
+    echo "❌ VC++ runtime verification failed (see above)"
+  fi
+}
+
+verify_vcredist_runtime
+
 # Clean up any legacy locks and dirty flags from previous system usage
 echo "🧹 Cleaning up legacy locks and dirty flags..."
 if declare -f cleanup_legacy_locks >/dev/null 2>&1; then
@@ -422,7 +454,7 @@ setup_virtual_display() {
   fi
   
   # Export essential display environment variables
-  export WINEDLLOVERRIDES="*version=n,b;vcrun2019=n,b"
+  export WINEDLLOVERRIDES="*version=n,b;vcrun2022=n,b"
   export WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx"
 }
 
@@ -558,7 +590,7 @@ create_minimal_registry() {
   echo "#arch=win64" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
   echo "[Software\\\\Wine\\\\DllOverrides]" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
   echo "\"*version\"=\"native,builtin\"" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
-  echo "\"vcrun2019\"=\"native,builtin\"" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
+    echo "\"vcrun2022\"=\"native,builtin\"" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
   echo "" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
   
   echo "WINE REGISTRY Version 2" > "${STEAM_COMPAT_DATA_PATH}/pfx/userdef.reg"

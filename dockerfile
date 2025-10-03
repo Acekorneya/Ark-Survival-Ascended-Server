@@ -15,7 +15,7 @@ ENV PGID=${PGID}
 ENV PROTON_USE_ESYNC=1 
 ENV DEBIAN_FRONTEND=noninteractive
 # Set specific Wine version to ensure consistency
-ENV WINEDLLOVERRIDES="version=n,b;vcrun2019=n,b"
+ENV WINEDLLOVERRIDES="version=n,b;vcrun2022=n,b"
 ENV WINEPREFIX="/home/pok/.steam/steam/steamapps/compatdata/2430930/pfx"
 ENV DISPLAY=:0.0
 
@@ -126,15 +126,15 @@ RUN set -ex; \
     ln -sf "/dev/null" /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/dosdevices/d::; \
     ln -sf "/dev/null" /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/dosdevices/e::; \
     ln -sf "/dev/null" /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/dosdevices/f::; \
-    # Create comprehensive Visual C++ structure for AsaApi
-    mkdir -p /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/drive_c/Program\ Files\ \(x86\)/Microsoft\ Visual\ Studio/2019/BuildTools/VC/Redist/MSVC/14.29.30133/x64/Microsoft.VC142.CRT; \
-    mkdir -p /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/drive_c/Program\ Files\ \(x86\)/Microsoft\ Visual\ Studio/2019/BuildTools/VC/Redist/MSVC/14.29.30133/x86/Microsoft.VC142.CRT; \
+    # Create comprehensive Visual C++ structure for AsaApi (aligned with VS 2022 redistributables)
+    mkdir -p /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/drive_c/Program\ Files\ \(x86\)/Microsoft\ Visual\ Studio/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x64/Microsoft.VC143.CRT; \
+    mkdir -p /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/drive_c/Program\ Files\ \(x86\)/Microsoft\ Visual\ Studio/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x86/Microsoft.VC143.CRT; \
     mkdir -p /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/drive_c/windows/system32/vcruntime; \
-    # Create VC++ dummy files
-    touch /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/drive_c/Program\ Files\ \(x86\)/Microsoft\ Visual\ Studio/2019/BuildTools/VC/Redist/MSVC/14.29.30133/x64/Microsoft.VC142.CRT/msvcp140.dll; \
-    touch /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/drive_c/Program\ Files\ \(x86\)/Microsoft\ Visual\ Studio/2019/BuildTools/VC/Redist/MSVC/14.29.30133/x64/Microsoft.VC142.CRT/vcruntime140.dll; \
-    touch /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/drive_c/Program\ Files\ \(x86\)/Microsoft\ Visual\ Studio/2019/BuildTools/VC/Redist/MSVC/14.29.30133/x86/Microsoft.VC142.CRT/msvcp140.dll; \
-    touch /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/drive_c/Program\ Files\ \(x86\)/Microsoft\ Visual\ Studio/2019/BuildTools/VC/Redist/MSVC/14.29.30133/x86/Microsoft.VC142.CRT/vcruntime140.dll; \
+    # Create VC++ dummy files so ASA API loaders detect the redistributable during first boot
+    touch /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/drive_c/Program\ Files\ \(x86\)/Microsoft\ Visual\ Studio/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x64/Microsoft.VC143.CRT/msvcp140.dll; \
+    touch /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/drive_c/Program\ Files\ \(x86\)/Microsoft\ Visual\ Studio/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x64/Microsoft.VC143.CRT/vcruntime140.dll; \
+    touch /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/drive_c/Program\ Files\ \(x86\)/Microsoft\ Visual\ Studio/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x86/Microsoft.VC143.CRT/msvcp140.dll; \
+    touch /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/drive_c/Program\ Files\ \(x86\)/Microsoft\ Visual\ Studio/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x86/Microsoft.VC143.CRT/vcruntime140.dll; \
     # Create wine registry files with proper configuration
     echo "WINE REGISTRY Version 2" > /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/system.reg; \
     echo ";; All keys relative to \\\\Machine" >> /home/pok/.steam/steam/steamapps/compatdata/2430930/pfx/system.reg; \
@@ -176,21 +176,21 @@ RUN set -ex; \
     # Ensure winetricks can run for user pok
     chmod +x /usr/local/bin/winetricks
 
-# Download and pre-install VC++ Redistributable
+# Download and pre-install VC++ Redistributable (14.44.35211.0)
 USER pok
 RUN set -ex; \
     mkdir -p /tmp/vcredist; \
     cd /tmp/vcredist; \
-    wget -q https://aka.ms/vs/16/release/vc_redist.x64.exe; \
-    wget -q https://aka.ms/vs/16/release/vc_redist.x86.exe; \
-    # Run winetricks to pre-install vcrun2019
+    wget -q https://aka.ms/vs/17/release/vc_redist.x64.exe; \
+    wget -q https://aka.ms/vs/17/release/vc_redist.x86.exe; \
+    # Prefer vcrun2022 for latest VC++ runtime; fall back to vcrun2019 if winetricks lacks the verb
     WINEPREFIX="/home/pok/.steam/steam/steamapps/compatdata/2430930/pfx" \
     WINEDLLOVERRIDES="mscoree,mshtml=" \
-    winetricks -q vcrun2019 || true; \
-    # Install directly as fallback
+    winetricks -q vcrun2022 || winetricks -q vcrun2019 || true; \
+    # Install the official redistributables quietly for both architectures
     WINEPREFIX="/home/pok/.steam/steam/steamapps/compatdata/2430930/pfx" \
     WINEDLLOVERRIDES="mscoree,mshtml=" \
-    wine /tmp/vcredist/vc_redist.x64.exe /quiet /norestart || true; \
+    wine64 /tmp/vcredist/vc_redist.x64.exe /quiet /norestart || true; \
     WINEPREFIX="/home/pok/.steam/steam/steamapps/compatdata/2430930/pfx" \
     WINEDLLOVERRIDES="mscoree,mshtml=" \
     wine /tmp/vcredist/vc_redist.x86.exe /quiet /norestart || true; \

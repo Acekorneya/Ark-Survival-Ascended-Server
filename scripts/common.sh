@@ -111,7 +111,7 @@ initialize_proton_prefix() {
   echo "#arch=win64" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
   echo "[Software\\\\Wine\\\\DllOverrides]" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
   echo "\"*version\"=\"native,builtin\"" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
-  echo "\"vcrun2019\"=\"native,builtin\"" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
+  echo "\"vcrun2022\"=\"native,builtin\"" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
   echo "" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
   
   echo "WINE REGISTRY Version 2" > "${STEAM_COMPAT_DATA_PATH}/pfx/userdef.reg"
@@ -1254,7 +1254,7 @@ install_ark_server_api() {
   if [ "$first_install" = "true" ]; then
     echo ">> Trying winetricks method first..."
   fi
-  WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" winetricks -q vcrun2019 || true
+  WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" winetricks -q vcrun2022 || winetricks -q vcrun2019 || true
   
   # Method 2: Direct installation
   if [ "$first_install" = "true" ]; then
@@ -1322,13 +1322,13 @@ install_ark_server_api() {
   if [ "$first_install" = "true" ]; then
     echo "Checking if we need to manually create registry entries for VC++..."
   fi
-  if ! grep -q "vcrun2019" "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg" 2>/dev/null; then
+  if ! grep -q "vcrun2022" "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg" 2>/dev/null; then
     if [ "$first_install" = "true" ]; then
       echo "Creating manual registry entries to fake VC++ installation..."
     fi
     # Append minimal registry entries that make AsaApi believe VC++ is installed
     echo "[Software\\\\Wine\\\\DllOverrides]" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
-    echo "\"vcrun2019\"=\"native,builtin\"" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
+    echo "\"vcrun2022\"=\"native,builtin\"" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
   fi
   
   # Clean up

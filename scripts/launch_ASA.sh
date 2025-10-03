@@ -155,18 +155,25 @@ setup_arkserverapi() {
     
     if [ ! -d "$vcredist_marker" ]; then
       echo "Visual C++ Redistributable marker not found. Creating directory structure..."
-      mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files (x86)/Microsoft Visual Studio/2019/BuildTools/VC/Redist/MSVC/14.29.30133/x64/Microsoft.VC142.CRT"
-      mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files (x86)/Microsoft Visual Studio/2019/BuildTools/VC/Redist/MSVC/14.29.30133/x86/Microsoft.VC142.CRT"
-      
-      # Create dummy files
-      touch "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files (x86)/Microsoft Visual Studio/2019/BuildTools/VC/Redist/MSVC/14.29.30133/x64/Microsoft.VC142.CRT/msvcp140.dll"
-      touch "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files (x86)/Microsoft Visual Studio/2019/BuildTools/VC/Redist/MSVC/14.29.30133/x64/Microsoft.VC142.CRT/vcruntime140.dll"
-      
-      # Try winetricks installation as a fallback
-      echo "Attempting Visual C++ installation via winetricks..."
-      WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" winetricks -q vcrun2019 >/dev/null 2>&1 || true
+      mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x64/Microsoft.VC143.CRT"
+      mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x86/Microsoft.VC143.CRT"
     else
       echo "Visual C++ Redistributable directory structure exists."
+    fi
+
+    # Ensure dummy files exist to satisfy AsaApi loader expectations
+    touch "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x64/Microsoft.VC143.CRT/msvcp140.dll"
+    touch "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x64/Microsoft.VC143.CRT/vcruntime140.dll"
+    touch "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x86/Microsoft.VC143.CRT/msvcp140.dll"
+    touch "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x86/Microsoft.VC143.CRT/vcruntime140.dll"
+
+    # If actual redistributable DLLs are missing, attempt a silent reinstall
+    if [ ! -f "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/windows/SysWOW64/msvcp140.dll" ] || \
+       [ ! -f "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/windows/SysWOW64/vcruntime140.dll" ] || \
+       [ ! -f "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/windows/system32/msvcp140.dll" ] || \
+       [ ! -f "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/windows/system32/vcruntime140.dll" ]; then
+      echo "Visual C++ runtime DLLs missing; running winetricks vcrun2022..."
+      WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" winetricks -q vcrun2022 >/dev/null 2>&1 || true
     fi
     
     # Set DLL overrides to ensure API loads properly
@@ -384,10 +391,10 @@ start_server() {
     
     # For AsaApiLoader, ensure missing registry entries don't cause issues
     if [ -f "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg" ]; then
-      if ! grep -q "vcrun2019" "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"; then
-        echo "Adding vcrun2019 DLL override to Wine registry..."
+      if ! grep -q "vcrun2022" "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"; then
+        echo "Adding vcrun2022 DLL override to Wine registry..."
         echo "[Software\\\\Wine\\\\DllOverrides]" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
-        echo "\"vcrun2019\"=\"native,builtin\"" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
+        echo "\"vcrun2022\"=\"native,builtin\"" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
       fi
     fi
     
@@ -396,12 +403,12 @@ start_server() {
       echo "Visual C++ Redistributable not detected, creating directory structure..."
       # Create directory structure to make AsaApiLoader believe VC++ is installed
       local vc_dir="${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files (x86)/Microsoft Visual Studio"
-      mkdir -p "$vc_dir/2019/BuildTools/VC/Redist/MSVC/14.29.30133/x64/Microsoft.VC142.CRT"
-      mkdir -p "$vc_dir/2019/BuildTools/VC/Redist/MSVC/14.29.30133/x86/Microsoft.VC142.CRT"
-      
+      mkdir -p "$vc_dir/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x64/Microsoft.VC143.CRT"
+      mkdir -p "$vc_dir/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x86/Microsoft.VC143.CRT"
+
       # Create dummy files
-      touch "$vc_dir/2019/BuildTools/VC/Redist/MSVC/14.29.30133/x64/Microsoft.VC142.CRT/msvcp140.dll"
-      touch "$vc_dir/2019/BuildTools/VC/Redist/MSVC/14.29.30133/x64/Microsoft.VC142.CRT/vcruntime140.dll"
+      touch "$vc_dir/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x64/Microsoft.VC143.CRT/msvcp140.dll"
+      touch "$vc_dir/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x64/Microsoft.VC143.CRT/vcruntime140.dll"
     fi
     
     # Sync to ensure all changes are written
@@ -538,7 +545,7 @@ start_server() {
               sleep 2  # Give Xvfb time to start
             fi
             # Add environment variables to help wine find libraries
-            export WINEDLLOVERRIDES="*version=n,b;vcrun2019=n,b"
+            export WINEDLLOVERRIDES="*version=n,b;vcrun2022=n,b"
             export WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx"
             WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine "$binary" $params > /tmp/launch_output.log 2>&1 &
             ;;
@@ -652,7 +659,7 @@ start_server() {
               sleep 2  # Give Xvfb time to start
             fi
             # Add environment variables to help wine find libraries
-            export WINEDLLOVERRIDES="*version=n,b;vcrun2019=n,b"
+            export WINEDLLOVERRIDES="*version=n,b;vcrun2022=n,b"
             export WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx"
             WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine "$binary" $params > /tmp/launch_output.log 2>&1 &
             ;;

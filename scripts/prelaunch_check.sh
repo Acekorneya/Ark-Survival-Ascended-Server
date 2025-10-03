@@ -141,7 +141,7 @@ check_wine_environment() {
     echo "Wine binary found in PATH"
     
     # Set essential Wine environment variables
-    export WINEDLLOVERRIDES="*version=n,b;vcrun2019=n,b"
+    export WINEDLLOVERRIDES="*version=n,b;vcrun2022=n,b"
     export WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx"
     
     # Test if Wine works
@@ -193,7 +193,7 @@ check_wine_environment() {
           echo "#arch=win64" >> "$PREFIX_PATH/$reg_file"
           echo "[Software\\\\Wine\\\\DllOverrides]" >> "$PREFIX_PATH/$reg_file"
           echo "\"*version\"=\"native,builtin\"" >> "$PREFIX_PATH/$reg_file"
-          echo "\"vcrun2019\"=\"native,builtin\"" >> "$PREFIX_PATH/$reg_file"
+        echo "\"vcrun2022\"=\"native,builtin\"" >> "$PREFIX_PATH/$reg_file"
           echo "" >> "$PREFIX_PATH/$reg_file"
           ;;
         "userdef.reg")
@@ -209,7 +209,7 @@ check_wine_environment() {
         echo "Adding DLL overrides to user.reg..."
         echo "[Software\\\\Wine\\\\DllOverrides]" >> "$PREFIX_PATH/$reg_file"
         echo "\"*version\"=\"native,builtin\"" >> "$PREFIX_PATH/$reg_file"
-        echo "\"vcrun2019\"=\"native,builtin\"" >> "$PREFIX_PATH/$reg_file"
+        echo "\"vcrun2022\"=\"native,builtin\"" >> "$PREFIX_PATH/$reg_file"
       fi
     fi
   done
@@ -224,12 +224,23 @@ check_wine_environment() {
   if [ "${API}" = "TRUE" ]; then
     echo "Setting up Visual C++ directory structure for AsaApi..."
     local vc_dir="$PREFIX_PATH/drive_c/Program Files (x86)/Microsoft Visual Studio"
-    check_create_directory "$vc_dir/2019/BuildTools/VC/Redist/MSVC/14.29.30133/x64/Microsoft.VC142.CRT"
-    check_create_directory "$vc_dir/2019/BuildTools/VC/Redist/MSVC/14.29.30133/x86/Microsoft.VC142.CRT"
-    
-    # Create dummy DLL files to make AsaApiLoader believe VC++ is installed
-    touch "$vc_dir/2019/BuildTools/VC/Redist/MSVC/14.29.30133/x64/Microsoft.VC142.CRT/msvcp140.dll"
-    touch "$vc_dir/2019/BuildTools/VC/Redist/MSVC/14.29.30133/x64/Microsoft.VC142.CRT/vcruntime140.dll"
+    check_create_directory "$vc_dir/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x64/Microsoft.VC143.CRT"
+    check_create_directory "$vc_dir/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x86/Microsoft.VC143.CRT"
+
+    # Create dummy DLL files to make AsaApiLoader believe VC++ is installed (both architectures)
+    touch "$vc_dir/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x64/Microsoft.VC143.CRT/msvcp140.dll"
+    touch "$vc_dir/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x64/Microsoft.VC143.CRT/vcruntime140.dll"
+    touch "$vc_dir/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x86/Microsoft.VC143.CRT/msvcp140.dll"
+    touch "$vc_dir/2022/BuildTools/VC/Redist/MSVC/14.44.35211/x86/Microsoft.VC143.CRT/vcruntime140.dll"
+
+    # Trigger winetricks install if runtime DLLs are missing
+    if [ ! -f "$PREFIX_PATH/drive_c/windows/SysWOW64/msvcp140.dll" ] || \
+       [ ! -f "$PREFIX_PATH/drive_c/windows/SysWOW64/vcruntime140.dll" ] || \
+       [ ! -f "$PREFIX_PATH/drive_c/windows/system32/msvcp140.dll" ] || \
+       [ ! -f "$PREFIX_PATH/drive_c/windows/system32/vcruntime140.dll" ]; then
+      echo "Visual C++ runtime DLLs missing; attempting winetricks vcrun2022 install..."
+      WINEPREFIX="$PREFIX_PATH" winetricks -q vcrun2022 >/dev/null 2>&1 || true
+    fi
   fi
   
   echo "Wine/Proton environment check: PASSED"
