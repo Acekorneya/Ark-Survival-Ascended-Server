@@ -7,13 +7,20 @@ ASA_DIR="/home/pok/arkserver"
 PERSISTENT_ACF_FILE="$ASA_DIR/appmanifest_$APPID.acf"
 STEAM_COMPAT_DATA_PATH="/home/pok/.steam/steam/steamapps/compatdata/${APPID}"
 STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam"
-EOS_FILE="$ASA_DIR/eos_cred_file"
 PID_FILE="/home/pok/${INSTANCE_NAME}_ark_server.pid"
+TEMP_DOWNLOAD_ROOT="${TEMP_DOWNLOAD_ROOT:-/tmp}"
+TEMP_DOWNLOAD_PREFIX="arkserver_download"
+
 # RCON connection details
 RCON_HOST="localhost"
 RCON_PORT=${RCON_PORT} # Default RCON port if not set in docker-compose
 RCON_PASSWORD=${SERVER_ADMIN_PASSWORD} # Server admin password used as RCON password
 RCON_PATH="/usr/local/bin/rcon-cli" # Path to the RCON executable (installed in Dockerfile)
+EOS_CLIENT_ID="xyza7891muomRmynIIHaJB9COBKkwj6n"
+EOS_CLIENT_SECRET="PP5UGxysEieNfSrEicaD1N2Bb3TdXuD7xHYcsdUHZ7s"
+EOS_DEPLOYMENT_ID="ad9a8feffb3b4b2ca315546f038c3ae2"
+EOS_BASIC_AUTH="Basic eHl6YTc4OTFtdW9tUm15bklJSGFKQjlDT0JLa3dqNm46UFA1VUd4eXNFaWVOZlNyRWljYUQxTjJCYjNUZFh1RDd4SFljc2RVSFo3cw=="
+EOS_MATCHMAKING_BASE="https://api.epicgames.dev/wildcard/matchmaking/v1"
 export STEAM_COMPAT_DATA_PATH=${STEAM_COMPAT_DATA_PATH}
 export STEAM_COMPAT_CLIENT_INSTALL_PATH=${STEAM_COMPAT_CLIENT_INSTALL_PATH}
 
@@ -696,6 +703,131 @@ remove_stale_lock() {
   fi
   
   return 1
+}
+
+# Create a temporary directory for staged SteamCMD downloads
+create_temp_download_dir() {
+  mkdir -p "$TEMP_DOWNLOAD_ROOT" 2>/dev/null || true
+  local temp_dir
+  temp_dir=$(mktemp -d "${TEMP_DOWNLOAD_ROOT%/}/${TEMP_DOWNLOAD_PREFIX}.XXXXXX") || {
+    echo "[ERROR] Failed to create temporary download directory in $TEMP_DOWNLOAD_ROOT"
+    return 1
+  }
+
+  echo "$temp_dir"
+}
+
+# Run SteamCMD download into provided directory with optional validation/extra args
+steamcmd_download_to_dir() {
+  local target_dir="$1"
+
+  if [ -z "$target_dir" ]; then
+    echo "[ERROR] steamcmd_download_to_dir requires target directory argument"
+    return 1
+  fi
+
+  echo "[INFO] Downloading ARK server files to temporary directory: $target_dir"
+
+  local update_args="$APPID"
+
+  if [ -n "$STEAMCMD_APP_UPDATE_ARGS" ]; then
+    update_args="$update_args $STEAMCMD_APP_UPDATE_ARGS"
+  fi
+
+  if [ "${STEAMCMD_VALIDATE^^}" = "TRUE" ]; then
+    update_args="$update_args validate"
+    echo "[INFO] SteamCMD validation enabled for this run"
+  fi
+
+  /opt/steamcmd/steamcmd.sh \
+    +force_install_dir "$target_dir" \
+    +login "$USERNAME" \
+    +app_update $update_args \
+    +quit
+}
+
+# Sync the staged download directory into the live server directory without overwriting saves
+sync_temp_into_live_dir() {
+  local temp_dir="$1"
+  local live_dir="${2:-$ASA_DIR}"
+
+  if [ -z "$temp_dir" ] || [ ! -d "$temp_dir" ]; then
+    echo "[ERROR] sync_temp_into_live_dir requires a valid temporary directory"
+    return 1
+  fi
+
+  mkdir -p "$live_dir" 2>/dev/null || true
+
+  echo "[INFO] Syncing temporary download into $live_dir using cp"
+  (cd "$temp_dir" && find . -print0) | while IFS= read -r -d '' item; do
+    local relative="${item#./}"
+    [ -z "$relative" ] && continue
+
+    case "$relative" in
+      ShooterGame/Saved*)
+        continue
+        ;;
+      steamapps/downloading*)
+        continue
+        ;;
+    esac
+
+    local source_path="$temp_dir/$relative"
+    local dest_path="$live_dir/$relative"
+
+    if [ -d "$source_path" ]; then
+      mkdir -p "$dest_path"
+    else
+      mkdir -p "$(dirname "$dest_path")" 2>/dev/null || true
+      cp -f "$source_path" "$dest_path"
+    fi
+  done
+}
+
+# Persist the Steam appmanifest file from temporary directory into live/persistent locations
+persist_manifest_from_temp() {
+  local temp_dir="$1"
+  local manifest_source="$temp_dir/steamapps/appmanifest_${APPID}.acf"
+
+  if [ ! -f "$manifest_source" ]; then
+    echo "[ERROR] Manifest file not found at $manifest_source"
+    return 1
+  fi
+
+  mkdir -p "$ASA_DIR/steamapps" 2>/dev/null || true
+
+  echo "[INFO] Copying manifest into live directory and persistent storage"
+  cp "$manifest_source" "$ASA_DIR/steamapps/appmanifest_${APPID}.acf"
+  cp "$manifest_source" "$PERSISTENT_ACF_FILE"
+}
+
+# High level helper to run the full staged download workflow
+perform_staged_server_download() {
+  local temp_dir="$1"
+
+  if [ -z "$temp_dir" ]; then
+    echo "[ERROR] perform_staged_server_download requires a temp directory"
+    return 1
+  fi
+
+  if ! steamcmd_download_to_dir "$temp_dir"; then
+    echo "[ERROR] SteamCMD download failed"
+    return 1
+  fi
+
+  if ! sync_temp_into_live_dir "$temp_dir" "$ASA_DIR"; then
+    echo "[ERROR] Failed to sync temporary download into live server directory"
+    return 1
+  fi
+
+  if ! persist_manifest_from_temp "$temp_dir"; then
+    echo "[ERROR] Failed to persist steam manifest after download"
+    return 1
+  fi
+
+  sync
+  sleep 2
+  return 0
 }
 
 # Function to create instance-specific dirty flag (for multi-instance coordination)

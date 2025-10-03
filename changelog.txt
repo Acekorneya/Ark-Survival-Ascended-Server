@@ -1,6 +1,14 @@
 # POK-Manager Changelog
+## Version 2.1.78 (Latest)
+- Added staged SteamCMD download workflow with temp directory cleanup download to a temporary directory then we cp to the final location #104
+- Unified install/update scripts and POK-manager to use new workflow
+- Switched Epic matchmaking API calls to the new wildcard endpoint fixing -status command
+- Baked in fixed Epic OAuth credentials to avoid extracting eos_cred_file
+- Cleaned status output to show "None" when mods or cluster ID are missing
+- Monitor now purges stale update/dirty flags outside the update window to keep multi-instance setups healthy
+- Updated Docker image to install Microsoft VC++ 2015-2022 (14.44.35211.0) into the Proton prefix for plugin compatibility
 
-## Version 2.1.77 (Latest)
+## Version 2.1.77
 ### Timezone and Restart Notification Fixes
 - **CRITICAL FIX**: Fixed update system using UTC time instead of container timezone set by TZ environment variable in docker-compose.yaml
 - **RESTART_NOTICE_MINUTES Fix**: Fixed invalid 'local' usage in update_server.sh that caused empty restart notification messages ("Server will restart in  minutes")

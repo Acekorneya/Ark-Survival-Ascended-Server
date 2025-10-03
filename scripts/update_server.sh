@@ -3,6 +3,8 @@ source /home/pok/scripts/common.sh
 source /home/pok/scripts/rcon_commands.sh
 # Get the current build ID at the start to ensure it's defined for later use
 current_build_id=$(get_current_build_id)
+LOCK_HELD=false
+TEMP_DOWNLOAD_DIR=""
 
 # Note: RESTART_NOTICE_MINUTES is set by the user in docker-compose.yaml
 # We'll use it directly in the script with appropriate defaults where needed
@@ -13,27 +15,35 @@ cleanup() {
   
   echo "[INFO] Update script cleanup triggered (exit code: $exit_code)"
   
-  # Use the proper lock release function from common.sh if available
-  if declare -f release_update_lock >/dev/null 2>&1; then
-    echo "[INFO] Using proper lock release function..."
-    release_update_lock
-  else
-    # Fallback to manual cleanup
-    echo "[INFO] Using fallback lock cleanup..."
-    if [ -f "$ASA_DIR/updating.flag" ]; then
-      echo "[INFO] Removing updating.flag due to script exit"
-      rm -f "$ASA_DIR/updating.flag"
+  if [ "$LOCK_HELD" = true ]; then
+    # Use the proper lock release function from common.sh if available
+    if declare -f release_update_lock >/dev/null 2>&1; then
+      echo "[INFO] Using proper lock release function..."
+      release_update_lock
+    else
+      # Fallback to manual cleanup
+      echo "[INFO] Using fallback lock cleanup..."
+      if [ -f "$ASA_DIR/updating.flag" ]; then
+        echo "[INFO] Removing updating.flag due to script exit"
+        rm -f "$ASA_DIR/updating.flag"
+      fi
+      
+      # Clean up any flock file descriptors
+      if [ -n "$UPDATE_LOCK_FD" ]; then
+        echo "[INFO] Closing update lock file descriptor $UPDATE_LOCK_FD"
+        flock -u $UPDATE_LOCK_FD 2>/dev/null || true
+        exec {UPDATE_LOCK_FD}>&- 2>/dev/null || true
+        unset UPDATE_LOCK_FD
+      fi
     fi
-    
-    # Clean up any flock file descriptors
-    if [ -n "$UPDATE_LOCK_FD" ]; then
-      echo "[INFO] Closing update lock file descriptor $UPDATE_LOCK_FD"
-      flock -u $UPDATE_LOCK_FD 2>/dev/null || true
-      exec {UPDATE_LOCK_FD}>&- 2>/dev/null || true
-      unset UPDATE_LOCK_FD
-    fi
+    LOCK_HELD=false
   fi
   
+  if [ -n "$TEMP_DOWNLOAD_DIR" ] && [ -d "$TEMP_DOWNLOAD_DIR" ]; then
+    echo "[INFO] Removing temporary download directory: $TEMP_DOWNLOAD_DIR"
+    rm -rf "$TEMP_DOWNLOAD_DIR"
+  fi
+
   # Clean up SteamCMD temporary files to save disk space
   echo "[INFO] Cleaning up SteamCMD temporary files..."
   rm -rf /opt/steamcmd/Steam/logs/* 2>/dev/null || true
@@ -187,8 +197,8 @@ notify_players_of_update() {
 }
 
 # Function to prepare for container exit and restart
-prepare_for_container_restart() {
-  echo "[INFO] Preparing for container restart by orchestration system..."
+shutdown_server_for_update() {
+  echo "[INFO] Preparing server for update/restart..."
   
   # Send RCON commands to save world and shut down the server
   echo "[INFO] Sending SaveWorld command to server..."
@@ -241,28 +251,29 @@ prepare_for_container_restart() {
     sleep 2
   fi
   
-  # Create flag files for container restart detection
+  echo "[INFO] Server processes stopped. Ready for staging update"
+}
+
+trigger_container_restart() {
+  local reason="${1:-UPDATE_RESTART}"
+  local expected_build="${2:-$current_build_id}"
+
   echo "$(date) - Container exiting for automatic restart due to update" > /home/pok/container_update_restart.log
-  echo "UPDATE_RESTART" > /home/pok/restart_reason.flag
-  
-  # Save the current build ID for verification after restart
-  echo "$current_build_id" > /home/pok/expected_build_id.txt
-  
+  echo "$reason" > /home/pok/restart_reason.flag
+
+  if [ -n "$expected_build" ]; then
+    echo "$expected_build" > /home/pok/expected_build_id.txt
+  fi
+
+  echo "true" > /home/pok/stop_monitor.flag
+
   echo "🔄 Container will now exit for restart via Docker"
   echo "⚠️ Docker will automatically restart the container"
-  
-  # Create a special flag to tell the monitor to stop as well
-  echo "true" > /home/pok/stop_monitor.flag
-  
-  # Simplified container exit approach - no extensive cleanup needed
-  echo "[INFO] Server is shut down. Killing container to trigger Docker restart..."
-  
-  # Force kill the container process with SIGKILL
-  echo "[INFO] Force killing the container with SIGKILL (-9) to trigger restart..."
-  sync # Ensure all buffers are flushed
+
+  sync
   sleep 1
-  kill -9 1  # Direct kill of init process to trigger container restart
-  exit 1     # Fallback exit with error code to ensure Docker restarts
+  kill -9 1
+  exit 1
 }
 
 # Main update logic
@@ -289,17 +300,9 @@ if server_needs_update; then
     echo "[INFO] Notifying players about restart (dirty flag) with $dirty_restart_notice minute notice"
     notify_players_of_update $dirty_restart_notice
     
-    # After countdown completes, trigger container restart
-    echo "[INFO] Countdown completed. Initiating container restart to load updated server files..."
-    
-    # Explicitly release any locks before container restart (shouldn't have any for dirty restart)
-    if declare -f release_update_lock >/dev/null 2>&1; then
-      echo "[INFO] Releasing any update locks before container restart..."
-      release_update_lock
-    fi
-    
-    prepare_for_container_restart
-    # This function will exit the script
+    echo "[INFO] Countdown completed. Preparing server for restart..."
+    shutdown_server_for_update
+    trigger_container_restart "DIRTY_RESTART" "$current_build_id"
   else
     # This is an actual update that requires downloading
     echo "[INFO] Actual server update required - will download new files"
@@ -318,45 +321,71 @@ if server_needs_update; then
           exit 0
         else
           echo "[WARNING] Server is still not up to date after waiting. Will attempt update again."
+          if ! acquire_update_lock; then
+            echo "[ERROR] Unable to acquire update lock after peer completed update"
+            exit 1
+          fi
         fi
       else
         echo "[ERROR] Timed out waiting for update lock. Aborting update."
         exit 1
       fi
     fi
-    
+
     # We now have the update lock and need to perform actual update
+    LOCK_HELD=true
     echo "[INFO] Acquired update lock. Performing server files update..."
-    
+
     # Notify players about the upcoming update and initiate countdown
-    # Use the user-configured restart notice time from docker-compose environment
-    update_notice_minutes=${RESTART_NOTICE_MINUTES:-30}  # Default 30 minutes if not set
+    update_notice_minutes=${RESTART_NOTICE_MINUTES:-30}
     echo "[INFO] Notifying players about update with $update_notice_minutes minute notice"
     notify_players_of_update $update_notice_minutes
-    
-    # Mark other instances as dirty since we're about to update shared server files
-    echo "[INFO] Marking other instances as dirty before updating server files..."
-    mark_other_instances_dirty
-    
-    # After countdown completes, trigger container restart (which will download updates)
-    echo "[INFO] Countdown completed. Initiating container restart for update..."
-    
-    # Explicitly release the lock before container restart
-    if declare -f release_update_lock >/dev/null 2>&1; then
-      echo "[INFO] Releasing update lock before container restart..."
-      release_update_lock
+
+    echo "[INFO] Countdown completed. Stopping server for update..."
+    shutdown_server_for_update
+
+    TEMP_DOWNLOAD_DIR=$(create_temp_download_dir)
+    if [ -z "$TEMP_DOWNLOAD_DIR" ]; then
+      echo "[ERROR] Failed to create temporary download directory"
+      exit 1
     fi
-    
-    prepare_for_container_restart
-    # This function will exit the script, and the cleanup function will be called via the trap
+
+    echo "[INFO] Temporary download directory created at $TEMP_DOWNLOAD_DIR"
+
+    if ! perform_staged_server_download "$TEMP_DOWNLOAD_DIR"; then
+      echo "[ERROR] Failed to download and stage server update"
+      exit 1
+    fi
+
+    echo "[INFO] Server files updated successfully. Marking other instances as dirty..."
+    mark_other_instances_dirty
+
+    # Refresh current build information for logging and restart expectations
+    installed_build=$(get_build_id_from_acf)
+    if [ -n "$installed_build" ]; then
+      echo "[INFO] Installed build after update: $installed_build"
+      current_build_id="$installed_build"
+    fi
+
+    # Manual cleanup of temp directory before restart
+    if [ -n "$TEMP_DOWNLOAD_DIR" ] && [ -d "$TEMP_DOWNLOAD_DIR" ]; then
+      rm -rf "$TEMP_DOWNLOAD_DIR"
+      TEMP_DOWNLOAD_DIR=""
+    fi
+
+    if [ "$LOCK_HELD" = true ]; then
+      release_update_lock
+      LOCK_HELD=false
+    fi
+
+    trigger_container_restart "UPDATE_RESTART" "$current_build_id"
   fi
 else
   echo "[INFO] Server is already running the latest build ID: $current_build_id; no update needed."
   
-  # Release lock if we had one
-  if declare -f release_update_lock >/dev/null 2>&1; then
-    echo "[INFO] Releasing update lock (no update needed)..."
+  if [ "$LOCK_HELD" = true ]; then
     release_update_lock
+    LOCK_HELD=false
   fi
 fi
 echo "[INFO] Update check completed."

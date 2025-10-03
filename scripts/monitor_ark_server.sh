@@ -587,7 +587,7 @@ fi
 while true; do
   # Check for restart timeout (nuclear option for stuck restarts)
   check_restart_timeout
-  
+
   # Check if there's an active shutdown in progress
   if [ -f "$SHUTDOWN_COMPLETE_FLAG" ]; then
     echo "[INFO] Server shutdown/restart in progress, waiting before continuing monitoring..."
@@ -702,6 +702,35 @@ while true; do
     # Use TZ environment variable to ensure timezone-aware time conversion
     update_window_lower_bound=$(TZ="${TZ}" date -d "${UPDATE_WINDOW_MINIMUM_TIME}" +%s)
     update_window_upper_bound=$(TZ="${TZ}" date -d "${UPDATE_WINDOW_MAXIMUM_TIME}" +%s)
+
+    # Always try to clear a truly stale lock regardless of window boundaries
+    if declare -f remove_stale_lock >/dev/null 2>&1; then
+      remove_stale_lock || true
+    fi
+
+    # Outside the update window, and when no update is in progress, prune legacy flags periodically
+    if declare -f cleanup_legacy_locks >/dev/null 2>&1; then
+      cleanup_outside_window=false
+      if [ "$current_time" -lt "$update_window_lower_bound" ] || [ "$current_time" -gt "$update_window_upper_bound" ]; then
+        cleanup_outside_window=true
+      fi
+
+      if [ "$cleanup_outside_window" = true ] && [ ! -f "$lock_file" ]; then
+        legacy_cleanup_interval=${LEGACY_CLEANUP_INTERVAL_SECONDS:-21600} # default 6 hours
+        last_cleanup_file="/tmp/monitor_legacy_cleanup.ts"
+
+        if [ ! -f "$last_cleanup_file" ]; then
+          echo "$current_time" > "$last_cleanup_file"
+          cleanup_legacy_locks "monitor"
+        else
+          last_ts=$(cat "$last_cleanup_file" 2>/dev/null || echo 0)
+          if [ $((current_time - last_ts)) -ge $legacy_cleanup_interval ]; then
+            cleanup_legacy_locks "monitor"
+            echo "$current_time" > "$last_cleanup_file"
+          fi
+        fi
+      fi
+    fi
 
     # Display next check time if verbose logging is enabled
     if [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then

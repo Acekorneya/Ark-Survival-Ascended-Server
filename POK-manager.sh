@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.77"
+POK_MANAGER_VERSION="2.1.78"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory for the script
@@ -5353,38 +5353,22 @@ update_server_files_and_docker() {
       
       # Use docker directly if user is in docker group or is root
       if groups | grep -q '\bdocker\b' || [ "$(id -u)" -eq 0 ]; then
-        if docker exec "$instance_for_update" /opt/steamcmd/steamcmd.sh +force_install_dir "/home/pok/arkserver" +login anonymous +app_update 2430930 +quit; then
-          echo "SteamCMD update completed successfully inside container."
-          
-          # Make sure the appmanifest file is properly copied
-          if docker exec "$instance_for_update" bash -c '[ -f "/home/pok/arkserver/steamapps/appmanifest_2430930.acf" ] && cp "/home/pok/arkserver/steamapps/appmanifest_2430930.acf" "/home/pok/arkserver/"'; then
-            echo "Copied appmanifest_2430930.acf to the correct location inside container."
-          else
-            echo "Warning: appmanifest_2430930.acf not found in steamapps directory or could not be copied."
-          fi
-          
+        if docker exec "$instance_for_update" /home/pok/scripts/install_server.sh; then
+          echo "Staged server install/update completed successfully inside container."
           success=true
         else
-          echo "SteamCMD update failed. Attempt $retry_count of $max_retries."
+          echo "Container install_server.sh run failed. Attempt $retry_count of $max_retries."
           if [ $retry_count -lt $max_retries ]; then
             echo "Retrying in 10 seconds..."
             sleep 10
           fi
         fi
       else
-        if sudo docker exec "$instance_for_update" /opt/steamcmd/steamcmd.sh +force_install_dir "/home/pok/arkserver" +login anonymous +app_update 2430930 +quit; then
-          echo "SteamCMD update completed successfully inside container."
-          
-          # Make sure the appmanifest file is properly copied
-          if sudo docker exec "$instance_for_update" bash -c '[ -f "/home/pok/arkserver/steamapps/appmanifest_2430930.acf" ] && cp "/home/pok/arkserver/steamapps/appmanifest_2430930.acf" "/home/pok/arkserver/"'; then
-            echo "Copied appmanifest_2430930.acf to the correct location inside container."
-          else
-            echo "Warning: appmanifest_2430930.acf not found in steamapps directory or could not be copied."
-          fi
-          
+        if sudo docker exec "$instance_for_update" /home/pok/scripts/install_server.sh; then
+          echo "Staged server install/update completed successfully inside container."
           success=true
         else
-          echo "SteamCMD update failed. Attempt $retry_count of $max_retries."
+          echo "Container install_server.sh run failed. Attempt $retry_count of $max_retries."
           if [ $retry_count -lt $max_retries ]; then
             echo "Retrying in 10 seconds..."
             sleep 10

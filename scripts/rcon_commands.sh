@@ -95,73 +95,33 @@ interactive_mode() {
 
 # Function to check PDB availability and download pdb-sym2addr-rs
 full_status_setup() {
-  # Ensure the pdb file exists
-  if [[ ! -f "$ASA_DIR/ShooterGame/Binaries/Win64/ArkAscendedServer.pdb" ]]; then
-    echo "$ASA_DIR/ShooterGame/Binaries/Win64/ArkAscendedServer.pdb is needed to setup full status."
-    return 1
-  fi
-
-  # Download and extract pdb-sym2addr-rs to a specific directory
-  mkdir -p "$ASA_DIR/pdb-sym2addr"
-  wget -q https://github.com/azixus/pdb-sym2addr-rs/releases/latest/download/pdb-sym2addr-x86_64-unknown-linux-musl.tar.gz -O "$ASA_DIR/pdb-sym2addr-x86_64-unknown-linux-musl.tar.gz"
-  tar -xzf "$ASA_DIR/pdb-sym2addr-x86_64-unknown-linux-musl.tar.gz" -C "$ASA_DIR/pdb-sym2addr"
-  rm "$ASA_DIR/pdb-sym2addr-x86_64-unknown-linux-musl.tar.gz"
-
-  # Extract and save EOS credentials
-  symbols=$("$ASA_DIR/pdb-sym2addr/pdb-sym2addr" "$ASA_DIR/ShooterGame/Binaries/Win64/ArkAscendedServer.exe" "$ASA_DIR/ShooterGame/Binaries/Win64/ArkAscendedServer.pdb" DedicatedServerClientSecret DedicatedServerClientId DeploymentId)
-
-  client_id=$(echo "$symbols" | grep -o 'DedicatedServerClientId.*' | cut -d, -f2)
-  client_secret=$(echo "$symbols" | grep -o 'DedicatedServerClientSecret.*' | cut -d, -f2)
-  deployment_id=$(echo "$symbols" | grep -o 'DeploymentId.*' | cut -d, -f2)
-
-  # Save base64 login and deployment id to file
-  creds=$(echo -n "$client_id:$client_secret" | base64 -w0)
-  echo "${creds},${deployment_id}" > "$EOS_FILE"
+  echo "Full status setup no longer requires extracting credentials."
+  return 0
 }
 
 full_status_first_run() {
-  # Automatically proceed with the full status setup without user confirmation
-  echo "Proceeding with full status setup..."
-  full_status_setup
-
-  if [[ $? != 0 ]]; then
-    echo "Full status setup failed."
-    return 1
-  else
-    echo "Full status setup completed successfully." 
-    return 0
-  fi
+  return 0
 }
 
 
 # Display full server status
 full_status_display() {
   # Check if the EOS credentials file exists
-  if [[ ! -f "$EOS_FILE" ]]; then
-    echo "Error: EOS credentials file not found at $EOS_FILE."
-    return 1
-  fi
-
-  # Read the full content from the file
-  fullContent=$(tr -d ' \n' < "$EOS_FILE")
-  # echo "Debug: Full Content: '${fullContent}'"
-
   # Recover current ip
   ip=$(curl -s https://ifconfig.me/ip)
 
-  # Split the content to get the base64-encoded credentials and the deployment ID
-  IFS=',' read -ra ADDR <<< "$fullContent"
-  creds="${ADDR[0]}"
-  deployment_id="${ADDR[1]}"
+  deployment_id="$EOS_DEPLOYMENT_ID"
 
-  # echo "Debug: Using Credentials (base64 encoded): '${creds}'"
-  # echo "Debug: Deployment ID: ${deployment_id}"
+  if [ -z "$deployment_id" ] || [ -z "$EOS_BASIC_AUTH" ]; then
+    echo "Error: EOS credential constants are not set"
+    return 1
+  fi
 
   # Requesting OAuth token from EOS
   oauthResponse=$(
     curl -s -H 'Content-Type: application/x-www-form-urlencoded' \
       -H 'Accept: application/json' \
-      -H "Authorization: Basic ${creds}" \
+      -H "Authorization: ${EOS_BASIC_AUTH}" \
       -X POST https://api.epicgames.dev/auth/v1/oauth/token \
       -d "grant_type=client_credentials&deployment_id=${deployment_id}"
   )
@@ -175,7 +135,7 @@ full_status_display() {
 
   # Server query request
   res=$(
-    curl -s -X "POST" "https://api.epicgames.dev/matchmaking/v1/${deployment_id}/filter" \
+    curl -s -X "POST" "${EOS_MATCHMAKING_BASE}/${deployment_id}/filter" \
       -H "Content-Type:application/json" \
       -H "Accept:application/json" \
       -H "Authorization: Bearer $token" \
@@ -202,11 +162,26 @@ full_status_display() {
   day=$(echo "$serv" | jq -r '.attributes.DAYTIME_s')
   players=$(echo "$serv" | jq -r '.totalPlayers')
   max_players=$(echo "$serv" | jq -r '.settings.maxPublicPlayers')
-  mods=$(echo "$serv" | jq -r '.attributes.ENABLEDMODS_s')
+  mods=$(echo "$serv" | jq -r '.attributes.ENABLEDMODS_s // empty')
+  if [[ -z "$mods" ]]; then
+    local mods_ids
+    mods_ids=$(echo "$serv" | jq -r '.attributes.ENABLEDMODSFILEIDS_s // empty')
+    if [[ -n "$mods_ids" ]]; then
+      mods="IDs: ${mods_ids}"
+    fi
+  fi
   server_version_detailed=$(echo "$serv" | jq -r '.attributes.SESSIONNAMEUPPER_s' | grep -oP '\(V\K[\d.]+(?=\))')
   server_address="$ip:${ASA_PORT}"
   cluster_id=$(echo "$serv" | jq -r '.attributes.CLUSTERID_s')
   eos_server_ping=$(echo "$serv" | jq -r '.attributes.EOSSERVERPING_l')
+
+  if [[ -z "$mods" || "$mods" == "null" ]]; then
+    mods="None"
+  fi
+
+  if [[ -z "$cluster_id" || "$cluster_id" == "null" ]]; then
+    cluster_id="None"
+  fi
 
   echo -e "Server Name:    $server_name"
   echo -e "Map:            $map"
@@ -223,15 +198,6 @@ full_status_display() {
 
 # Server status function
 status() {
-  if [[ ! -f "$EOS_FILE" ]]; then
-    echo "Full status setup is required. Running setup now..."
-    full_status_first_run
-    if [[ $? != 0 ]]; then
-      echo "Unable to proceed without full status setup."
-      return
-    fi
-  fi
-
   echo "Displaying server status..."
   full_status_display
 }

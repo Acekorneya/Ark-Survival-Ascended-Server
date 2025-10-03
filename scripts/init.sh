@@ -64,145 +64,16 @@ if [ "${RANDOM_STARTUP_DELAY}" = "TRUE" ]; then
 fi
 
 # Check if the server needs an update before starting
-check_and_update_before_launch() {
-  echo "🔍 Checking for updates before server launch using SteamCMD..."
-  
-  # Check for and remove stale locks first
-  remove_stale_lock
-  
-  # Get current build ID using the function in common.sh (now SteamCMD only)
-  echo "📡 Getting latest build ID from SteamCMD..."
-  local current_build_id=$(get_current_build_id)
-  
-  if [ -z "$current_build_id" ] || [[ "$current_build_id" == error* ]]; then
-    echo "⚠️ Could not get current build ID from SteamCMD. Will retry up to 3 times..."
-    
-    # Retry logic for getting build ID
-    for retry in {1..3}; do
-      echo "🔄 Retry $retry/3 getting build ID from SteamCMD..."
-      sleep 5
-      current_build_id=$(get_current_build_id)
-      if [ -n "$current_build_id" ] && [[ ! "$current_build_id" == error* ]]; then
-        echo "✅ Successfully got build ID on retry $retry: $current_build_id"
-        break
-      fi
-      
-      if [ $retry -eq 3 ] && ([ -z "$current_build_id" ] || [[ "$current_build_id" == error* ]]); then
-        echo "❌ Failed to get current build ID from SteamCMD after 3 retries. Will proceed with server launch but may need manual update."
-        return 0
-      fi
-    done
-  fi
-  
-  # Validate that the current build ID is numeric only
-  if ! [[ "$current_build_id" =~ ^[0-9]+$ ]]; then
-    echo "⚠️ SteamCMD returned invalid build ID format: '$current_build_id'. Proceeding with launch."
+ensure_server_files_ready() {
+  echo "🔍 Ensuring server files are present and up to date..."
+  if /home/pok/scripts/install_server.sh; then
+    echo "✅ Server files verified."
     return 0
-  fi
-  
-  # Get saved build ID from ACF file
-  local saved_build_id=$(get_build_id_from_acf)
-  
-  # Validate that the saved build ID is numeric only
-  if ! [[ "$saved_build_id" =~ ^[0-9]+$ ]]; then
-    echo "⚠️ Saved build ID has invalid format: '$saved_build_id'. Will attempt update."
-    saved_build_id=""  # Force update by invalidating the saved ID
-  fi
-  
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "📊 🔵 SteamCMD Current Build ID: $current_build_id"
-  echo "📊 🟢 Server Installed Build ID: $saved_build_id"
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  
-  # Diagnostic comparison for debugging
-  if [ "${VERBOSE_DEBUG}" = "TRUE" ]; then
-    echo "🔬 Debug comparison: "
-    echo "   - Current: '${current_build_id}' (length: ${#current_build_id})"
-    echo "   - Saved: '${saved_build_id}' (length: ${#saved_build_id})"
-    if [ "$current_build_id" = "$saved_build_id" ]; then
-      echo "   - String comparison result: MATCH"
-    else
-      echo "   - String comparison result: DIFFERENT"
-    fi
-  fi
-  
-  # Compare build IDs - ensure both are stripped of any whitespace
-  current_build_id=$(echo "$current_build_id" | tr -d '[:space:]')
-  saved_build_id=$(echo "$saved_build_id" | tr -d '[:space:]')
-  
-  if [[ -z "$saved_build_id" || "$saved_build_id" != "$current_build_id" ]]; then
-    echo "🔄 UPDATE REQUIRED: SteamCMD has newer build ($current_build_id) than installed ($saved_build_id)"
-    
-    # Create updating flag to prevent other instances from updating simultaneously
-    if ! acquire_update_lock; then
-      echo "⚠️ Another instance is currently updating. Waiting for update to complete..."
-      
-      # Wait for the update to complete instead of proceeding with current version
-      if wait_for_update_lock; then
-        echo "✅ Update completed by another instance. Checking installed version..."
-        
-        # Verify the update was successful by checking the build ID again
-        saved_build_id=$(get_build_id_from_acf)
-        saved_build_id=$(echo "$saved_build_id" | tr -d '[:space:]')
-        if [ "$saved_build_id" = "$current_build_id" ]; then
-          echo "✅ Server is now on the latest build ID: $current_build_id"
-          return 0
-        else
-          echo "⚠️ Server is still not on the latest build ID after waiting for update."
-          echo "   Will attempt to update again..."
-          # Recursive call to try updating again
-          check_and_update_before_launch
-          return $?
-        fi
-      else
-        echo "⚠️ Timed out waiting for update. Will attempt to acquire lock and update..."
-        # Try to remove any stale locks that might be preventing progress
-        remove_stale_lock
-        # Try again to acquire the lock
-        if ! acquire_update_lock; then
-          echo "❌ Still unable to acquire update lock. This is a critical error."
-          echo "   Server will exit to avoid running outdated version."
-          exit 1
-        fi
-        # If we get here, we acquired the lock and can proceed with the update
-      fi
-    fi
-    
-    echo "📥 Starting update process through SteamCMD..."
-    local update_success=false
-    local max_retries=3
-    
-    for retry in $(seq 1 $max_retries); do
-      echo "🔄 Update attempt $retry/$max_retries..."
-      /opt/steamcmd/steamcmd.sh +force_install_dir "$ASA_DIR" +login anonymous +app_update "$APPID" +quit
-      update_result=$?
-      
-      # Check if update was successful
-      if [[ $update_result -eq 0 && -f "$ASA_DIR/steamapps/appmanifest_$APPID.acf" ]]; then
-        cp "$ASA_DIR/steamapps/appmanifest_$APPID.acf" "$PERSISTENT_ACF_FILE"
-        echo "✅ Server updated successfully to SteamCMD build ID: $current_build_id"
-        update_success=true
-        break
-      else
-        echo "⚠️ Server update attempt $retry failed with exit code: $update_result"
-        sleep 5  # Wait before retry
-      fi
-    done
-    
-    # Remove the updating flag
-    rm -f "$ASA_DIR/updating.flag"
-    
-    if [ "$update_success" = true ]; then
-      echo "🚀 Proceeding with server launch..."
-      return 0
-    else
-      echo "❌ Server update failed after $max_retries attempts. This is a critical error."
-      echo "   Server will exit to avoid running outdated version."
-      exit 1
-    fi
   else
-    echo "✅ Server is already on the latest SteamCMD build ID: $current_build_id. No update needed."
-    return 0
+    local exit_code=$?
+    echo "❌ Server install/update helper exited with status $exit_code"
+    echo "   Aborting startup to avoid running with inconsistent files."
+    exit $exit_code
   fi
 }
 
@@ -402,9 +273,12 @@ echo ""
 echo "🎮 ==== ARK SURVIVAL ASCENDED SERVER STARTING ==== 🎮"
 echo ""
 
-# Check for updates before launching the server (if UPDATE_SERVER is enabled)
+# Check for updates before launching the server
 if [ "${UPDATE_SERVER}" = "TRUE" ]; then
-  check_and_update_before_launch
+  ensure_server_files_ready
+elif [ ! -f "$PERSISTENT_ACF_FILE" ]; then
+  echo "⚠️ UPDATE_SERVER disabled but no installation found. Running installer once..."
+  ensure_server_files_ready
 fi
 
 # Handle log rotation on startup
