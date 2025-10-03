@@ -6,7 +6,6 @@
 - Baked in fixed Epic OAuth credentials to avoid extracting eos_cred_file
 - Cleaned status output to show "None" when mods or cluster ID are missing
 - Monitor now purges stale update/dirty flags outside the update window to keep multi-instance setups healthy
-- Updated Docker image to install Microsoft VC++ 2015-2022 (14.44.35211.0) into the Proton prefix for plugin compatibility
 
 ## Version 2.1.77
 ### Timezone and Restart Notification Fixes
