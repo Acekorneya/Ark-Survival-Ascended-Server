@@ -12,6 +12,11 @@ RECOVERY_LOG="/home/pok/server_recovery.log"
 EXIT_ON_API_RESTART="${EXIT_ON_API_RESTART:-TRUE}" # Default to TRUE - controls container exit behavior
 RESTART_TIMESTAMP_FILE="/tmp/restart_timestamp"
 
+# Clear stale stop flag so the monitor stays active after restarts
+if [ -f "/home/pok/stop_monitor.flag" ]; then
+  rm -f "/home/pok/stop_monitor.flag"
+fi
+
 # Note: RESTART_NOTICE_MINUTES is configured by user in docker-compose.yaml
 UPDATE_WINDOW_MINIMUM_TIME=${UPDATE_WINDOW_MINIMUM_TIME:-12:00 AM} # Default to "12:00 AM" if not set
 UPDATE_WINDOW_MAXIMUM_TIME=${UPDATE_WINDOW_MAXIMUM_TIME:-11:59 PM} # Default to "11:59 PM" if not set

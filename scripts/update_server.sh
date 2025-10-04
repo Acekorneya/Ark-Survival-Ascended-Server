@@ -304,23 +304,23 @@ if server_needs_update; then
     shutdown_server_for_update
     trigger_container_restart "DIRTY_RESTART" "$current_build_id"
   else
-    # This is an actual update that requires downloading
-    echo "[INFO] Actual server update required - will download new files"
+    # This is an actual update that we want to apply on next container startup
+    echo "[INFO] Actual server update required - will restart container and apply on startup"
     
     # Attempt to acquire the update lock using common.sh function
     if ! acquire_update_lock; then
-      echo "[WARNING] Another instance is currently updating. Waiting for update to complete..."
+      echo "[WARNING] Another instance is coordinating the update. Waiting for it to finish..."
       
       # Wait for the update to complete
       if wait_for_update_lock; then
-        echo "[INFO] Update completed by another instance. Checking if server restart is still needed..."
+        echo "[INFO] Peer released the update lock. Re-checking if restart is still required..."
         
         # Check if the server is now up to date
         if ! server_needs_update; then
           echo "[INFO] Server is now up to date. No restart needed."
           exit 0
         else
-          echo "[WARNING] Server is still not up to date after waiting. Will attempt update again."
+          echo "[WARNING] Server still reports an outdated build. Attempting to coordinate update again."
           if ! acquire_update_lock; then
             echo "[ERROR] Unable to acquire update lock after peer completed update"
             exit 1
@@ -332,9 +332,9 @@ if server_needs_update; then
       fi
     fi
 
-    # We now have the update lock and need to perform actual update
+    # We now have the update lock and will hand off file download to startup sequence
     LOCK_HELD=true
-    echo "[INFO] Acquired update lock. Performing server files update..."
+    echo "[INFO] Acquired update lock. Preparing graceful shutdown before container restart..."
 
     # Notify players about the upcoming update and initiate countdown
     update_notice_minutes=${RESTART_NOTICE_MINUTES:-30}
@@ -344,34 +344,7 @@ if server_needs_update; then
     echo "[INFO] Countdown completed. Stopping server for update..."
     shutdown_server_for_update
 
-    TEMP_DOWNLOAD_DIR=$(create_temp_download_dir)
-    if [ -z "$TEMP_DOWNLOAD_DIR" ]; then
-      echo "[ERROR] Failed to create temporary download directory"
-      exit 1
-    fi
-
-    echo "[INFO] Temporary download directory created at $TEMP_DOWNLOAD_DIR"
-
-    if ! perform_staged_server_download "$TEMP_DOWNLOAD_DIR"; then
-      echo "[ERROR] Failed to download and stage server update"
-      exit 1
-    fi
-
-    echo "[INFO] Server files updated successfully. Marking other instances as dirty..."
-    mark_other_instances_dirty
-
-    # Refresh current build information for logging and restart expectations
-    installed_build=$(get_build_id_from_acf)
-    if [ -n "$installed_build" ]; then
-      echo "[INFO] Installed build after update: $installed_build"
-      current_build_id="$installed_build"
-    fi
-
-    # Manual cleanup of temp directory before restart
-    if [ -n "$TEMP_DOWNLOAD_DIR" ] && [ -d "$TEMP_DOWNLOAD_DIR" ]; then
-      rm -rf "$TEMP_DOWNLOAD_DIR"
-      TEMP_DOWNLOAD_DIR=""
-    fi
+    echo "[INFO] Server shutdown confirmed. Update will be applied during container startup."
 
     if [ "$LOCK_HELD" = true ]; then
       release_update_lock

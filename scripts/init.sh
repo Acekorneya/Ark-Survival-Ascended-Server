@@ -832,6 +832,8 @@ RESTART_MONITOR_PID=$!
 # Launch the update monitor in background if API mode is not enabled
 if [ "${UPDATE_SERVER}" = "TRUE" ] && [ "${API}" != "TRUE" ]; then
   echo "[INFO] Starting update monitor in background..."
+  # Remove residual stop flag from previous container run before launching monitor
+  rm -f /home/pok/stop_monitor.flag 2>/dev/null || true
   
   if [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
     # When display is enabled, redirect output to both console and log file
