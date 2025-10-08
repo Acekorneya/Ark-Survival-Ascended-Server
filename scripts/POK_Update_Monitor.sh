@@ -1,6 +1,15 @@
 #!/bin/bash
 source /home/pok/scripts/common.sh
 
+case "${UPDATE_SERVER^^}" in
+  TRUE|YES|1)
+    ;;
+  *)
+    echo "[INFO] UPDATE_SERVER disabled; skipping update check."
+    exit 1
+    ;;
+esac
+
 # Check for updates using SteamCMD only
 echo "[INFO] Checking for updates using SteamCMD..."
 saved_build_id=$(get_build_id_from_acf)

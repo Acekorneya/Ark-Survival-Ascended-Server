@@ -12,6 +12,15 @@ RECOVERY_LOG="/home/pok/server_recovery.log"
 EXIT_ON_API_RESTART="${EXIT_ON_API_RESTART:-TRUE}" # Default to TRUE - controls container exit behavior
 RESTART_TIMESTAMP_FILE="/tmp/restart_timestamp"
 
+case "${UPDATE_SERVER^^}" in
+  TRUE|YES|1)
+    ;;
+  *)
+    echo "[INFO] UPDATE_SERVER disabled; skipping update monitor."
+    exit 0
+    ;;
+esac
+
 # Clear stale stop flag so the monitor stays active after restarts
 if [ -f "/home/pok/stop_monitor.flag" ]; then
   rm -f "/home/pok/stop_monitor.flag"
@@ -689,7 +698,7 @@ while true; do
     continue
   fi
   
-  if [ "${UPDATE_SERVER}" = "TRUE" ]; then
+  if [ "${UPDATE_SERVER^^}" = "TRUE" ]; then
     # Check for updates at the interval specified by CHECK_FOR_UPDATE_INTERVAL
     current_time=$(TZ="${TZ}" date +%s)
     last_update_check_time=${last_update_check_time:-0}

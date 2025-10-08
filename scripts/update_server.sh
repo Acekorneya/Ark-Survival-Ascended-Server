@@ -6,6 +6,15 @@ current_build_id=$(get_current_build_id)
 LOCK_HELD=false
 TEMP_DOWNLOAD_DIR=""
 
+case "${UPDATE_SERVER^^}" in
+  TRUE|YES|1)
+    ;;
+  *)
+    echo "[INFO] UPDATE_SERVER disabled; skipping update workflow."
+    exit 0
+    ;;
+esac
+
 # Note: RESTART_NOTICE_MINUTES is set by the user in docker-compose.yaml
 # We'll use it directly in the script with appropriate defaults where needed
 

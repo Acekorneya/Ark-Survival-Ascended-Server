@@ -306,7 +306,7 @@ echo "🎮 ==== ARK SURVIVAL ASCENDED SERVER STARTING ==== 🎮"
 echo ""
 
 # Check for updates before launching the server
-if [ "${UPDATE_SERVER}" = "TRUE" ]; then
+if [ "${UPDATE_SERVER^^}" = "TRUE" ]; then
   ensure_server_files_ready
 elif [ ! -f "$PERSISTENT_ACF_FILE" ]; then
   echo "⚠️ UPDATE_SERVER disabled but no installation found. Running installer once..."
@@ -830,7 +830,7 @@ MONITOR_PID=$!
 RESTART_MONITOR_PID=$!
 
 # Launch the update monitor in background if API mode is not enabled
-if [ "${UPDATE_SERVER}" = "TRUE" ] && [ "${API}" != "TRUE" ]; then
+if [ "${UPDATE_SERVER^^}" = "TRUE" ] && [ "${API}" != "TRUE" ]; then
   echo "[INFO] Starting update monitor in background..."
   # Remove residual stop flag from previous container run before launching monitor
   rm -f /home/pok/stop_monitor.flag 2>/dev/null || true
@@ -845,7 +845,7 @@ if [ "${UPDATE_SERVER}" = "TRUE" ] && [ "${API}" != "TRUE" ]; then
   
   MONITOR_PID=$!
   echo "[INFO] Update monitor started with PID: $MONITOR_PID"
-elif [ "${API}" = "TRUE" ] && [ "${UPDATE_SERVER}" = "TRUE" ]; then
+elif [ "${API}" = "TRUE" ] && [ "${UPDATE_SERVER^^}" = "TRUE" ]; then
   echo "⚠️ [WARNING] Update monitor is disabled when API=TRUE"
   echo "⚠️ [WARNING] You must manually update the server using the POK-manager.sh script with:"
   echo "⚠️           ./POK-manager.sh -stop <instance_name>"
