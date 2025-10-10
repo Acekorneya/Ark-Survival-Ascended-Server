@@ -8,6 +8,7 @@
 - Monitor now purges stale update/dirty flags outside the update window to keep multi-instance setups healthy
 - Update Visual C++ Redistributable references to version 2022 version 14.44.35211 ; enhance runtime verification and installation process
 - Honor UPDATE_SERVER=FALSE for manual maintenance windows: monitor/update scripts now exit immediately when disabled, preventing auto restarts after staging updates
+- Clear restart coordination flags once the server reports healthy, preventing monitor-driven container restarts after successful startup
 
 ## Version 2.1.77
 ### Timezone and Restart Notification Fixes

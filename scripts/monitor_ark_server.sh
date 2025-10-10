@@ -618,29 +618,35 @@ while true; do
     exit 0
   fi
 
-  # Check for failed restart attempts - if restart flag exists but server isn't running
-  if [ -f "/home/pok/restart_reason.flag" ] && ! is_process_running; then
-    current_time=$(date "+%Y-%m-%d %H:%M:%S")
-    echo "[$current_time] [WARNING] Detected a restart flag with server not running - forced container kill needed" | tee -a "$RECOVERY_LOG"
-    display_monitor_status "⚠️ Restart detected but server not running - forcing container kill" "WARNING" "true"
-    
-    # Ensure stop flag is created
-    echo "true" > /home/pok/stop_monitor.flag
-    
-    # Execute the most aggressive kill methods immediately
-    echo "[$current_time] [WARNING] Executing emergency container kill sequence" | tee -a "$RECOVERY_LOG"
-    
-    # Force sync to ensure all data is written
-    sync
-    
-    # Kill everything with maximum prejudice
-    killall -9 -u pok || true
-    kill -9 -1 || true
-    kill -9 1 || true
-    kill -ABRT $$ || true
-    
-    # If we somehow get here, try a second approach
-    exec kill -SEGV $$ || exit 1
+  # Check for restart coordination flags
+  if [ -f "/home/pok/restart_reason.flag" ]; then
+    if ! is_process_running; then
+      current_time=$(date "+%Y-%m-%d %H:%M:%S")
+      echo "[$current_time] [WARNING] Detected a restart flag with server not running - forced container kill needed" | tee -a "$RECOVERY_LOG"
+      display_monitor_status "⚠️ Restart detected but server not running - forcing container kill" "WARNING" "true"
+      
+      # Ensure stop flag is created
+      echo "true" > /home/pok/stop_monitor.flag
+      
+      # Execute the most aggressive kill methods immediately
+      echo "[$current_time] [WARNING] Executing emergency container kill sequence" | tee -a "$RECOVERY_LOG"
+      
+      # Force sync to ensure all data is written
+      sync
+      
+      # Kill everything with maximum prejudice
+      killall -9 -u pok || true
+      kill -9 -1 || true
+      kill -9 1 || true
+      kill -ABRT $$ || true
+      
+      # If we somehow get here, try a second approach
+      exec kill -SEGV $$ || exit 1
+    else
+      # Server is healthy; clear restart coordination markers
+      rm -f "/home/pok/restart_reason.flag"
+      rm -f "$RESTART_TIMESTAMP_FILE"
+    fi
   fi
 
   # Check for stale update flags (older than 6 hours) 
