@@ -120,6 +120,16 @@ else
   esac
 fi
 
+# Another instance might have finished the update while we waited for the lock
+if ! install_required; then
+  echo "[INFO] Update already applied by another instance. Skipping download."
+  if [ "$LOCK_HELD" = true ]; then
+    release_update_lock
+    LOCK_HELD=false
+  fi
+  exit 0
+fi
+
 TEMP_DOWNLOAD_DIR=$(create_temp_download_dir) || exit 1
 
 echo "[INFO] Temporary download directory created at $TEMP_DOWNLOAD_DIR"

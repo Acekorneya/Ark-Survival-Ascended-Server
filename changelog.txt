@@ -9,6 +9,7 @@
 - Update Visual C++ Redistributable references to version 2022 version 14.44.35211 ; enhance runtime verification and installation process
 - Honor UPDATE_SERVER=FALSE for manual maintenance windows: monitor/update scripts now exit immediately when disabled, preventing auto restarts after staging updates
 - Clear restart coordination flags once the server reports healthy, preventing monitor-driven container restarts after successful startup
+- Installation lock holders now re-check build IDs after acquiring the lock; peers skip redundant downloads once another container finishes staging
 
 ## Version 2.1.77
 ### Timezone and Restart Notification Fixes
