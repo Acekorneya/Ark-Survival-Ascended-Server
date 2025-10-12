@@ -5293,25 +5293,67 @@ update_server_files_and_docker() {
     "-e INSTANCE_NAME=pok_update_temp"
   )
   
-  # Check if user is in docker group or is root to avoid using sudo
-  if groups | grep -q '\bdocker\b' || [ "$(id -u)" -eq 0 ]; then
-    # User is in docker group or is root, no need for sudo
-    temp_container_id=$(docker run -d --rm \
-      -v "${BASE_DIR%/}/ServerFiles/arkserver:/home/pok/arkserver" \
-      ${env_vars[@]} \
-      --name "$instance_for_update" \
-      "acekorneya/asa_server:${image_tag}" \
-      sleep infinity)
-  else
-    # User is not in docker group and not root, need sudo
-    temp_container_id=$(sudo docker run -d --rm \
-      -v "${BASE_DIR%/}/ServerFiles/arkserver:/home/pok/arkserver" \
-      ${env_vars[@]} \
-      --name "$instance_for_update" \
-      "acekorneya/asa_server:${image_tag}" \
-      sleep infinity)
+  check_update_disk_space() {
+    local required_mb=${REQUIRED_UPDATE_FREE_MB:-25360}
+    local target_path="${BASE_DIR%/}/ServerFiles/arkserver"
+    if [ ! -d "$target_path" ]; then
+      target_path="${BASE_DIR%/}/ServerFiles"
+    fi
+    local available_mb
+    available_mb=$(df -Pm "$target_path" 2>/dev/null | awk 'NR==2 {print $4}')
+    if [ -z "$available_mb" ]; then
+      echo "⚠️ Unable to determine free disk space for $target_path; continuing without disk space validation."
+      return 0
+    fi
+    if [ "$available_mb" -lt "$required_mb" ]; then
+      echo "❌ Not enough free disk space in $target_path for ARK update (required: ${required_mb}MB, available: ${available_mb}MB)."
+      echo "Please free up additional space and rerun the update."
+      return 1
+    fi
+    return 0
+  }
+  
+  start_temp_update_container() {
+    local id=""
+    if groups | grep -q 'docker' || [ "$(id -u)" -eq 0 ]; then
+      id=$(docker run -d --rm         -v "${BASE_DIR%/}/ServerFiles/arkserver:/home/pok/arkserver"         "${env_vars[@]}"         --name "$instance_for_update"         "acekorneya/asa_server:${image_tag}"         sleep infinity) || return 1
+    else
+      id=$(sudo docker run -d --rm         -v "${BASE_DIR%/}/ServerFiles/arkserver:/home/pok/arkserver"         "${env_vars[@]}"         --name "$instance_for_update"         "acekorneya/asa_server:${image_tag}"         sleep infinity) || return 1
+    fi
+    echo "$id"
+  }
+  
+  init_temp_update_container() {
+    if groups | grep -q 'docker' || [ "$(id -u)" -eq 0 ]; then
+      docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Binaries/Win64/logs' || true
+      docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Saved/Config/WindowsServer' || true
+      docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Saved/SavedArks' || true
+    else
+      sudo docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Binaries/Win64/logs' || true
+      sudo docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Saved/Config/WindowsServer' || true
+      sudo docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Saved/SavedArks' || true
+    fi
+  }
+  
+  restart_temp_update_container() {
+    echo "Restarting temporary update container..."
+    if groups | grep -q 'docker' || [ "$(id -u)" -eq 0 ]; then
+      docker rm -f "$instance_for_update" > /dev/null 2>&1 || true
+    else
+      sudo docker rm -f "$instance_for_update" > /dev/null 2>&1 || true
+    fi
+    temp_container_id=$(start_temp_update_container) || return 1
+    echo "Temporary container recreated with ID: $temp_container_id"
+    echo "Waiting for container initialization..."
+    sleep 5
+    init_temp_update_container
+  }
+  
+  if ! check_update_disk_space; then
+    return 1
   fi
   
+  temp_container_id=$(start_temp_update_container)
   if [ -z "$temp_container_id" ]; then
     echo "Failed to create temporary container for update. Aborting."
     exit 1
@@ -5319,21 +5361,12 @@ update_server_files_and_docker() {
   
   echo "Temporary container created with ID: $temp_container_id"
   echo "Waiting for container initialization..."
-  sleep 5  # Allow container to initialize
+  sleep 5
   
-  # Initialize the container environment
   echo "Initializing container environment..."
-  if groups | grep -q '\bdocker\b' || [ "$(id -u)" -eq 0 ]; then
-    docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Binaries/Win64/logs' || true
-    docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Saved/Config/WindowsServer' || true
-    docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Saved/SavedArks' || true
-  else
-    sudo docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Binaries/Win64/logs' || true
-    sudo docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Saved/Config/WindowsServer' || true
-    sudo docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Saved/SavedArks' || true
-  fi
-
-  # Check current and latest build IDs
+  init_temp_update_container
+  
+# Check current and latest build IDs
   echo "Checking for server updates..."
   local current_build_id=$(get_build_id_from_acf)
   local latest_build_id=$(get_current_build_id)
