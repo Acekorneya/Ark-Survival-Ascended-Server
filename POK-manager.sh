@@ -5293,6 +5293,52 @@ update_server_files_and_docker() {
     "-e INSTANCE_NAME=pok_update_temp"
   )
   
+  remove_temp_update_container_if_exists() {
+    local context="${1:-}"
+    local filter="name=^/${instance_for_update}$"
+    local container_id=""
+
+    container_id=$(docker ps -a --filter "$filter" --format '{{.ID}}' 2>/dev/null || true)
+    if [ -z "$container_id" ] && [ "$(id -u)" -ne 0 ]; then
+      container_id=$(sudo docker ps -a --filter "$filter" --format '{{.ID}}' 2>/dev/null || true)
+    fi
+
+    if [ -z "$container_id" ]; then
+      return 0
+    fi
+
+    case "$context" in
+      startup)
+        echo "Existing temporary update container detected (ID: $container_id). Removing before starting a new one..."
+        ;;
+      restart)
+        echo "Existing temporary update container detected (ID: $container_id). Removing before restarting..."
+        ;;
+      cleanup)
+        echo "Existing temporary update container detected (ID: $container_id). Removing..."
+        ;;
+      *)
+        echo "Existing temporary update container detected (ID: $container_id). Removing..."
+        ;;
+    esac
+
+    if docker rm -f "$instance_for_update" > /dev/null 2>&1; then
+      echo "Temporary update container removed."
+      return 0
+    fi
+
+    if [ "$(id -u)" -ne 0 ]; then
+      if sudo docker rm -f "$instance_for_update" > /dev/null 2>&1; then
+        echo "Temporary update container removed."
+        return 0
+      fi
+    fi
+
+    echo "❌ ERROR: Unable to remove existing temporary update container '$instance_for_update'."
+    echo "Please run 'docker rm -f $instance_for_update' (add sudo if required) and rerun the update."
+    return 1
+  }
+
   check_update_disk_space() {
     local required_mb=${REQUIRED_UPDATE_FREE_MB:-25360}
     local target_path="${BASE_DIR%/}/ServerFiles/arkserver"
@@ -5315,18 +5361,19 @@ update_server_files_and_docker() {
   
   start_temp_update_container() {
     local id=""
-    if groups | grep -q 'docker' || [ "$(id -u)" -eq 0 ]; then
-      docker rm -f "$instance_for_update" > /dev/null 2>&1 || true
+    if ! remove_temp_update_container_if_exists "startup"; then
+      return 1
+    fi
+    if groups | grep -Eq '\bdocker\b' || [ "$(id -u)" -eq 0 ]; then
       id=$(docker run -d --rm         -v "${BASE_DIR%/}/ServerFiles/arkserver:/home/pok/arkserver"         "${env_vars[@]}"         --name "$instance_for_update"         "acekorneya/asa_server:${image_tag}"         sleep infinity) || return 1
     else
-      sudo docker rm -f "$instance_for_update" > /dev/null 2>&1 || true
       id=$(sudo docker run -d --rm         -v "${BASE_DIR%/}/ServerFiles/arkserver:/home/pok/arkserver"         "${env_vars[@]}"         --name "$instance_for_update"         "acekorneya/asa_server:${image_tag}"         sleep infinity) || return 1
     fi
     echo "$id"
   }
   
   init_temp_update_container() {
-    if groups | grep -q 'docker' || [ "$(id -u)" -eq 0 ]; then
+    if groups | grep -Eq '\bdocker\b' || [ "$(id -u)" -eq 0 ]; then
       docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Binaries/Win64/logs' || true
       docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Saved/Config/WindowsServer' || true
       docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Saved/SavedArks' || true
@@ -5339,10 +5386,8 @@ update_server_files_and_docker() {
   
   restart_temp_update_container() {
     echo "Restarting temporary update container..."
-    if groups | grep -q 'docker' || [ "$(id -u)" -eq 0 ]; then
-      docker rm -f "$instance_for_update" > /dev/null 2>&1 || true
-    else
-      sudo docker rm -f "$instance_for_update" > /dev/null 2>&1 || true
+    if ! remove_temp_update_container_if_exists "restart"; then
+      return 1
     fi
     temp_container_id=$(start_temp_update_container) || return 1
     echo "Temporary container recreated with ID: $temp_container_id"
@@ -5387,7 +5432,7 @@ update_server_files_and_docker() {
       echo "SteamCMD update attempt $retry_count of $max_retries..."
       
       # Use docker directly if user is in docker group or is root
-      if groups | grep -q '\bdocker\b' || [ "$(id -u)" -eq 0 ]; then
+      if groups | grep -Eq '\bdocker\b' || [ "$(id -u)" -eq 0 ]; then
         if docker exec "$instance_for_update" /home/pok/scripts/install_server.sh; then
           echo "Staged server install/update completed successfully inside container."
           success=true
@@ -5446,10 +5491,8 @@ update_server_files_and_docker() {
   
   # Clean up temporary container
   echo "Removing temporary update container..."
-  if groups | grep -q '\bdocker\b' || [ "$(id -u)" -eq 0 ]; then
-    docker rm -f "$instance_for_update" > /dev/null 2>&1 || true
-  else
-    sudo docker rm -f "$instance_for_update" > /dev/null 2>&1 || true
+  if ! remove_temp_update_container_if_exists "cleanup"; then
+    echo "⚠️ WARNING: Automatic removal of the temporary update container failed. It may still be running as '${instance_for_update}'."
   fi
 
   echo "----- Update process completed -----"
