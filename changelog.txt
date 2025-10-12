@@ -10,7 +10,7 @@
 - Honor UPDATE_SERVER=FALSE for manual maintenance windows: monitor/update scripts now exit immediately when disabled, preventing auto restarts after staging updates
 - Clear restart coordination flags once the server reports healthy, preventing monitor-driven container restarts after successful startup
 - Installation lock holders now re-check build IDs after acquiring the lock; peers skip redundant downloads once another container finishes staging
-- POK-manager -update now validates free disk space and recreates the staging container between retries to avoid SteamCMD mid-download failures
+- POK-manager -update now validates free disk space and cleans/recreates the staging container between retries to avoid SteamCMD mid-download failures
 
 ## Version 2.1.77
 ### Timezone and Restart Notification Fixes

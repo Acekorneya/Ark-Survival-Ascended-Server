@@ -5316,8 +5316,10 @@ update_server_files_and_docker() {
   start_temp_update_container() {
     local id=""
     if groups | grep -q 'docker' || [ "$(id -u)" -eq 0 ]; then
+      docker rm -f "$instance_for_update" > /dev/null 2>&1 || true
       id=$(docker run -d --rm         -v "${BASE_DIR%/}/ServerFiles/arkserver:/home/pok/arkserver"         "${env_vars[@]}"         --name "$instance_for_update"         "acekorneya/asa_server:${image_tag}"         sleep infinity) || return 1
     else
+      sudo docker rm -f "$instance_for_update" > /dev/null 2>&1 || true
       id=$(sudo docker run -d --rm         -v "${BASE_DIR%/}/ServerFiles/arkserver:/home/pok/arkserver"         "${env_vars[@]}"         --name "$instance_for_update"         "acekorneya/asa_server:${image_tag}"         sleep infinity) || return 1
     fi
     echo "$id"
