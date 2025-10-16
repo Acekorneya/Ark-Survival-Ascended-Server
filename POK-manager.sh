@@ -3664,37 +3664,40 @@ is_sudo() {
 }
 get_current_build_id() {
   local app_id="2430930"
-  
-  # Create a temporary container to run SteamCMD
-  echo "Creating temporary container to check for server updates..." >&2
-  local temp_container_name="pok_steamcmd_check"
-  local image_tag=$(get_docker_image_tag "")
-  
-  # Check if user is in docker group or is root to avoid using sudo
+  local existing_container="${1:-}"
   local docker_cmd="docker"
+  local cleanup_container=false
+  
   if ! (groups | grep -q '\bdocker\b' || [ "$(id -u)" -eq 0 ]); then
     docker_cmd="sudo docker"
   fi
   
-  # Run a temporary container
-  local temp_container_id=$($docker_cmd run -d --rm \
-    --name "$temp_container_name" \
-    "acekorneya/asa_server:${image_tag}" \
-    sleep infinity)
-  
-  if [ -z "$temp_container_id" ]; then
-    echo "error: could not create temporary container for SteamCMD check" >&2
-    return 1
+  if [ -z "$existing_container" ]; then
+    echo "Creating temporary container to check for server updates..." >&2
+    local temp_container_name="pok_steamcmd_check"
+    local image_tag=$(get_docker_image_tag "")
+    
+    local temp_container_id=$($docker_cmd run -d --rm \
+      -e UPDATE_MODE=TRUE \
+      --name "$temp_container_name" \
+      "acekorneya/asa_server:${image_tag}" \
+      sleep infinity)
+    
+    if [ -z "$temp_container_id" ]; then
+      echo "error: could not create temporary container for SteamCMD check" >&2
+      return 1
+    fi
+    
+    sleep 2
+    existing_container="$temp_container_name"
+    cleanup_container=true
   fi
   
-  # Wait a moment for container to initialize
-  sleep 2
+  local steamcmd_output=$($docker_cmd exec "$existing_container" /opt/steamcmd/steamcmd.sh +login anonymous +app_info_print $app_id +quit 2>/dev/null)
   
-  # Get build ID from SteamCMD inside the container
-  local steamcmd_output=$($docker_cmd exec "$temp_container_name" /opt/steamcmd/steamcmd.sh +login anonymous +app_info_print $app_id +quit 2>/dev/null)
-  
-  # Remove the temporary container
-  $docker_cmd rm -f "$temp_container_name" > /dev/null 2>&1 || true
+  if [ "$cleanup_container" = true ]; then
+    $docker_cmd rm -f "$existing_container" > /dev/null 2>&1 || true
+  fi
   
   # Extract the build ID using the same approach as common.sh
   local build_id=$(echo "$steamcmd_output" | 
@@ -5289,8 +5292,9 @@ update_server_files_and_docker() {
   
   # Create environment variables array for the container
   local env_vars=(
-    "-e TZ=UTC"
-    "-e INSTANCE_NAME=pok_update_temp"
+    "-e" "TZ=UTC"
+    "-e" "INSTANCE_NAME=pok_update_temp"
+    "-e" "UPDATE_MODE=TRUE"
   )
   
   remove_temp_update_container_if_exists() {
@@ -5416,7 +5420,7 @@ update_server_files_and_docker() {
 # Check current and latest build IDs
   echo "Checking for server updates..."
   local current_build_id=$(get_build_id_from_acf)
-  local latest_build_id=$(get_current_build_id)
+  local latest_build_id=$(get_current_build_id "$instance_for_update")
   
   echo "Current build ID: $current_build_id"
   echo "Latest build ID:  $latest_build_id"

@@ -48,6 +48,21 @@ setup_container_timezone() {
 # Setup timezone early in the initialization
 setup_container_timezone
 
+if [ "${UPDATE_MODE}" = "TRUE" ]; then
+  echo "🔧 ==== RUNNING IN UPDATE-ONLY MODE ==== 🔧"
+  echo "This container is for server file updates via SteamCMD only."
+  echo "Server startup will be skipped. Container will stay alive for update operations."
+  echo ""
+
+  update_base_dir="${ASA_DIR:-/home/pok/arkserver}"
+  mkdir -p "${update_base_dir}/ShooterGame/Binaries/Win64/logs"
+  mkdir -p "${update_base_dir}/ShooterGame/Saved/Config/WindowsServer"
+  mkdir -p "${update_base_dir}/ShooterGame/Saved/SavedArks"
+
+  echo "Container ready for update operations. Waiting for commands..."
+  exec tail -f /dev/null
+fi
+
 verify_vcredist_runtime() {
   if [ "${VERIFY_VC_RUNTIME_ON_BOOT:-FALSE}" != "TRUE" ]; then
     return 0
