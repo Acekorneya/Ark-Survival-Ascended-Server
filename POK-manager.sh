@@ -282,15 +282,28 @@ else
   if [ -d "$server_files_dir" ]; then
     file_ownership=$(stat -c '%u:%g' "$server_files_dir")
     
-    # If files are owned by 1000:1000, use legacy values for compatibility
-    if [ "$file_ownership" = "1000:1000" ]; then
-      PUID=${CONTAINER_PUID:-1000}
-      PGID=${CONTAINER_PGID:-1000}
-    else
-      # For all other cases, use the new default or match existing ownership
-      PUID=${CONTAINER_PUID:-$(echo "$file_ownership" | cut -d: -f1)}
-      PGID=${CONTAINER_PGID:-$(echo "$file_ownership" | cut -d: -f2)}
-    fi
+    case "$file_ownership" in
+      1000:1000)
+        # Legacy installs
+        PUID=${CONTAINER_PUID:-1000}
+        PGID=${CONTAINER_PGID:-1000}
+        ;;
+      7777:7777)
+        # Modern installs
+        PUID=${CONTAINER_PUID:-7777}
+        PGID=${CONTAINER_PGID:-7777}
+        ;;
+      *)
+        # Any other ownership (including root) defaults to container expectations
+        if [ -z "${CONTAINER_PUID:-}" ] && [ "$file_ownership" != "0:0" ]; then
+          echo "⚠️ Detected unexpected ServerFiles ownership ($file_ownership). Defaulting to container UID:GID 7777:7777."
+        elif [ -z "${CONTAINER_PUID:-}" ] && [ "$file_ownership" = "0:0" ]; then
+          echo "⚠️ ServerFiles directory is currently owned by root. Defaulting to container UID:GID 7777:7777."
+        fi
+        PUID=${CONTAINER_PUID:-7777}
+        PGID=${CONTAINER_PGID:-7777}
+        ;;
+    esac
   else
     # No server files yet - check script ownership as fallback
     script_ownership=$(stat -c '%u:%g' "$0")
@@ -2306,6 +2319,20 @@ start_instance() {
   fi
 
   # Check for root-owned files that might cause permission issues
+  if ! validate_server_files_ownership; then
+    echo ""
+    echo "❌ Cannot start server until ownership issues are resolved."
+    echo "   Run: sudo ./POK-manager.sh -fix"
+    return 1
+  fi
+
+  if ! validate_directory_permissions; then
+    echo ""
+    echo "❌ Cannot start server until directory permissions are corrected."
+    echo "   Run: sudo ./POK-manager.sh -fix"
+    return 1
+  fi
+
   if detect_root_owned_files; then
     echo ""
     echo "⚠️ Found root-owned files that will cause permission issues with the container."
@@ -3662,6 +3689,148 @@ is_sudo() {
     return 1
   fi
 }
+
+# Validate that server files are owned by the container user (7777 or 1000)
+validate_server_files_ownership() {
+  local server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
+  local expected_uid="${PUID:-7777}"
+  local expected_gid="${PGID:-7777}"
+
+  if [ ! -d "$server_files_dir" ]; then
+    return 0
+  fi
+
+  echo "Validating server files ownership..."
+
+  if ! command -v find >/dev/null 2>&1; then
+    echo "⚠️  'find' command not available; skipping ownership validation."
+    return 0
+  fi
+
+  local root_owned_detected=false
+  if find "$server_files_dir" \( -user 0 -o -group 0 \) -print -quit 2>/dev/null | grep -q .; then
+    root_owned_detected=true
+  fi
+
+  if [ "$root_owned_detected" = true ]; then
+    echo "⚠️  WARNING: Found files/directories owned by root under $server_files_dir"
+    mapfile -t root_owned_samples < <(find "$server_files_dir" \( -user 0 -o -group 0 \) -print 2>/dev/null | head -5)
+    if [ ${#root_owned_samples[@]} -gt 0 ]; then
+      echo "Examples:"
+      for entry in "${root_owned_samples[@]}"; do
+        local relative_path="${entry#$server_files_dir/}"
+        [ "$relative_path" = "$entry" ] && relative_path="."
+        echo "  - $relative_path"
+      done
+    fi
+
+    if is_sudo; then
+      echo "🔧 Attempting to set ownership to ${expected_uid}:${expected_gid} automatically..."
+      if chown -R "${expected_uid}:${expected_gid}" "$server_files_dir" 2>/dev/null; then
+        echo "✅ Ownership updated to ${expected_uid}:${expected_gid}"
+      else
+        echo "❌ Failed to update ownership automatically. Please check filesystem permissions."
+        return 1
+      fi
+    else
+      echo "❌ Cannot modify ownership automatically without elevated privileges."
+      echo "   Run: sudo chown -R ${expected_uid}:${expected_gid} \"$server_files_dir\""
+      echo "   Or execute: sudo ./POK-manager.sh -fix"
+      return 1
+    fi
+  fi
+
+  local ownership_mismatch_detected=false
+  if find "$server_files_dir" \( ! -user "$expected_uid" -o ! -group "$expected_gid" \) -print -quit 2>/dev/null | grep -q .; then
+    ownership_mismatch_detected=true
+  fi
+
+  if [ "$ownership_mismatch_detected" = true ]; then
+    echo "⚠️  WARNING: Found files/directories not owned by ${expected_uid}:${expected_gid}"
+    mapfile -t mismatch_samples < <(find "$server_files_dir" \( ! -user "$expected_uid" -o ! -group "$expected_gid" \) -print 2>/dev/null | head -5)
+    if [ ${#mismatch_samples[@]} -gt 0 ]; then
+      echo "Examples:"
+      for entry in "${mismatch_samples[@]}"; do
+        local relative_path="${entry#$server_files_dir/}"
+        [ "$relative_path" = "$entry" ] && relative_path="."
+        local owner=$(stat -c '%u:%g' "$entry" 2>/dev/null || echo "unknown")
+        echo "  - $relative_path (owned by $owner)"
+      done
+    fi
+
+    if is_sudo; then
+      echo "🔧 Attempting to correct ownership automatically..."
+      if chown -R "${expected_uid}:${expected_gid}" "$server_files_dir" 2>/dev/null; then
+        echo "✅ Ownership corrected to ${expected_uid}:${expected_gid}"
+      else
+        echo "❌ Failed to correct ownership automatically."
+        return 1
+      fi
+    else
+      echo "❌ Cannot correct ownership automatically without elevated privileges."
+      echo "   Run: sudo chown -R ${expected_uid}:${expected_gid} \"$server_files_dir\""
+      echo "   Or execute: sudo ./POK-manager.sh -fix"
+      return 1
+    fi
+  else
+    echo "✅ Server files ownership is correct (${expected_uid}:${expected_gid})"
+  fi
+
+  return 0
+}
+
+# Validate directory permissions so the container user can traverse server files
+validate_directory_permissions() {
+  local server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
+
+  if [ ! -d "$server_files_dir" ]; then
+    return 0
+  fi
+
+  echo "Validating directory permissions..."
+
+  if ! command -v find >/dev/null 2>&1; then
+    echo "⚠️  'find' command not available; skipping directory permission validation."
+    return 0
+  fi
+
+  local missing_exec_detected=false
+  if find "$server_files_dir" -type d ! -perm -u+x -print -quit 2>/dev/null | grep -q .; then
+    missing_exec_detected=true
+  fi
+
+  if [ "$missing_exec_detected" = true ]; then
+    echo "⚠️  WARNING: Found directories without owner execute permission."
+    mapfile -t dir_samples < <(find "$server_files_dir" -type d ! -perm -u+x -print 2>/dev/null | head -5)
+    if [ ${#dir_samples[@]} -gt 0 ]; then
+      echo "Examples:"
+      for entry in "${dir_samples[@]}"; do
+        local relative_path="${entry#$server_files_dir/}"
+        [ "$relative_path" = "$entry" ] && relative_path="."
+        echo "  - $relative_path"
+      done
+    fi
+
+    if is_sudo; then
+      echo "🔧 Attempting to restore directory permissions (u+rwx)..."
+      if find "$server_files_dir" -type d ! -perm -u+x -exec chmod u+rwx {} \; 2>/dev/null; then
+        echo "✅ Directory permissions updated."
+      else
+        echo "❌ Failed to update directory permissions automatically."
+        return 1
+      fi
+    else
+      echo "❌ Cannot modify directory permissions without elevated privileges."
+      echo "   Run: sudo find \"$server_files_dir\" -type d -exec chmod u+rwx {} \\;"
+      echo "   Or execute: sudo ./POK-manager.sh -fix"
+      return 1
+    fi
+  else
+    echo "✅ Directory permissions allow container access"
+  fi
+
+  return 0
+}
 get_current_build_id() {
   local app_id="2430930"
   local existing_container="${1:-}"
@@ -4192,6 +4361,20 @@ manage_service() {
     ;;
   -setup)
     root_tasks
+    echo ""
+    local setup_validation_failed=false
+    if ! validate_server_files_ownership; then
+      setup_validation_failed=true
+    fi
+    if ! validate_directory_permissions; then
+      setup_validation_failed=true
+    fi
+    if [ "$setup_validation_failed" = true ]; then
+      echo ""
+      echo "❌ Setup detected host permission issues that require attention."
+      echo "   Please run: sudo ./POK-manager.sh -fix"
+      exit 1
+    fi
     echo "Setup completed. Please run './POK-manager.sh -create <instance_name>' to create an instance."
     ;;
   -create)
@@ -4227,8 +4410,8 @@ manage_service() {
     exit 0
     ;;
   -fix)
-    # Check for root-owned files and fix permissions
-    echo "Checking for root-owned files that could cause container permission issues..."
+    echo "===== POK-MANAGER FILE PERMISSION FIX ====="
+    echo ""
     
     # Check if running with sudo or root
     if [ "$(id -u)" -eq 0 ]; then
@@ -4278,22 +4461,54 @@ manage_service() {
     fi
     
     # Ensure ServerFiles directory has correct permissions to prevent SteamCMD error 0x602
-    echo "Ensuring ServerFiles directory has correct ownership..."
+    echo "Step 1: Ensuring ServerFiles directory has correct ownership..."
     mkdir -p "${BASE_DIR}/ServerFiles/arkserver"
     adjust_ownership_and_permissions "${BASE_DIR}/ServerFiles/arkserver"
     
     # Create FirstLaunchFlags directory structure to prevent container startup errors
-    echo "Ensuring FirstLaunchFlags directory structure exists..."
+    echo ""
+    echo "Step 2: Ensuring FirstLaunchFlags directory structure exists..."
     mkdir -p "${BASE_DIR}/ServerFiles/arkserver/ShooterGame/Saved/Config/FirstLaunchFlags"
     adjust_ownership_and_permissions "${BASE_DIR}/ServerFiles/arkserver/ShooterGame/Saved/Config"
     
-    # Then run the normal fix_root_owned_files function
+    echo ""
+    echo "Step 3: Scanning for remaining ownership issues..."
     fix_root_owned_files
+    local fix_root_status=$?
+    local fix_failed=false
+    if [ "$fix_root_status" -ne 0 ]; then
+      fix_failed=true
+    fi
     
     echo ""
-    echo "✅ Permission check and fix completed."
-    echo "If you were running the script using sudo before, try running it without sudo now:"
-    echo "./POK-manager.sh [your-command]"
+    echo "Step 4: Validating server files ownership and permissions..."
+    if ! validate_server_files_ownership; then
+      fix_failed=true
+    fi
+    if ! validate_directory_permissions; then
+      fix_failed=true
+    fi
+    
+    if is_sudo && [ -d "${BASE_DIR}/ServerFiles/arkserver" ]; then
+      echo ""
+      echo "Step 5: Normalizing file and directory permissions..."
+      find "${BASE_DIR}/ServerFiles/arkserver" -type f -exec chmod u+rw {} \; 2>/dev/null || true
+      find "${BASE_DIR}/ServerFiles/arkserver" -type d -exec chmod u+rwx {} \; 2>/dev/null || true
+      echo "✅ Server files are now owner-readable and writable."
+    else
+      echo ""
+      echo "Step 5: Skipped permission normalization (requires sudo)."
+    fi
+    
+    echo ""
+    if [ "$fix_failed" = true ]; then
+      echo "⚠️ Permission fix completed with warnings. Review the messages above for manual follow-up."
+      echo "If issues persist, run: sudo ./POK-manager.sh -fix"
+    else
+      echo "✅ Permission check and fix completed."
+      echo "If you were running the script using sudo before, try running it without sudo now:"
+      echo "./POK-manager.sh [your-command]"
+    fi
     ;;
   -restart | -shutdown)
     execute_rcon_command "$action" "$instance_name" "${additional_args[@]}"
