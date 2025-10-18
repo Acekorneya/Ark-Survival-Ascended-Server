@@ -756,10 +756,27 @@ sync_temp_into_live_dir() {
     return 1
   fi
 
-  mkdir -p "$live_dir" 2>/dev/null || true
+  if ! mkdir -p "$live_dir" 2>/dev/null; then
+    echo "[ERROR] Unable to create or access live directory $live_dir (check host permissions)"
+    return 1
+  fi
+
+  if [ ! -w "$live_dir" ]; then
+    echo "[ERROR] Live directory $live_dir is not writable by the container user (check host permissions)"
+    return 1
+  fi
+
+  if [ "$(ls -A "$live_dir" 2>/dev/null)" ]; then
+    echo "[INFO] Ensuring existing server files are writable before syncing..."
+    if ! chmod -R u+w "$live_dir" 2>/dev/null; then
+      echo "[WARNING] Could not make all existing files writable in $live_dir. Updates may fail for some files."
+    fi
+  fi
 
   echo "[INFO] Syncing temporary download into $live_dir using cp"
-  (cd "$temp_dir" && find . -print0) | while IFS= read -r -d '' item; do
+  local sync_failure=0
+
+  while IFS= read -r -d '' item; do
     local relative="${item#./}"
     [ -z "$relative" ] && continue
 
@@ -776,12 +793,33 @@ sync_temp_into_live_dir() {
     local dest_path="$live_dir/$relative"
 
     if [ -d "$source_path" ]; then
-      mkdir -p "$dest_path"
+      if ! mkdir -p "$dest_path"; then
+        echo "[ERROR] Failed to create directory $dest_path (check permissions)"
+        sync_failure=1
+      fi
     else
-      mkdir -p "$(dirname "$dest_path")" 2>/dev/null || true
-      cp -f "$source_path" "$dest_path"
+      local dest_parent
+      dest_parent="$(dirname "$dest_path")"
+
+      if ! mkdir -p "$dest_parent" 2>/dev/null; then
+        echo "[ERROR] Failed to create directory $dest_parent (check permissions)"
+        sync_failure=1
+        continue
+      fi
+
+      if ! cp -f "$source_path" "$dest_path"; then
+        echo "[ERROR] Failed to copy $source_path to $dest_path (check permissions)"
+        sync_failure=1
+      fi
     fi
-  done
+  done < <(cd "$temp_dir" && find . -print0)
+
+  if [ "$sync_failure" -ne 0 ]; then
+    echo "[ERROR] One or more files failed to sync from $temp_dir into $live_dir"
+    return 1
+  fi
+
+  return 0
 }
 
 # Persist the Steam appmanifest file from temporary directory into live/persistent locations
@@ -799,6 +837,27 @@ persist_manifest_from_temp() {
   echo "[INFO] Copying manifest into live directory and persistent storage"
   cp "$manifest_source" "$ASA_DIR/steamapps/appmanifest_${APPID}.acf"
   cp "$manifest_source" "$PERSISTENT_ACF_FILE"
+}
+
+# Ensure copied server files have sane permissions for the container user
+ensure_server_file_permissions() {
+  local target_dir="${1:-$ASA_DIR}"
+
+  if [ ! -d "$target_dir" ]; then
+    return 0
+  fi
+
+  echo "[INFO] Ensuring permissions on server files in $target_dir"
+  if ! chmod -R u+rwX,go+rX "$target_dir" 2>/dev/null; then
+    echo "[WARNING] Could not update permissions for all files in $target_dir (non-critical)"
+  fi
+
+  local server_binary="$target_dir/ShooterGame/Binaries/Win64/ArkAscendedServer.exe"
+  if [ -f "$server_binary" ] && [ ! -x "$server_binary" ]; then
+    chmod +x "$server_binary" 2>/dev/null || {
+      echo "[WARNING] Unable to set execute permission on $server_binary (non-critical)"
+    }
+  fi
 }
 
 # High level helper to run the full staged download workflow
@@ -824,6 +883,8 @@ perform_staged_server_download() {
     echo "[ERROR] Failed to persist steam manifest after download"
     return 1
   fi
+
+  ensure_server_file_permissions "$ASA_DIR"
 
   sync
   sleep 2

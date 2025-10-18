@@ -12,6 +12,9 @@
 - Installation lock holders now re-check build IDs after acquiring the lock; peers skip redundant downloads once another container finishes staging
 - Update workflow now reuses a single UPDATE_MODE temp container for build checks and SteamCMD downloads, preventing init.sh from launching the game server during updates
 - POK-manager -update now validates free disk space and cleans/recreates the staging container between retries to avoid SteamCMD mid-download failures
+- Fixed: Permission denied errors during server file updates
+- Added: Automatic permission management for existing files before updates
+- Improved: Error tracking and reporting during file copy operations
 
 ## Version 2.1.77
 ### Timezone and Restart Notification Fixes
