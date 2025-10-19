@@ -17,6 +17,7 @@
 - Improved: Error tracking and reporting during file copy operations
 - Added: Pre-start and setup validation that blocks launch until ServerFiles ownership/permissions match the container user, with clear remediation guidance
 - Enhanced: `-fix` command now performs multi-step ownership repair, directory permission checks, and normalization to recover from root-owned host files
+- Prevented root-owned `ShooterGame` mounts by pre-seeding required directories before Docker volumes are attached
 
 ## Version 2.1.77
 ### Timezone and Restart Notification Fixes

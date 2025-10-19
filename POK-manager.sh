@@ -2318,6 +2318,15 @@ start_instance() {
     echo "✅ Docker-compose file validation passed. All instance names match: $instance_name"
   fi
 
+  echo ""
+  if ! ensure_volume_mount_directories "$instance_name"; then
+    echo ""
+    echo "❌ Cannot start server due to volume mount directory issues."
+    echo "   Run: sudo ./POK-manager.sh -fix"
+    return 1
+  fi
+  echo ""
+
   # Check for root-owned files that might cause permission issues
   if ! validate_server_files_ownership; then
     echo ""
@@ -3779,6 +3788,83 @@ validate_server_files_ownership() {
   return 0
 }
 
+# Ensure critical volume mount directories exist with correct ownership before container start
+ensure_volume_mount_directories() {
+  local instance_name="$1"
+
+  if [ -z "$instance_name" ]; then
+    echo "⚠️ Instance name required to prepare volume mount directories."
+    return 1
+  fi
+
+  local compose_file="${BASE_DIR}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
+  if [ ! -f "$compose_file" ]; then
+    echo "⚠️ Compose file not found for instance ${instance_name}: $compose_file"
+    return 1
+  fi
+
+  local expected_uid="${PUID:-7777}"
+  local expected_gid="${PGID:-7777}"
+  local server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
+  local shooter_game_dir="${server_files_dir}/ShooterGame"
+  local saved_dir="${shooter_game_dir}/Saved"
+  local config_dir="${saved_dir}/Config"
+  local binaries_dir="${shooter_game_dir}/Binaries/Win64"
+
+  echo "Ensuring volume mount directories exist..."
+
+  # Always ensure base server directory exists
+  local directories_to_ensure=(
+    "$server_files_dir"
+    "$shooter_game_dir"
+    "$saved_dir"
+    "$config_dir"
+    "$binaries_dir"
+  )
+
+  # Detect API logs volume requirement
+  local api_enabled=false
+  if grep -E "^ *- +API[:=][[:space:]]*TRUE" "$compose_file" >/dev/null 2>&1; then
+    api_enabled=true
+    directories_to_ensure+=("${binaries_dir}/logs")
+  fi
+
+  local create_error=false
+  for dir in "${directories_to_ensure[@]}"; do
+    if [ ! -d "$dir" ]; then
+      if ! mkdir -p "$dir" 2>/dev/null; then
+        echo "❌ Unable to create directory $dir. Check host permissions."
+        create_error=true
+      fi
+    fi
+  done
+
+  if [ "$create_error" = true ]; then
+    return 1
+  fi
+
+  # Verify ownership of base ServerFiles directory
+  if [ -d "$server_files_dir" ]; then
+    local server_owner
+    server_owner=$(stat -c '%u:%g' "$server_files_dir" 2>/dev/null || echo "")
+    if [ -n "$server_owner" ] && [ "$server_owner" != "${expected_uid}:${expected_gid}" ]; then
+      if is_sudo; then
+        echo "  - Fixing ownership of $server_files_dir to ${expected_uid}:${expected_gid}..."
+        if ! chown -R "${expected_uid}:${expected_gid}" "$server_files_dir" 2>/dev/null; then
+          echo "❌ Failed to set ownership on $server_files_dir to ${expected_uid}:${expected_gid}."
+          return 1
+        fi
+      else
+        echo "❌ ${server_files_dir} is owned by ${server_owner}. Run: sudo ./POK-manager.sh -fix"
+        return 1
+      fi
+    fi
+  fi
+
+  echo "✅ Volume mount directories ready for ${instance_name}"
+  return 0
+}
+
 # Validate directory permissions so the container user can traverse server files
 validate_directory_permissions() {
   local server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
@@ -4362,6 +4448,19 @@ manage_service() {
   -setup)
     root_tasks
     echo ""
+    echo "Creating base server files directory structure..."
+    local server_files_root="${BASE_DIR}/ServerFiles/arkserver"
+    local expected_uid="${PUID:-7777}"
+    local expected_gid="${PGID:-7777}"
+
+    mkdir -p "${server_files_root}/ShooterGame/Saved/Config" 2>/dev/null
+    mkdir -p "${server_files_root}/ShooterGame/Binaries/Win64" 2>/dev/null
+
+    if is_sudo && [ -d "$server_files_root" ]; then
+      chown -R "${expected_uid}:${expected_gid}" "$server_files_root" 2>/dev/null || true
+    fi
+
+    echo ""
     local setup_validation_failed=false
     if ! validate_server_files_ownership; then
       setup_validation_failed=true
@@ -4489,11 +4588,27 @@ manage_service() {
       fix_failed=true
     fi
     
-    if is_sudo && [ -d "${BASE_DIR}/ServerFiles/arkserver" ]; then
+    if is_sudo; then
       echo ""
       echo "Step 5: Normalizing file and directory permissions..."
-      find "${BASE_DIR}/ServerFiles/arkserver" -type f -exec chmod u+rw {} \; 2>/dev/null || true
-      find "${BASE_DIR}/ServerFiles/arkserver" -type d -exec chmod u+rwx {} \; 2>/dev/null || true
+      local server_files_root="${BASE_DIR}/ServerFiles/arkserver"
+      local expected_uid="${PUID:-7777}"
+      local expected_gid="${PGID:-7777}"
+
+      mkdir -p "${server_files_root}/ShooterGame/Saved/Config" 2>/dev/null
+      mkdir -p "${server_files_root}/ShooterGame/Binaries/Win64" 2>/dev/null
+
+      if [ -d "$server_files_root" ]; then
+        chown -R "${expected_uid}:${expected_gid}" "$server_files_root" 2>/dev/null || true
+        find "$server_files_root" -type f -exec chmod u+rw {} \; 2>/dev/null || true
+        find "$server_files_root" -type d -exec chmod u+rwx {} \; 2>/dev/null || true
+      fi
+
+      echo "  - Verifying instance-specific volume mounts..."
+      for instance in $(list_instances); do
+        ensure_volume_mount_directories "$instance" || true
+      done
+
       echo "✅ Server files are now owner-readable and writable."
     else
       echo ""
