@@ -18,6 +18,7 @@
 - Added: Pre-start and setup validation that blocks launch until ServerFiles ownership/permissions match the container user, with clear remediation guidance
 - Enhanced: `-fix` command now performs multi-step ownership repair, directory permission checks, and normalization to recover from root-owned host files
 - Prevented root-owned `ShooterGame` mounts by pre-seeding required directories before Docker volumes are attached
+- Fixed: Automatic removal of problematic Steam DLL files that interfere with Proton 9 server startup (steamclient.dll, steamclient64.dll, tier0_s.dll, tier0_s64.dll, vstdlib_s.dll, vstdlib_s64.dll)
 
 ## Version 2.1.77
 ### Timezone and Restart Notification Fixes

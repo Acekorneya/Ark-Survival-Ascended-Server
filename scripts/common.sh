@@ -860,6 +860,44 @@ ensure_server_file_permissions() {
   fi
 }
 
+# Clean up problematic Steam DLL files that interfere with Proton/Wine server startup
+# These DLLs are sometimes added by SteamCMD updates but cause server launch failures
+cleanup_steam_dlls() {
+  local target_dir="${1:-$ASA_DIR}"
+  local bin_dir="$target_dir/ShooterGame/Binaries/Win64"
+
+  if [ ! -d "$bin_dir" ]; then
+    echo "[INFO] Binaries directory not found, skipping DLL cleanup"
+    return 0
+  fi
+
+  echo "[INFO] Cleaning up Steam client DLL files from $bin_dir"
+
+  local dlls_to_remove=(
+    "steamclient.dll"
+    "steamclient64.dll"
+    "tier0_s.dll"
+    "tier0_s64.dll"
+    "vstdlib_s.dll"
+    "vstdlib_s64.dll"
+  )
+
+  local removed_count=0
+  for dll in "${dlls_to_remove[@]}"; do
+    if [ -f "$bin_dir/$dll" ]; then
+      echo "[INFO] Removing problematic DLL: $dll"
+      rm -f "$bin_dir/$dll"
+      removed_count=$((removed_count + 1))
+    fi
+  done
+
+  if [ $removed_count -gt 0 ]; then
+    echo "[SUCCESS] Removed $removed_count Steam DLL file(s) that can interfere with server startup"
+  else
+    echo "[INFO] No Steam DLL files found to remove"
+  fi
+}
+
 # High level helper to run the full staged download workflow
 perform_staged_server_download() {
   local temp_dir="$1"
@@ -885,6 +923,8 @@ perform_staged_server_download() {
   fi
 
   ensure_server_file_permissions "$ASA_DIR"
+
+  cleanup_steam_dlls "$ASA_DIR"
 
   sync
   sleep 2

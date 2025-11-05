@@ -305,7 +305,11 @@ start_server() {
   
   # Change to the binary directory
   cd "${ASA_DIR}/ShooterGame/Binaries/Win64"
-  
+
+  # Defensive cleanup: Remove problematic Steam DLL files that interfere with Proton/Wine
+  echo "[INFO] Performing pre-launch Steam DLL cleanup..."
+  rm -f steamclient.dll steamclient64.dll tier0_s.dll tier0_s64.dll vstdlib_s.dll vstdlib_s64.dll 2>/dev/null || true
+
   # Improved Proton path detection with multiple fallbacks
   local FOUND_PROTON=false
   local PROTON_EXECUTABLE=""
