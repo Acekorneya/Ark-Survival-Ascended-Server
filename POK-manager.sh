@@ -3976,6 +3976,10 @@ get_current_build_id() {
   echo "$build_id"
 }
 
+has_zstd() {
+    command -v zstd &>/dev/null && tar --help | grep -q zstd
+}
+
 manage_backup_rotation() {
   local instance_name="$1"
   local max_backups="$2"
@@ -3987,7 +3991,7 @@ manage_backup_rotation() {
   local max_size_bytes=$((max_size_gb * 1024 * 1024 * 1024))
 
   # Get a list of backup files sorted by modification time (oldest first)
-  local backup_files=($(ls -tr "${backup_dir}/"*.tar.gz 2>/dev/null))
+  local backup_files=($(ls -tr "${backup_dir}/"*.tar.{gz,zst} 2>/dev/null))
   
   # Calculate the total size of the backups
   local total_size_bytes=0
@@ -4145,7 +4149,11 @@ backup_single_instance() {
   local timestamp=$(TZ="$timezone" date +"%Y-%m-%d_%H-%M-%S")
   
   # Format the backup file name
-  local backup_file="${instance_name}_backup_${timestamp}.tar.gz"
+  local backup_ext="tar.gz"
+  if has_zstd; then
+    backup_ext="tar.zst"
+  fi
+  local backup_file="${instance_name}_backup_${timestamp}.${backup_ext}"
   
   # Create backup directory with proper permissions if it doesn't exist
   if [ ! -d "$backup_dir" ]; then
@@ -4175,7 +4183,7 @@ backup_single_instance() {
   local saved_arks_dir="${instance_dir}/Saved/SavedArks"
   if [ -d "$saved_arks_dir" ]; then
     echo "Creating backup for instance $instance_name..."
-    tar -czf "${backup_dir}/${backup_file}" -C "$instance_dir/Saved" "SavedArks"
+    tar -caf "${backup_dir}/${backup_file}" -C "$instance_dir/Saved" "SavedArks"
     echo "Backup created: ${backup_dir}/${backup_file}"
     
     # Set proper permissions on the backup file
@@ -4246,7 +4254,7 @@ restore_instance() {
   local instance_backup_dir="${backup_dir}/${instance_name}"
 
   if [ -d "$instance_backup_dir" ]; then
-    local backup_files=($(ls -1 "$instance_backup_dir"/*.tar.gz 2>/dev/null))
+    local backup_files=($(ls -1 "$instance_backup_dir"/*.tar.{gz,zst} 2>/dev/null))
     if [ ${#backup_files[@]} -eq 0 ]; then
       echo "No backups found for instance $instance_name."
       return
@@ -4285,7 +4293,7 @@ restore_instance() {
 
       echo "Restoring backup: $(basename "$selected_backup") ..."
       mkdir -p "$saved_arks_dir"
-      tar -xzf "$selected_backup" -C "$instance_dir/Saved"
+      tar -xaf "$selected_backup" -C "$instance_dir/Saved"
       adjust_ownership_and_permissions "$saved_arks_dir"
       echo "Backup restored successfully!"
 
