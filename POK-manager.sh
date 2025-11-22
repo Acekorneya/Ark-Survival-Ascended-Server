@@ -1519,9 +1519,11 @@ read_docker_compose_config() {
 
   # Parse the environment section
   local env_vars
-  mapfile -t env_vars < <(yq e '.services.asaserver.environment[]' "$docker_compose_file")
+  mapfile -t env_vars < <(yq -e '.services.asaserver.environment[]' "$docker_compose_file")
 
   for env_var in "${env_vars[@]}"; do
+    env_var="${env_var%\"}"
+    env_var="${env_var#\"}"
     # Splitting each line into key and value
     IFS='=' read -r key value <<< "${env_var}"
     key="${key//-/_}" # Replace hyphens with underscores to match your script's keys
@@ -1564,7 +1566,7 @@ read_docker_compose_config() {
 
   # Separately parse the mem_limit
   local mem_limit
-  mem_limit=$(yq e '.services.asaserver.mem_limit' "$docker_compose_file")
+  mem_limit=$(yq -e '.services.asaserver.mem_limit' "$docker_compose_file")
   if [ ! -z "$mem_limit" ]; then
     # Assuming you want to strip the last character (G) and store just the numeric part
     # If you want to keep the 'G', remove the `${mem_limit%?}` manipulation
