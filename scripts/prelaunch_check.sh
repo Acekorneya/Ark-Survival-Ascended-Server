@@ -1,9 +1,11 @@
 #!/bin/bash
+#
+# Pre-launch environment checks for Proton, Wine, and required server paths.
 # prelaunch_check.sh - Comprehensive environment check before starting the ARK server
 
-source /home/pok/scripts/common.sh
-
-echo "====== ARK Survival Ascended Pre-Launch Environment Check ======"
+POK_SCRIPTS_DIR="${POK_SCRIPTS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/common.sh"
 
 # Function to check and create directory if it doesn't exist
 check_create_directory() {
@@ -335,7 +337,13 @@ run_all_checks() {
   fi
 }
 
-# Run all checks
-run_all_checks
+main() {
+  prepare_runtime_env
+  echo "====== ARK Survival Ascended Pre-Launch Environment Check ======"
+  run_all_checks
+  echo "====== Pre-Launch Environment Check Complete ======"
+}
 
-echo "====== Pre-Launch Environment Check Complete ======" 
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

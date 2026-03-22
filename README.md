@@ -98,6 +98,7 @@ After these steps, you'll have a working Ark Survival Ascended server setup. See
 - [Beta Testing](#beta-testing)
 - [Safe Update Mechanism](#safe-update-mechanism)
 - [Docker Compose Configuration](#docker-compose-configuration)
+- [Container Health Endpoint](#container-health-endpoint)
 - [Ports](#ports)
 - [Troubleshooting](#troubleshooting)
 - [Hypervisor](#hypervisors)
@@ -280,6 +281,43 @@ You can always switch back to the stable branch with:
 ```bash
 ./POK-manager.sh -stable
 ```
+
+## Container Health Endpoint
+
+The container now includes a built-in internal health endpoint:
+
+- `GET /healthz` on port `8080`
+- not published by default in generated Docker Compose files
+- Docker image health status is reported automatically through the image `HEALTHCHECK`
+
+Health behavior:
+
+- returns `200 OK` when the server is fully healthy or degraded-but-still-running
+- returns `503` only while startup is incomplete or on a hard unhealthy condition
+- when `RCON_ENABLED=TRUE`, a persistent local RCON failure is reported as `degraded` instead of forcing a restart by itself
+- when `RCON_ENABLED=FALSE`, it uses process + startup-log readiness checks
+
+Internal self-healing uses the direct probe script, not the HTTP endpoint. Hard `unhealthy` states still restart after consecutive failures. A server that is advertising for join but has a local RCON issue is treated as `degraded`: it stays running at first, gets one delayed automatic recovery restart after 24 hours of continuous degraded state, and then stays running with clear warnings if RCON is still broken after that restart.
+
+For Kubernetes, use the endpoint from inside the pod network rather than publishing it on the host:
+
+```yaml
+startupProbe:
+  httpGet:
+    path: /healthz
+    port: 8080
+  periodSeconds: 10
+  failureThreshold: 180
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 8080
+  periodSeconds: 30
+  failureThreshold: 3
+```
+
+Because the endpoint is built into the image, v1 does not require any new `POK-manager.sh` settings or generated Compose fields.
 
 ### Installation Tips for Different User Types
 
@@ -611,6 +649,8 @@ When creating a new server instance using POK-manager.sh, a Docker Compose confi
 | `DISPLAY_POK_MONITOR_MESSAGE` | `FALSE`           | TRUE to Show the Server Monitor Messages / Update Monitor Shutdown                        |
 | `CPU_OPTIMIZATION`            | `FALSE`           | Set to TRUE to enable CPU optimization helps reduce high CPU usage on some systems, FALSE to disable |
 | `UPDATE_SERVER`               | `TRUE`            | Enable or disable update checks                                                           |
+| `UPDATE_COORDINATION_ROLE`    | auto-assigned     | Only written for multi-instance auto-update setups; one instance becomes `MASTER`, others become `FOLLOWER` |
+| `UPDATE_COORDINATION_PRIORITY`| auto-assigned     | Only written for multi-instance auto-update setups; lower number means earlier failover priority |
 | `CHECK_FOR_UPDATE_INTERVAL`   | `24`              | Check for Updates interval in hours                                                       |
 | `UPDATE_WINDOW_MINIMUM_TIME`  | `12:00 AM`        | Defines the minimum time, relative to server time, when an update check should run        |
 | `UPDATE_WINDOW_MAXIMUM_TIME`  | `11:59 PM`        | Defines the maximum time, relative to server time, when an update check should run        |
@@ -630,6 +670,16 @@ When creating a new server instance using POK-manager.sh, a Docker Compose confi
 | `PASSIVE_MODS`                | `123456`          | Replace with your passive mods IDs                                                        |
 | `MOD_IDS`                     | `123456`          | Add your mod IDs here, separated by commas, e.g., 123456789,987654321                     |
 | `CUSTOM_SERVER_ARGS`          |                   | If You need to add more Custom Args -ForceRespawnDinos -ForceAllowCaveFlyers              |
+
+**Multi-instance auto-update coordination**
+
+- Coordination is only enabled when more than one managed instance has `UPDATE_SERVER=TRUE`.
+- POK-manager auto-assigns one `MASTER` and ordered `FOLLOWER`s. The master is the only instance allowed to update shared server files and perform the first post-update startup.
+- Followers wait until the master reaches a startup-ready marker (`Full Startup:` or `Server has completed startup and is now advertising for join`), then start automatically with a short stagger.
+- `-start -all` and `-restart -all` both bring up the leader first, wait for leader readiness, and then continue with followers so shared server-file and mod startup work happens only once.
+- Instances with `UPDATE_SERVER=FALSE` are excluded from this automation and remain manual-update instances.
+- If `UPDATE_COORDINATION_ROLE` and `UPDATE_COORDINATION_PRIORITY` are absent, the container stays on the legacy lock-based update path. This is the supported fallback for Kubernetes and other external orchestrators that do not use POK-manager.
+- If a compose file still says `FOLLOWER` and you start it manually, the container will refuse to continue until a master-led cycle exists. Use `POK-manager.sh` for managed promotion/ordering, or change the intended leader instance to `MASTER` before starting it yourself.
 
 **Note:** User IDs (PUID) and Group IDs (PGID) are fixed at build time and cannot be changed at runtime:
 - 2_0_latest images use PUID:GID 1000:1000
@@ -658,6 +708,10 @@ services:
       - CPU_OPTIMIZATION=FALSE               # Set to TRUE to enable CPU optimization helps reduce high CPU usage on some systems, FALSE to disable
       - DISPLAY_POK_MONITOR_MESSAGE=FALSE    # Or TRUE to Show the Server Monitor Messages / Update Monitor 
       - UPDATE_SERVER=TRUE                   # Enable or disable update checks
+      # Only used when more than one instance has UPDATE_SERVER=TRUE.
+      # POK-manager writes these automatically for managed multi-instance setups.
+      - UPDATE_COORDINATION_ROLE=MASTER      # MASTER or FOLLOWER
+      - UPDATE_COORDINATION_PRIORITY=1       # Lower number = earlier failover priority
       - CHECK_FOR_UPDATE_INTERVAL=24         # Check for Updates interval in hours
       - UPDATE_WINDOW_MINIMUM_TIME=12:00 AM  # Defines the minimum time, relative to server time, when an update check should run
       - UPDATE_WINDOW_MAXIMUM_TIME=11:59 PM  # Defines the maximum time, relative to server time, when an update 
@@ -1190,4 +1244,3 @@ Thank you for your support!
     <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Acekorneya/Ark-Survival-Ascended-Server&type=Date" />
   </picture>
 </a>
-

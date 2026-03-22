@@ -1,20 +1,20 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.79"
-POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
+POK_MANAGER_VERSION="2.1.80"
+POK_MANAGER_BRANCH="beta" # Can be "stable" or "beta"
 
 # Get the base directory for the script
-SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
-BASE_DIR="$SCRIPT_DIR"
+if [[ -z "${BASE_DIR:-}" ]]; then
+  SCRIPT_DIR=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+  BASE_DIR="$SCRIPT_DIR"
+else
+  SCRIPT_DIR="${SCRIPT_DIR:-$BASE_DIR}"
+fi
+POK_MANAGER_SCRIPT_PATH="${POK_MANAGER_SCRIPT_PATH:-$(readlink -f "${BASH_SOURCE[0]}")}"
 
-# Create a path preference file 
-PATH_CONFIG_FILE="${BASE_DIR}/config/POK-manager/path_preferences.txt"
-
-# Store the last displayed version for patch notes
-LAST_VERSION_FILE="${BASE_DIR}/config/POK-manager/last_displayed_version.txt"
-
-# Create config directory if it doesn't exist
-mkdir -p "${BASE_DIR}/config/POK-manager"
+PATH_CONFIG_FILE=""
+LAST_VERSION_FILE=""
+POK_MANAGER_INITIALIZED=0
 
 # Function to determine the expected ownership (UID:GID) based on installation mode
 get_expected_ownership() {
@@ -69,8 +69,73 @@ initialize_last_version() {
   fi
 }
 
-# Call initialize at startup
-initialize_last_version
+_init() {
+  if [ "$POK_MANAGER_INITIALIZED" = "1" ]; then
+    return 0
+  fi
+
+  PATH_CONFIG_FILE="${BASE_DIR}/config/POK-manager/path_preferences.txt"
+  LAST_VERSION_FILE="${BASE_DIR}/config/POK-manager/last_displayed_version.txt"
+  POK_SCRIPTS_DIR="${POK_SCRIPTS_DIR:-${BASE_DIR}/scripts}"
+
+  mkdir -p "${BASE_DIR}/config/POK-manager"
+  initialize_last_version
+
+  if [ -f "${BASE_DIR}/config/POK-manager/beta_mode" ]; then
+    POK_MANAGER_BRANCH="beta"
+  fi
+
+  if [ "$POK_MANAGER_BRANCH" = "beta" ]; then
+    PUID=${CONTAINER_PUID:-7777}
+    PGID=${CONTAINER_PGID:-7777}
+  else
+    local server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
+
+    if [ -d "$server_files_dir" ]; then
+      local file_ownership
+      file_ownership=$(stat -c '%u:%g' "$server_files_dir")
+
+      case "$file_ownership" in
+        1000:1000)
+          PUID=${CONTAINER_PUID:-1000}
+          PGID=${CONTAINER_PGID:-1000}
+          ;;
+        7777:7777)
+          PUID=${CONTAINER_PUID:-7777}
+          PGID=${CONTAINER_PGID:-7777}
+          ;;
+        *)
+          if [ -z "${CONTAINER_PUID:-}" ] && [ "$file_ownership" != "0:0" ]; then
+            echo "⚠️ Detected unexpected ServerFiles ownership ($file_ownership). Defaulting to container UID:GID 7777:7777."
+          elif [ -z "${CONTAINER_PUID:-}" ] && [ "$file_ownership" = "0:0" ]; then
+            echo "⚠️ ServerFiles directory is currently owned by root. Defaulting to container UID:GID 7777:7777."
+          fi
+          PUID=${CONTAINER_PUID:-7777}
+          PGID=${CONTAINER_PGID:-7777}
+          ;;
+      esac
+    else
+      local script_ownership
+      script_ownership=$(stat -c '%u:%g' "${BASH_SOURCE[0]}")
+
+      if [ "$script_ownership" = "1000:1000" ]; then
+        PUID=${CONTAINER_PUID:-1000}
+        PGID=${CONTAINER_PGID:-1000}
+      elif [ "$script_ownership" = "7777:7777" ]; then
+        PUID=${CONTAINER_PUID:-7777}
+        PGID=${CONTAINER_PGID:-7777}
+      elif [ "$(id -u)" -eq 7777 ] || [ "$(id -u)" -eq 1000 ]; then
+        PUID=${CONTAINER_PUID:-$(id -u)}
+        PGID=${CONTAINER_PGID:-$(id -g)}
+      else
+        PUID=${CONTAINER_PUID:-7777}
+        PGID=${CONTAINER_PGID:-7777}
+      fi
+    fi
+  fi
+
+  POK_MANAGER_INITIALIZED=1
+}
 
 # Function to create and display the POK-Manager logo
 display_logo() {
@@ -125,11 +190,6 @@ EOF
     fi
   fi
 }
-
-# Check for beta mode early
-if [ -f "${BASE_DIR}/config/POK-manager/beta_mode" ]; then
-  POK_MANAGER_BRANCH="beta"
-fi
 
 # Function to check if volume paths in docker-compose files match the current BASE_DIR
 check_volume_paths() {
@@ -263,71 +323,6 @@ get_instance_container_id() {
   echo "$container_id"
 }
 
-# Define colors for pretty output
-RED='\033[0;31m'
-
-# Set PUID and PGID to match the container's expected values
-# Legacy default was 1000:1000, new default is 7777:7777
-if [ "$POK_MANAGER_BRANCH" = "beta" ]; then
-  # Beta branch uses 7777:7777
-  PUID=${CONTAINER_PUID:-7777}
-  PGID=${CONTAINER_PGID:-7777}
-else
-  # For stable branch, determine the appropriate PUID:PGID based on file ownership
-  # For new installations, default to 7777:7777 (new recommended default)
-  # Only use 1000:1000 if server files exist and are owned by 1000:1000
-  server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
-  
-  # First, check if server files directory exists
-  if [ -d "$server_files_dir" ]; then
-    file_ownership=$(stat -c '%u:%g' "$server_files_dir")
-    
-    case "$file_ownership" in
-      1000:1000)
-        # Legacy installs
-        PUID=${CONTAINER_PUID:-1000}
-        PGID=${CONTAINER_PGID:-1000}
-        ;;
-      7777:7777)
-        # Modern installs
-        PUID=${CONTAINER_PUID:-7777}
-        PGID=${CONTAINER_PGID:-7777}
-        ;;
-      *)
-        # Any other ownership (including root) defaults to container expectations
-        if [ -z "${CONTAINER_PUID:-}" ] && [ "$file_ownership" != "0:0" ]; then
-          echo "⚠️ Detected unexpected ServerFiles ownership ($file_ownership). Defaulting to container UID:GID 7777:7777."
-        elif [ -z "${CONTAINER_PUID:-}" ] && [ "$file_ownership" = "0:0" ]; then
-          echo "⚠️ ServerFiles directory is currently owned by root. Defaulting to container UID:GID 7777:7777."
-        fi
-        PUID=${CONTAINER_PUID:-7777}
-        PGID=${CONTAINER_PGID:-7777}
-        ;;
-    esac
-  else
-    # No server files yet - check script ownership as fallback
-    script_ownership=$(stat -c '%u:%g' "$0")
-    
-    # If script is owned by 1000:1000, use legacy values
-    if [ "$script_ownership" = "1000:1000" ]; then
-      PUID=${CONTAINER_PUID:-1000}
-      PGID=${CONTAINER_PGID:-1000}
-    # If script is owned by 7777:7777, use those values
-    elif [ "$script_ownership" = "7777:7777" ]; then
-      PUID=${CONTAINER_PUID:-7777}
-      PGID=${CONTAINER_PGID:-7777}
-    # For new installations with any other ownership, use current user's UID/GID if it's 7777 or 1000
-    elif [ "$(id -u)" -eq 7777 ] || [ "$(id -u)" -eq 1000 ]; then
-      PUID=${CONTAINER_PUID:-$(id -u)}
-      PGID=${CONTAINER_PGID:-$(id -g)}
-    else
-      # Use the new recommended default
-      PUID=${CONTAINER_PUID:-7777}
-      PGID=${CONTAINER_PGID:-7777}
-    fi
-  fi
-fi
-
 # Define the order in which the settings should be displayed
 declare -a config_order=(
     "Memory Limit" 
@@ -342,6 +337,7 @@ declare -a config_order=(
     "Update Window Start"
     "Update Window End"
     "Restart Notice"
+    "Save Wait Seconds"
     "MOTD Enabled"
     "MOTD"
     "MOTD Duration"
@@ -373,6 +369,7 @@ declare -A default_config_values=(
     ["Update Window Start"]="12:00 AM"
     ["Update Window End"]="11:59 PM" 
     ["Restart Notice"]="30"
+    ["Save Wait Seconds"]="5"
     ["MOTD Enabled"]="FALSE"
     ["MOTD"]="Welcome To my Server"
     ["MOTD Duration"]="30"
@@ -416,6 +413,14 @@ validate_number() {
   local input=$1
   while ! [[ "$input" =~ ^[0-9]+$ ]]; do
     read -rp "Invalid input. Please enter a number: " input
+  done
+  echo "$input"
+}
+
+validate_save_wait_seconds() {
+  local input=$1
+  while ! [[ "$input" =~ ^[0-9]+$ ]] || [ "$input" -lt 1 ] || [ "$input" -gt 60 ]; do
+    read -rp "Invalid input. Please enter a whole number between 1 and 60 seconds: " input
   done
   echo "$input"
 }
@@ -505,7 +510,7 @@ prompt_for_input() {
 
   # Proceed with specific validation based on the config key
   case $config_key in
-    "BattleEye"|"RCON Enabled"|"POK Monitor Message"|"Update Server"|"MOTD Enabled"|"Show Admin Commands In Chat"|"Random Startup Delay")
+    "BattleEye"|"API"|"RCON Enabled"|"POK Monitor Message"|"Update Server"|"MOTD Enabled"|"Show Admin Commands In Chat"|"Random Startup Delay"|"CPU Optimization")
       config_values[$config_key]=$(validate_boolean "$user_input" "$config_key")
       ;;
     "Update Window Start"|"Update Window End")
@@ -513,6 +518,9 @@ prompt_for_input() {
       ;;
     "Update Interval"|"Max Players"|"Restart Notice"|"MOTD Duration"|"ASA Port"|"RCON Port")
       config_values[$config_key]=$(validate_number "$user_input")
+      ;;
+    "Save Wait Seconds")
+      config_values[$config_key]=$(validate_save_wait_seconds "$user_input")
       ;;
     "Memory Limit")
       config_values[$config_key]=$(validate_memory_limit "$user_input")
@@ -989,7 +997,7 @@ adjust_ownership_and_permissions() {
   find "$dir" -type f -exec chmod 644 {} \;
 
   # Always check and fix the main script permissions
-  local script_path="$(realpath "$0")"
+  local script_path="$POK_MANAGER_SCRIPT_PATH"
   
   # If the script is run as root, we need to ensure proper ownership
   if [ "$(id -u)" -eq 0 ]; then
@@ -1080,6 +1088,160 @@ check_vm_max_map_count() {
   fi
 }
 
+_permission_print_uid_7777_user_creation_hint() {
+  echo ""
+  echo "   It appears you've migrated to the new 7777:7777 ownership but don't have a matching user."
+  echo "   You can create a user with this UID/GID to manage your server more easily:"
+  echo "   sudo groupadd -g 7777 pokuser"
+  echo "   sudo useradd -u 7777 -g 7777 -m -s /bin/bash pokuser"
+  echo "   sudo su - pokuser"
+  echo ""
+  echo "   You can also create this user automatically by running: sudo ./POK-manager.sh -migrate"
+  echo "   and answering 'y' when prompted to create a user."
+}
+
+_permission_print_switch_user_guidance() {
+  local target_uid="$1"
+  local original_command="$2"
+  local possible_users
+
+  possible_users="$(getent passwd "$target_uid" | cut -d: -f1)"
+  if [ -n "$possible_users" ]; then
+    echo "   Switch to user '$possible_users' with: su - $possible_users"
+    echo "   Then run: ./POK-manager.sh $original_command"
+    return
+  fi
+
+  echo "   (No user with UID $target_uid was found on this system)"
+  if [ "$target_uid" = "7777" ]; then
+    _permission_print_uid_7777_user_creation_hint
+  fi
+}
+
+_permission_print_standard_ownership_options() {
+  local original_command="$1"
+
+  echo ""
+  echo "2. Run with sudo to bypass permission checks:"
+  echo "   sudo ./POK-manager.sh $original_command"
+  echo "   (This lets you run the script with any user, but note that server files"
+  echo "    still need to be owned by either 1000:1000 or 7777:7777 for the container to work properly)"
+  echo ""
+  echo "3. Update file ownership to the new default (7777:7777):"
+  echo "   sudo chown -R 7777:7777 ${BASE_DIR}"
+  echo "   (Recommended for new setups to match container defaults)"
+  echo ""
+  echo "4. Change file ownership to legacy configuration (1000:1000):"
+  echo "   sudo chown -R 1000:1000 ${BASE_DIR}"
+  echo "   (Only for POK-manager 2.0 users. If using 2.0, you can either:"
+  echo "    - Continue using 2.0 with 1000:1000 permissions, or"
+  echo "    - Upgrade to 2.1 by running: ./POK-manager.sh -migrate)"
+  echo ""
+}
+
+_permission_print_post_migration_guidance() {
+  local current_user="$1"
+  local current_uid="$2"
+  local current_gid="$3"
+  local original_command="$4"
+  local uid_7777_user
+
+  echo ""
+  echo "⚠️ POST-MIGRATION PERMISSION ISSUE DETECTED ⚠️"
+  echo "Your server files are owned by UID:GID 7777:7777 after migration, but you're running"
+  echo "this script as user '${current_user}' with UID:GID ${current_uid}:${current_gid}."
+  echo ""
+  echo "You have two options to fix this:"
+  echo ""
+  echo "1. Run commands with sudo (easiest temporary solution):"
+  echo "   sudo ./POK-manager.sh $original_command"
+  echo ""
+
+  uid_7777_user="$(getent passwd 7777 | cut -d: -f1)"
+  if [ -n "$uid_7777_user" ]; then
+    echo "2. Switch to the correct user account with UID 7777 (recommended):"
+    echo "   sudo su - $uid_7777_user"
+    echo "   cd $(pwd) && ./POK-manager.sh $original_command"
+  else
+    echo "2. The migration should have created a user with UID 7777."
+    echo "   If this user doesn't exist, please run the migration again:"
+    echo "   sudo ./POK-manager.sh -migrate"
+  fi
+}
+
+_permission_print_file_owner_mismatch_guidance() {
+  local dir_uid="$1"
+  local dir_gid="$2"
+  local current_uid="$3"
+  local current_gid="$4"
+  local original_command="$5"
+
+  echo "⚠️ PERMISSION MISMATCH: Your files are owned by ${dir_uid}:${dir_gid} but you're running as ${current_uid}:${current_gid}"
+  echo "This will likely cause permission issues between the host and container for save data and server files."
+  echo ""
+  echo "You have these options:"
+  echo ""
+  echo "1. Run the script with the correct user:"
+  _permission_print_switch_user_guidance "$dir_uid" "$original_command"
+  _permission_print_standard_ownership_options "$original_command"
+}
+
+_permission_print_current_user_mismatch_guidance() {
+  local puid="$1"
+  local pgid="$2"
+  local current_user="$3"
+  local current_uid="$4"
+  local current_gid="$5"
+  local original_command="$6"
+
+  echo "⚠️ PERMISSION MISMATCH: You are not running the script as the user with the correct PUID (${puid}) and PGID (${pgid})."
+  echo "Your current user '${current_user}' has UID ${current_uid} and GID ${current_gid}."
+  echo "This can cause permission issues between the host and container for save data and server files."
+  echo ""
+  echo "The script supports both legacy (1000:1000) and new (7777:7777) user configurations:"
+  echo "- If your files are owned by 1000:1000, the script will use those values"
+  echo "- If your files are owned by 7777:7777, the script will use those values"
+  echo "- For new installations, 7777:7777 is recommended to avoid conflicts with system users"
+  echo ""
+  echo "You have these options:"
+  echo ""
+  echo "1. Run with sudo to bypass permission checks:"
+  echo "   sudo ./POK-manager.sh $original_command"
+  echo "   (This lets you run the script with any user, but note that server files"
+  echo "    still need to be owned by either 1000:1000 or 7777:7777 for the container to work properly)"
+  echo ""
+  echo "2. Update file ownership to the new default (7777:7777):"
+  echo "   sudo chown -R 7777:7777 ${BASE_DIR}"
+  echo "   (Recommended for new setups to match container defaults)"
+  echo ""
+  echo "3. Change file ownership to legacy configuration (1000:1000):"
+  echo "   sudo chown -R 1000:1000 ${BASE_DIR}"
+  echo "   (Only for POK-manager 2.0 users. If using 2.0, you can either:"
+  echo "    - Continue using 2.0 with 1000:1000 permissions, or"
+  echo "    - Upgrade to 2.1 by running: ./POK-manager.sh -migrate)"
+  echo ""
+  echo "4. Switch to a user with the correct UID/GID:"
+
+  local possible_users
+  possible_users="$(getent passwd "$puid" | cut -d: -f1)"
+  if [ -n "$possible_users" ]; then
+    echo "   Switch to user '$possible_users' with: su - $possible_users"
+    echo "   Then run: ./POK-manager.sh $original_command"
+  else
+    echo "   Or create a user with the correct UID/GID:"
+    echo "   sudo groupadd -g ${puid} pokuser"
+    echo "   sudo useradd -u ${puid} -g ${pgid} -m -s /bin/bash pokuser"
+    echo "   sudo su - pokuser"
+    echo "   cd $(pwd) && ./POK-manager.sh $original_command"
+    if [ "$puid" = "7777" ]; then
+      echo ""
+      echo "   NOTE: You can also create this user automatically by running: sudo ./POK-manager.sh -migrate"
+      echo "   and answering 'y' when prompted to create a user."
+    fi
+  fi
+  echo ""
+}
+
 check_puid_pgid_user() {
   local puid="$1"
   local pgid="$2"
@@ -1160,28 +1322,7 @@ check_puid_pgid_user() {
     
     # ENHANCEMENT: Check if user has correct permissions after migration
     if [ -f "$migration_complete_file" ] && [ "${current_uid}" -ne 7777 ] && [ "${current_uid}" -ne 0 ]; then
-      echo ""
-      echo "⚠️ POST-MIGRATION PERMISSION ISSUE DETECTED ⚠️"
-      echo "Your server files are owned by UID:GID 7777:7777 after migration, but you're running"
-      echo "this script as user '${current_user}' with UID:GID ${current_uid}:${current_gid}."
-      echo ""
-      echo "You have two options to fix this:"
-      echo ""
-      echo "1. Run commands with sudo (easiest temporary solution):"
-      echo "   sudo ./POK-manager.sh $original_command"
-      echo ""
-      
-      # Check if pokuser or any user with UID 7777 exists
-      local pokuser=$(grep ":7777:" /etc/passwd | cut -d: -f1)
-      if [ -n "$pokuser" ]; then
-        echo "2. Switch to the correct user account with UID 7777 (recommended):"
-        echo "   sudo su - $pokuser"
-        echo "   cd $(pwd) && ./POK-manager.sh $original_command"
-      else
-        echo "2. The migration should have created a user with UID 7777."
-        echo "   If this user doesn't exist, please run the migration again:"
-        echo "   sudo ./POK-manager.sh -migrate"
-      fi
+      _permission_print_post_migration_guidance "$current_user" "$current_uid" "$current_gid" "$original_command"
       exit 1
     fi
     
@@ -1221,94 +1362,12 @@ check_puid_pgid_user() {
       
       # Check if current UID/GID matches neither current nor legacy settings
       if [ "${current_uid}" -ne "${puid}" ] && [ "${current_uid}" -ne "${legacy_puid}" ]; then
-        echo "⚠️ PERMISSION MISMATCH: Your files are owned by ${dir_uid}:${dir_gid} but you're running as ${current_uid}:${current_gid}"
-        echo "This will likely cause permission issues between the host and container for save data and server files."
-        echo ""
-        echo "You have these options:"
-        echo ""
-        echo "1. Run the script with the correct user:"
-        local possible_users=$(getent passwd "$dir_uid" | cut -d: -f1)
-        if [ -n "$possible_users" ]; then
-          echo "   Switch to user '$possible_users' with: su - $possible_users"
-          echo "   Then run: ./POK-manager.sh $original_command"
-        else
-          echo "   (No user with UID $dir_uid was found on this system)"
-          
-          # Special case for 7777 UID after migration but no matching user
-          if [ "$dir_uid" = "7777" ]; then
-            echo ""
-            echo "   It appears you've migrated to the new 7777:7777 ownership but don't have a matching user."
-            echo "   You can create a user with this UID/GID to manage your server more easily:"
-            echo "   sudo groupadd -g 7777 pokuser"
-            echo "   sudo useradd -u 7777 -g 7777 -m -s /bin/bash pokuser"
-            echo "   sudo su - pokuser"
-            echo ""
-            echo "   You can also create this user automatically by running: sudo ./POK-manager.sh -migrate"
-            echo "   and answering 'y' when prompted to create a user."
-          fi
-        fi
-        echo ""
-        echo "2. Run with sudo to bypass permission checks:"
-        echo "   sudo ./POK-manager.sh $original_command"
-        echo "   (This lets you run the script with any user, but note that server files"
-        echo "    still need to be owned by either 1000:1000 or 7777:7777 for the container to work properly)"
-        echo ""
-        echo "3. Update file ownership to the new default (7777:7777):"
-        echo "   sudo chown -R 7777:7777 ${BASE_DIR}"
-        echo "   (Recommended for new setups to match container defaults)"
-        echo ""
-        echo "4. Change file ownership to legacy configuration (1000:1000):"
-        echo "   sudo chown -R 1000:1000 ${BASE_DIR}"
-        echo "   (Only for POK-manager 2.0 users. If using 2.0, you can either:"
-        echo "    - Continue using 2.0 with 1000:1000 permissions, or"
-        echo "    - Upgrade to 2.1 by running: ./POK-manager.sh -migrate)"
-        echo ""
+        _permission_print_file_owner_mismatch_guidance "$dir_uid" "$dir_gid" "$current_uid" "$current_gid" "$original_command"
         exit 1
       fi
     elif [ "${current_uid}" -ne "${puid}" ] && [ "${current_uid}" -ne "${dir_uid}" ]; then
       # File ownership doesn't match legacy, but also doesn't match current user
-      echo "⚠️ PERMISSION MISMATCH: Your files are owned by ${dir_uid}:${dir_gid} but you're running as ${current_uid}:${current_gid}"
-      echo "This will likely cause permission issues between the host and container for save data and server files."
-      echo ""
-      echo "You have these options:"
-      echo ""
-      echo "1. Run the script with the correct user:"
-      local possible_users=$(getent passwd "$dir_uid" | cut -d: -f1)
-      if [ -n "$possible_users" ]; then
-        echo "   Switch to user '$possible_users' with: su - $possible_users"
-        echo "   Then run: ./POK-manager.sh $original_command"
-      else
-        echo "   (No user with UID $dir_uid was found on this system)"
-        
-        # Special case for 7777 UID after migration but no matching user
-        if [ "$dir_uid" = "7777" ]; then
-          echo ""
-          echo "   It appears you've migrated to the new 7777:7777 ownership but don't have a matching user."
-          echo "   You can create a user with this UID/GID to manage your server more easily:"
-          echo "   sudo groupadd -g 7777 pokuser"
-          echo "   sudo useradd -u 7777 -g 7777 -m -s /bin/bash pokuser"
-          echo "   sudo su - pokuser"
-          echo ""
-          echo "   You can also create this user automatically by running: sudo ./POK-manager.sh -migrate"
-          echo "   and answering 'y' when prompted to create a user."
-        fi
-      fi
-      echo ""
-      echo "2. Run with sudo to bypass permission checks:"
-      echo "   sudo ./POK-manager.sh $original_command"
-      echo "   (This lets you run the script with any user, but note that server files"
-      echo "    still need to be owned by either 1000:1000 or 7777:7777 for the container to work properly)"
-      echo ""
-      echo "3. Update file ownership to the new default (7777:7777):"
-      echo "   sudo chown -R 7777:7777 ${BASE_DIR}"
-      echo "   (Recommended for new setups to match container defaults)"
-      echo ""
-      echo "4. Change file ownership to legacy configuration (1000:1000):"
-      echo "   sudo chown -R 1000:1000 ${BASE_DIR}"
-      echo "   (Only for POK-manager 2.0 users. If using 2.0, you can either:"
-      echo "    - Continue using 2.0 with 1000:1000 permissions, or"
-      echo "    - Upgrade to 2.1 by running: ./POK-manager.sh -migrate)"
-      echo ""
+      _permission_print_file_owner_mismatch_guidance "$dir_uid" "$dir_gid" "$current_uid" "$current_gid" "$original_command"
       exit 1
     fi
     
@@ -1322,52 +1381,7 @@ check_puid_pgid_user() {
   fi
 
   if [ "${current_uid}" -ne "${puid}" ] || [ "${current_gid}" -ne "${pgid}" ]; then
-    echo "⚠️ PERMISSION MISMATCH: You are not running the script as the user with the correct PUID (${puid}) and PGID (${pgid})."
-    echo "Your current user '${current_user}' has UID ${current_uid} and GID ${current_gid}."
-    echo "This can cause permission issues between the host and container for save data and server files."
-    echo ""
-    echo "The script supports both legacy (1000:1000) and new (7777:7777) user configurations:"
-    echo "- If your files are owned by 1000:1000, the script will use those values"
-    echo "- If your files are owned by 7777:7777, the script will use those values"
-    echo "- For new installations, 7777:7777 is recommended to avoid conflicts with system users"
-    echo ""
-    echo "You have these options:"
-    echo ""
-    echo "1. Run with sudo to bypass permission checks:"
-    echo "   sudo ./POK-manager.sh $original_command"
-    echo "   (This lets you run the script with any user, but note that server files"
-    echo "    still need to be owned by either 1000:1000 or 7777:7777 for the container to work properly)"
-    echo ""
-    echo "2. Update file ownership to the new default (7777:7777):"
-    echo "   sudo chown -R 7777:7777 ${BASE_DIR}"
-    echo "   (Recommended for new setups to match container defaults)"
-    echo ""
-    echo "3. Change file ownership to legacy configuration (1000:1000):"
-    echo "   sudo chown -R 1000:1000 ${BASE_DIR}"
-    echo "   (Only for POK-manager 2.0 users. If using 2.0, you can either:"
-    echo "    - Continue using 2.0 with 1000:1000 permissions, or"
-    echo "    - Upgrade to 2.1 by running: ./POK-manager.sh -migrate)"
-    echo ""
-    echo "4. Switch to a user with the correct UID/GID:"
-    local possible_users=$(getent passwd "$puid" | cut -d: -f1)
-    if [ -n "$possible_users" ]; then
-      echo "   Switch to user '$possible_users' with: su - $possible_users"
-      echo "   Then run: ./POK-manager.sh $original_command"
-    else
-      echo "   Or create a user with the correct UID/GID:"
-      echo "   sudo groupadd -g ${puid} pokuser"
-      echo "   sudo useradd -u ${puid} -g ${pgid} -m -s /bin/bash pokuser"
-      echo "   sudo su - pokuser"
-      echo "   cd $(pwd) && ./POK-manager.sh $original_command"
-      
-      # Special case for 7777 UID after migration but no matching user
-      if [ "$puid" = "7777" ]; then
-        echo ""
-        echo "   NOTE: You can also create this user automatically by running: sudo ./POK-manager.sh -migrate"
-        echo "   and answering 'y' when prompted to create a user."
-      fi
-    fi
-    echo ""
+    _permission_print_current_user_mismatch_guidance "$puid" "$pgid" "$current_user" "$current_uid" "$current_gid" "$original_command"
     exit 1
   fi
 }
@@ -1535,11 +1549,13 @@ read_docker_compose_config() {
     "RCON_ENABLED") config_key="RCON Enabled" ;;
     "DISPLAY_POK_MONITOR_MESSAGE") config_key="POK Monitor Message" ;;
     "RANDOM_STARTUP_DELAY") config_key="Random Startup Delay" ;;
+    "CPU_OPTIMIZATION") config_key="CPU Optimization" ;;
     "UPDATE_SERVER") config_key="Update Server" ;;
     "CHECK_FOR_UPDATE_INTERVAL") config_key="Update Interval" ;;
     "UPDATE_WINDOW_MINIMUM_TIME") config_key="Update Window Start" ;;
     "UPDATE_WINDOW_MAXIMUM_TIME") config_key="Update Window End" ;;
     "RESTART_NOTICE_MINUTES") config_key="Restart Notice" ;;
+    "SAVE_WAIT_SECONDS") config_key="Save Wait Seconds" ;;
     "ENABLE_MOTD") config_key="MOTD Enabled" ;;
     "MOTD") config_key="MOTD" ;; 
     "MOTD_DURATION") config_key="MOTD Duration" ;; 
@@ -1629,6 +1645,7 @@ EOF
       "Update Window Start") env_key="UPDATE_WINDOW_MINIMUM_TIME" ;;
       "Update Window End") env_key="UPDATE_WINDOW_MAXIMUM_TIME" ;;
       "Restart Notice") env_key="RESTART_NOTICE_MINUTES" ;;
+      "Save Wait Seconds") env_key="SAVE_WAIT_SECONDS" ;;
       "MOTD Enabled") env_key="ENABLE_MOTD" ;;
       "MOTD") env_key="MOTD" ;;
       "MOTD Duration") env_key="MOTD_DURATION" ;;
@@ -1800,6 +1817,11 @@ perform_action_on_all_instances() {
     return
   fi
 
+  if [[ "$action" == "-start" ]]; then
+    _coordination_start_all_instances
+    return
+  fi
+
   # Find all instance directories
   local instance_dirs=($(find "${base_dir}/Instance_"* -maxdepth 0 -type d 2>/dev/null || true))
 
@@ -1824,8 +1846,6 @@ perform_action_on_all_instances() {
 
 # Function to stop all instances
 stop_all_instances() {
-  local base_dir="${BASE_DIR}"
-  
   echo "Stopping all running instances..."
   
   # Get all running instances
@@ -1837,34 +1857,14 @@ stop_all_instances() {
   fi
   
   echo "Found ${#running_instances[@]} running instances to stop."
-  
-  # First, attempt quick saves on all running instances in parallel
-  echo "Attempting quick saves on all running instances..."
-  for instance in "${running_instances[@]}"; do
-    local container_name="asa_${instance}"
-    echo "  Sending quick save command to $instance..."
-    
-    # Run saveworld command with a 3-second timeout in background
-    (
-      timeout 3s docker exec "$container_name" /bin/bash -c "/home/pok/scripts/rcon_interface.sh -saveworld" >/dev/null 2>&1
-      save_exit_code=$?
-      if [ $save_exit_code -eq 0 ]; then
-        echo "  Save command sent successfully to $instance"
-      else
-        echo "  Save command failed or timed out for $instance, proceeding with stop"
-      fi
-    ) &
-  done
-  
-  # Give all instances a short time to process their saves
-  echo "Waiting 5 seconds for save operations to complete..."
-  sleep 5
+
+  _save_instances_then_wait "Attempting quick saves on all running instances..." "Waiting %s seconds for save operations to complete..." "${running_instances[@]}"
   
   # Now stop all instances
   echo "Now stopping all containers..."
   for instance in "${running_instances[@]}"; do
     echo "Stopping instance: $instance"
-    stop_instance "$instance" &
+    stop_instance "$instance" "skip_save" &
   done
   
   # Wait for all stop operations to complete
@@ -1872,77 +1872,6 @@ stop_all_instances() {
   
   echo "All instances have been stopped."
   return 0
-}
-
-# Function to inject shutdown flag and perform shutdown
-inject_shutdown_flag_and_shutdown() {
-  local instance="$1"
-  local message="$2"
-  local wait_time="$3"
-  local container_name="asa_${instance}" # Assuming container naming convention
-  local base_dir="${BASE_DIR}"
-  local instance_dir="${base_dir}/Instance_${instance}"
-  local docker_compose_file="${instance_dir}/docker-compose-${instance}.yaml"
-
-  # Check if the container exists and is running
-  if docker ps -q -f name=^/${container_name}$ > /dev/null; then
-    echo "Preparing container for shutdown..."
-    
-    # Create a check file to verify if the server was already saved
-    docker exec "$container_name" touch /home/pok/shutdown_prepared.flag
-    
-    # First inject shutdown.flag into the container
-    # This signals to the container's monitoring scripts that shutdown is intended
-    echo "Injecting shutdown flag..."
-    docker exec "$container_name" touch /home/pok/shutdown.flag
-    
-    # Check if any wait time is left - rarely needed but good for safety
-    local current_time=$(date +%s)
-    local eta_time=$(date -d "@$((current_time + wait_time * 60))" "+%s")
-    local remaining_seconds=$((eta_time - current_time))
-    
-    if [ $remaining_seconds -gt 10 ]; then  # If more than 10 seconds left
-      echo "Waiting for server's internal countdown to complete..."
-      sleep $remaining_seconds
-    fi
-    
-    # Verify the game process is still running before trying to save again
-    if docker exec "$container_name" pgrep -f "ArkAscendedServer.exe" > /dev/null; then
-      # Send a final saveworld command to ensure latest data is saved
-      echo "Sending final save command to server..."
-      docker exec "$container_name" /bin/bash -c "/home/pok/scripts/rcon_interface.sh -saveworld" >/dev/null 2>&1 || true
-      
-      # Create a short wait to allow save to complete
-      sleep 5
-    else
-      echo "Game process has already stopped."
-    fi
-    
-    # Create a shutdown_complete flag for the wait function to check
-    docker exec "$container_name" touch /home/pok/shutdown_complete.flag 2>/dev/null || true
-    
-    # Wait for shutdown completion with timeout
-    echo "Waiting for server process to exit completely..."
-    if ! wait_for_shutdown "$instance" "$wait_time"; then
-      echo "Warning: Shutdown wait timed out. Forcing container shutdown."
-    fi
-    
-    # Get docker compose command
-    get_docker_compose_cmd
-    
-    # Shutdown the container using docker-compose
-    echo "Stopping container for $instance..."
-    if [ -f "$docker_compose_file" ]; then
-      $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down
-    else
-      # Fallback to docker stop if compose file not found
-      docker stop "$container_name"
-    fi
-    
-    echo "Instance ${instance} shutdown completed successfully."
-  else
-    echo "Instance ${instance} is not running or does not exist."
-  fi
 }
 
 # Helper function to prompt for instance copy
@@ -2025,29 +1954,24 @@ generate_docker_compose() {
   # Assuming TZ is set or defaults to UTC
   local tz="${TZ:-UTC}"
   declare -A config_values
-
-  # Prompt for copying settings from an existing instance
-  prompt_for_instance_copy "$instance_name"
-
-  # Configuration review and modification loop
-  review_and_modify_configuration
-
-  # Path where Docker Compose files are located
   local base_dir="${BASE_DIR}"
   local instance_dir="${base_dir}/Instance_${instance_name}"
   local docker_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
 
-  # Check if the Docker Compose file already exists
   if [ -f "$docker_compose_file" ]; then
     echo "Docker Compose file for ${instance_name} already exists. Extracting and updating configuration..."
     read_docker_compose_config "$instance_name"
   else
+    prompt_for_instance_copy "$instance_name"
     echo "Creating new Docker Compose configuration for ${instance_name}."
     mkdir -p "${instance_dir}"
     mkdir -p "${instance_dir}/Saved" # Ensure Saved directory is created
     copy_default_configs
     adjust_ownership_and_permissions "${instance_dir}" # Adjust permissions right after creation
   fi
+
+  # Configuration review and modification loop
+  review_and_modify_configuration
   # Set the timezone for the container
   set_timezone
   
@@ -2061,6 +1985,7 @@ generate_docker_compose() {
 
   # Prompt user for any final edits before saving
   prompt_for_final_edit "$docker_compose_file"
+  normalize_update_coordination_assignments
 
   echo "Docker Compose configuration for ${instance_name} has been finalized."
 }
@@ -2087,6 +2012,522 @@ list_instances() {
     instances+=("$instance_name")
   done
   echo "${instances[@]}"
+}
+
+_coordination_get_compose_files() {
+  find "${BASE_DIR}"/Instance_* -maxdepth 1 -name 'docker-compose-*.yaml' -type f 2>/dev/null || true
+}
+
+_coordination_get_instance_name_from_compose() {
+  local compose_file="$1"
+  basename "$compose_file" | sed -E 's/docker-compose-(.*)\.yaml/\1/'
+}
+
+_coordination_compose_has_auto_updates() {
+  local compose_file="$1"
+  grep -Eq '^[[:space:]]*-[[:space:]]*UPDATE_SERVER=(TRUE|YES|1)$' "$compose_file"
+}
+
+_coordination_compose_role() {
+  local compose_file="$1"
+  local value=""
+  value=$(grep -E '^[[:space:]]*-[[:space:]]*UPDATE_COORDINATION_ROLE=' "$compose_file" 2>/dev/null | head -1 | sed 's/.*=//')
+  echo "$value"
+}
+
+_coordination_strip_env_keys() {
+  local compose_file="$1"
+  local tmp_file="${compose_file}.coord.tmp"
+
+  awk '
+    $0 ~ /^[[:space:]]*-[[:space:]]*UPDATE_COORDINATION_ROLE=/ { next }
+    $0 ~ /^[[:space:]]*-[[:space:]]*UPDATE_COORDINATION_PRIORITY=/ { next }
+    { print }
+  ' "$compose_file" > "$tmp_file"
+
+  mv "$tmp_file" "$compose_file"
+}
+
+_coordination_write_env_keys() {
+  local compose_file="$1"
+  local role="$2"
+  local priority="$3"
+  local tmp_file="${compose_file}.coord.tmp"
+
+  _coordination_strip_env_keys "$compose_file"
+
+  if [ -z "$role" ] || [ -z "$priority" ]; then
+    return 0
+  fi
+
+  awk -v role="$role" -v priority="$priority" '
+    function print_coordination(indent) {
+      print indent "- UPDATE_COORDINATION_ROLE=" role
+      print indent "- UPDATE_COORDINATION_PRIORITY=" priority
+      inserted=1
+    }
+
+    {
+      print
+
+      if (!inserted && $0 ~ /^[[:space:]]*-[[:space:]]*TZ=/) {
+        match($0, /^[[:space:]]*/)
+        print_coordination(substr($0, RSTART, RLENGTH))
+      }
+    }
+
+    END {
+      if (!inserted) {
+        # All managed compose files written by the manager include TZ, so reaching
+        # this branch should be exceptional. Leave the file unchanged in that case.
+      }
+    }
+  ' "$compose_file" > "$tmp_file"
+
+  mv "$tmp_file" "$compose_file"
+}
+
+normalize_update_coordination_assignments() {
+  local preferred_master="${1:-}"
+  local compose_file=""
+  local record=""
+  local mtime=""
+  local instance_name=""
+  local role=""
+  local chosen_master=""
+  local priority=0
+  local eligible_count=0
+  local -a eligible_records=()
+  local -a existing_master_records=()
+  local -a all_compose_files=()
+
+  while IFS= read -r compose_file; do
+    [ -n "$compose_file" ] || continue
+    all_compose_files+=("$compose_file")
+  done < <(_coordination_get_compose_files)
+
+  for compose_file in "${all_compose_files[@]}"; do
+    if _coordination_compose_has_auto_updates "$compose_file"; then
+      instance_name=$(_coordination_get_instance_name_from_compose "$compose_file")
+      mtime=$(stat -c %Y "$compose_file" 2>/dev/null || echo 0)
+      role="$(_coordination_compose_role "$compose_file")"
+      record="${mtime}|${instance_name}|${compose_file}|${role}"
+      eligible_records+=("$record")
+      if [ "${role^^}" = "MASTER" ]; then
+        existing_master_records+=("$record")
+      fi
+    fi
+  done
+
+  eligible_count=${#eligible_records[@]}
+
+  if [ "$eligible_count" -le 1 ]; then
+    for compose_file in "${all_compose_files[@]}"; do
+      _coordination_write_env_keys "$compose_file" "" ""
+    done
+    return 0
+  fi
+
+  IFS=$'\n' eligible_records=($(printf '%s\n' "${eligible_records[@]}" | sort -t'|' -k1,1n -k2,2))
+  unset IFS
+
+  if [ -n "$preferred_master" ]; then
+    for record in "${eligible_records[@]}"; do
+      if [ "$(echo "$record" | cut -d'|' -f2)" = "$preferred_master" ]; then
+        chosen_master="$preferred_master"
+        break
+      fi
+    done
+  fi
+
+  if [ -z "$chosen_master" ] && [ "${#existing_master_records[@]}" -gt 0 ]; then
+    IFS=$'\n' existing_master_records=($(printf '%s\n' "${existing_master_records[@]}" | sort -t'|' -k1,1n -k2,2))
+    unset IFS
+    chosen_master=$(echo "${existing_master_records[0]}" | cut -d'|' -f2)
+  elif [ -z "$chosen_master" ]; then
+    chosen_master=$(echo "${eligible_records[0]}" | cut -d'|' -f2)
+  fi
+
+  priority=1
+  for record in "${eligible_records[@]}"; do
+    instance_name=$(echo "$record" | cut -d'|' -f2)
+    compose_file=$(echo "$record" | cut -d'|' -f3)
+
+    if [ "$instance_name" = "$chosen_master" ]; then
+      _coordination_write_env_keys "$compose_file" "MASTER" "$priority"
+    fi
+  done
+
+  priority=2
+  for record in "${eligible_records[@]}"; do
+    instance_name=$(echo "$record" | cut -d'|' -f2)
+    compose_file=$(echo "$record" | cut -d'|' -f3)
+
+    if [ "$instance_name" = "$chosen_master" ]; then
+      continue
+    fi
+
+    _coordination_write_env_keys "$compose_file" "FOLLOWER" "$priority"
+    priority=$((priority + 1))
+  done
+
+  for compose_file in "${all_compose_files[@]}"; do
+    if ! _coordination_compose_has_auto_updates "$compose_file"; then
+      _coordination_write_env_keys "$compose_file" "" ""
+    fi
+  done
+}
+
+_coordination_instance_compose_file() {
+  local instance_name="$1"
+  echo "${BASE_DIR}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
+}
+
+_coordination_count_auto_update_instances() {
+  local compose_file=""
+  local count=0
+
+  while IFS= read -r compose_file; do
+    [ -n "$compose_file" ] || continue
+    if _coordination_compose_has_auto_updates "$compose_file"; then
+      count=$((count + 1))
+    fi
+  done < <(_coordination_get_compose_files)
+
+  echo "$count"
+}
+
+_coordination_instance_is_auto_update_eligible() {
+  local instance_name="$1"
+  local compose_file
+  compose_file=$(_coordination_instance_compose_file "$instance_name")
+
+  [ -f "$compose_file" ] && _coordination_compose_has_auto_updates "$compose_file"
+}
+
+_coordination_get_role_priority_records() {
+  local compose_file=""
+  local instance_name=""
+  local role=""
+  local priority=""
+
+  while IFS= read -r compose_file; do
+    [ -n "$compose_file" ] || continue
+    if _coordination_compose_has_auto_updates "$compose_file"; then
+      instance_name=$(_coordination_get_instance_name_from_compose "$compose_file")
+      role="$(_coordination_compose_role "$compose_file")"
+      priority=$(grep -E '^[[:space:]]*-[[:space:]]*UPDATE_COORDINATION_PRIORITY=' "$compose_file" 2>/dev/null | head -1 | sed 's/.*=//')
+      if ! [[ "$priority" =~ ^[0-9]+$ ]]; then
+        priority=9999
+      fi
+      printf '%s|%s|%s\n' "$priority" "$instance_name" "${role^^}"
+    fi
+  done < <(_coordination_get_compose_files) | sort -t'|' -k1,1n -k2,2
+}
+
+_coordination_get_master_instance() {
+  local record=""
+  local role=""
+
+  while IFS= read -r record; do
+    [ -n "$record" ] || continue
+    role=$(echo "$record" | cut -d'|' -f3)
+    if [ "$role" = "MASTER" ]; then
+      echo "$(echo "$record" | cut -d'|' -f2)"
+      return 0
+    fi
+  done < <(_coordination_get_role_priority_records)
+
+  return 1
+}
+
+_coordination_instance_in_list() {
+  local target_instance="$1"
+  shift
+  local instance_name=""
+
+  for instance_name in "$@"; do
+    if [ "$instance_name" = "$target_instance" ]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+_coordination_get_subset_role_priority_records() {
+  local requested_instances=("$@")
+  local record=""
+  local instance_name=""
+
+  while IFS= read -r record; do
+    [ -n "$record" ] || continue
+    instance_name=$(echo "$record" | cut -d'|' -f2)
+    if _coordination_instance_in_list "$instance_name" "${requested_instances[@]}"; then
+      echo "$record"
+    fi
+  done < <(_coordination_get_role_priority_records)
+}
+
+_coordination_state_file_path() {
+  echo "${BASE_DIR}/ServerFiles/arkserver/update_coordination/current/state.env"
+}
+
+_COORDINATION_HOST_STATE_PRESENT=0
+_COORDINATION_HOST_ACTIVE_LEADER_INSTANCE=""
+_COORDINATION_HOST_PHASE=""
+
+_coordination_read_host_state() {
+  local state_file=""
+  local CYCLE_ID=""
+  local TARGET_BUILD_ID=""
+  local ACTIVE_LEADER_INSTANCE=""
+  local ACTIVE_LEADER_PRIORITY=""
+  local ATTEMPT_COUNT=""
+  local ATTEMPTED_PRIORITIES=""
+  local ATTEMPTED_INSTANCES=""
+  local PHASE=""
+  local PHASE_STARTED_AT=""
+  local LAST_HEARTBEAT_AT=""
+  local FAIL_REASON=""
+
+  _COORDINATION_HOST_STATE_PRESENT=0
+  _COORDINATION_HOST_ACTIVE_LEADER_INSTANCE=""
+  _COORDINATION_HOST_PHASE=""
+
+  state_file="$(_coordination_state_file_path)"
+  [ -f "$state_file" ] || return 1
+
+  # shellcheck disable=SC1090
+  source "$state_file"
+
+  _COORDINATION_HOST_STATE_PRESENT=1
+  _COORDINATION_HOST_ACTIVE_LEADER_INSTANCE="${ACTIVE_LEADER_INSTANCE:-}"
+  _COORDINATION_HOST_PHASE="${PHASE:-}"
+  return 0
+}
+
+_docker_inspect_field() {
+  local container_name="$1"
+  local format_string="$2"
+  local use_sudo=""
+  local output=""
+
+  use_sudo=$(get_docker_sudo_preference)
+
+  if [ "$use_sudo" = "true" ]; then
+    sudo docker inspect --format "$format_string" "$container_name" 2>/dev/null
+    return $?
+  fi
+
+  output=$(docker inspect --format "$format_string" "$container_name" 2>/dev/null) && {
+    echo "$output"
+    return 0
+  }
+
+  output=$(sudo docker inspect --format "$format_string" "$container_name" 2>/dev/null) && {
+    echo "$output"
+    return 0
+  }
+
+  return 1
+}
+
+_coordination_format_elapsed() {
+  local elapsed_seconds="${1:-0}"
+  local minutes=$((elapsed_seconds / 60))
+  local seconds=$((elapsed_seconds % 60))
+
+  if [ "$minutes" -gt 0 ]; then
+    printf "%dm %02ds" "$minutes" "$seconds"
+  else
+    printf "%ds" "$seconds"
+  fi
+}
+
+_coordination_wait_status_text() {
+  local instance_name="$1"
+  local phase="$2"
+  local elapsed_seconds="${3:-0}"
+  local elapsed_display=""
+
+  elapsed_display=$(_coordination_format_elapsed "$elapsed_seconds")
+  printf "Waiting for coordination leader '%s' (phase: %s, elapsed: %s)" "$instance_name" "$phase" "$elapsed_display"
+}
+
+_coordination_clear_wait_progress() {
+  if [ -t 1 ]; then
+    printf '\r\033[K'
+  fi
+}
+
+_coordination_wait_for_instance_ready() {
+  local instance_name="$1"
+  local start_epoch="${2:-$(date +%s)}"
+  local timeout_seconds="${3:-2400}"
+  local container_name="asa_${instance_name}"
+  local elapsed=0
+  local saw_relevant_cycle="false"
+  local state_file=""
+  local state_mtime=0
+  local container_state=""
+  local health_status=""
+  local phase_display="starting_container"
+  local plain_update_interval=30
+  local last_plain_update=-30
+  local status_color="\033[1;36m"
+  local action_color="\033[1;35m"
+  local time_color="\033[1;33m"
+  local reset_color="\033[0m"
+  local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+  local spinner_idx=0
+  local current_spinner=""
+  local status_text=""
+
+  while [ "$elapsed" -lt "$timeout_seconds" ]; do
+    state_file="$(_coordination_state_file_path)"
+    if _coordination_read_host_state; then
+      state_mtime=$(stat -c %Y "$state_file" 2>/dev/null || echo 0)
+      if [ "$state_mtime" -ge "$start_epoch" ] && [ "${_COORDINATION_HOST_ACTIVE_LEADER_INSTANCE:-}" = "$instance_name" ]; then
+        saw_relevant_cycle="true"
+        phase_display="${_COORDINATION_HOST_PHASE:-leader_starting}"
+        case "${_COORDINATION_HOST_PHASE:-}" in
+          ready)
+            _coordination_clear_wait_progress
+            echo "Coordination leader '${instance_name}' reported ready."
+            return 0
+            ;;
+          failed)
+            _coordination_clear_wait_progress
+            echo "Coordination leader '${instance_name}' reported a failed startup/update cycle."
+            return 1
+            ;;
+        esac
+      fi
+    fi
+
+    container_state=$(_docker_inspect_field "$container_name" '{{.State.Status}}' || true)
+    if [ "$container_state" = "exited" ] || [ "$container_state" = "dead" ]; then
+      _coordination_clear_wait_progress
+      echo "Container '${container_name}' stopped before reaching startup readiness."
+      return 1
+    fi
+
+    if [ "$saw_relevant_cycle" = "false" ]; then
+      phase_display="starting_container"
+      health_status=$(_docker_inspect_field "$container_name" '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' || true)
+      if [ "$health_status" = "healthy" ]; then
+        _coordination_clear_wait_progress
+        echo "Instance '${instance_name}' reached a healthy startup state."
+        return 0
+      fi
+    fi
+
+    status_text=$(_coordination_wait_status_text "$instance_name" "$phase_display" "$elapsed")
+    if [ -t 1 ]; then
+      current_spinner=${spinner[$spinner_idx]}
+      spinner_idx=$(((spinner_idx + 1) % ${#spinner[@]}))
+      printf "\r${status_color}%s${reset_color} ${action_color}%s${reset_color}" "$current_spinner" "$status_text"
+    elif [ "$elapsed" -eq 0 ] || [ $((elapsed - last_plain_update)) -ge "$plain_update_interval" ]; then
+      echo "$status_text"
+      last_plain_update=$elapsed
+    fi
+
+    sleep 5
+    elapsed=$((elapsed + 5))
+  done
+
+  _coordination_clear_wait_progress
+  echo "Timed out waiting for '${instance_name}' to reach startup readiness."
+  return 1
+}
+
+_coordination_start_instance_subset() {
+  local direct_output_mode="${1:-standard}"
+  local coordinated_output_mode="${2:-coordinated_all}"
+  shift 2
+  local requested_instances=("$@")
+  local record=""
+  local instance_name=""
+  local master_instance=""
+  local chosen_master=""
+  local start_epoch=0
+  local started_instances=""
+  local -a eligible_records=()
+
+  [ ${#requested_instances[@]} -gt 0 ] || return 0
+
+  normalize_update_coordination_assignments
+
+  while IFS= read -r record; do
+    [ -n "$record" ] || continue
+    eligible_records+=("$record")
+  done < <(_coordination_get_subset_role_priority_records "${requested_instances[@]}")
+
+  if [ ${#eligible_records[@]} -le 1 ]; then
+    for instance_name in "${requested_instances[@]}"; do
+      echo "Performing '-start' on instance: $instance_name"
+      start_instance "$instance_name" "preserve" "$direct_output_mode" || return 1
+    done
+    return 0
+  fi
+
+  master_instance=$(_coordination_get_master_instance || true)
+  if _coordination_instance_in_list "$master_instance" "${requested_instances[@]}"; then
+    chosen_master="$master_instance"
+  else
+    chosen_master=$(echo "${eligible_records[0]}" | cut -d'|' -f2)
+    normalize_update_coordination_assignments "$chosen_master"
+    eligible_records=()
+    while IFS= read -r record; do
+      [ -n "$record" ] || continue
+      eligible_records+=("$record")
+    done < <(_coordination_get_subset_role_priority_records "${requested_instances[@]}")
+  fi
+
+  echo "Coordinated startup in progress. Waiting for leader readiness before starting followers."
+  echo "Performing '-start' on coordination leader first: ${chosen_master}"
+  start_epoch=$(date +%s)
+  start_instance "$chosen_master" "preserve" "$coordinated_output_mode" || return 1
+  _coordination_wait_for_instance_ready "$chosen_master" "$start_epoch" || return 1
+  started_instances="|${chosen_master}|"
+
+  for record in "${eligible_records[@]}"; do
+    instance_name=$(echo "$record" | cut -d'|' -f2)
+    if [ "$instance_name" = "$chosen_master" ]; then
+      continue
+    fi
+    echo "Performing '-start' on instance: $instance_name"
+    start_instance "$instance_name" "preserve" "$coordinated_output_mode" || return 1
+    started_instances="${started_instances}${instance_name}|"
+  done
+
+  for instance_name in "${requested_instances[@]}"; do
+    case "$started_instances" in
+      *"|${instance_name}|"*)
+        continue
+        ;;
+    esac
+    echo "Performing '-start' on instance: $instance_name"
+    start_instance "$instance_name" "preserve" "$coordinated_output_mode" || return 1
+  done
+
+  echo "All coordinated instances have started. You can now use ./POK-manager.sh -logs -live <instance_name> or ./POK-manager.sh -status <instance_name|-all>."
+}
+
+_coordination_start_all_instances() {
+  local base_dir="${BASE_DIR}"
+  local instance_dirs=()
+  local instance_name=""
+  local -a all_instances=()
+
+  instance_dirs=($(find "${base_dir}/Instance_"* -maxdepth 0 -type d 2>/dev/null || true))
+  for instance_dir in "${instance_dirs[@]}"; do
+    instance_name=$(basename "$instance_dir" | sed -E 's/Instance_(.*)/\1/')
+    all_instances+=("$instance_name")
+  done
+
+  _coordination_start_instance_subset "standard" "coordinated_all" "${all_instances[@]}"
 }
 
 find_editor() {
@@ -2118,205 +2559,421 @@ find_editor() {
   fi
 }
 
-# Function to start an instance
-start_instance() {
-  local instance_name="$1"
-  local instance_dir="${BASE_DIR}/Instance_${instance_name}"
-  local docker_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
-  local image_tag=$(get_docker_image_tag "$instance_name")
-  
-  echo "-----Starting ${instance_name} Server with image tag ${image_tag}-----"
+# Helpers for start_instance's compose reconciliation and runtime checks.
+get_docker_sudo_preference() {
+  local config_file
+  config_file=$(get_config_file_path)
 
-  # Check if volume paths need to be updated
-  check_volume_paths
-  
-  # First check if the docker-compose file exists
+  if [ -f "$config_file" ] && [ -r "$config_file" ]; then
+    cat "$config_file"
+  else
+    echo "true"
+  fi
+}
+
+_compose_file_instance_name() {
+  local docker_compose_file="$1"
+  basename "$docker_compose_file" | sed 's/docker-compose-//g' | sed 's/\.yaml//g'
+}
+
+_compose_container_instance_name() {
+  local docker_compose_file="$1"
+  grep -E "container_name:.*asa_" "$docker_compose_file" | sed -E 's/.*container_name:.*asa_([^"]*).*/\1/' | tr -d ' '
+}
+
+_compose_full_container_name() {
+  local docker_compose_file="$1"
+
+  if ! grep -q "container_name:" "$docker_compose_file"; then
+    return 0
+  fi
+
+  if grep -q "container_name: \"" "$docker_compose_file"; then
+    grep "container_name:" "$docker_compose_file" | sed 's/.*container_name: "\(.*\)".*/\1/'
+  else
+    grep "container_name:" "$docker_compose_file" | sed 's/.*container_name: \(.*\)/\1/'
+  fi
+}
+
+_compose_env_instance_name() {
+  local docker_compose_file="$1"
+  grep -E "INSTANCE_NAME=" "$docker_compose_file" | sed -E 's/.*INSTANCE_NAME=([^"]*).*/\1/' | tr -d ' '
+}
+
+_compose_api_enabled() {
+  local docker_compose_file="$1"
+  grep -q "^ *- API=TRUE" "$docker_compose_file" || grep -q "^ *- API:TRUE" "$docker_compose_file"
+}
+
+_compose_env_value() {
+  local docker_compose_file="$1"
+  local env_key="$2"
+
+  grep -E "^[[:space:]]*-[[:space:]]*${env_key}=" "$docker_compose_file" 2>/dev/null | head -1 | sed -E "s/.*${env_key}=//"
+}
+
+_sanitize_save_wait_seconds() {
+  local raw_value="$1"
+  local context="${2:-save wait}"
+  local sanitized_value=5
+
+  if [[ -z "$raw_value" ]]; then
+    echo "$sanitized_value"
+    return 0
+  fi
+
+  if ! [[ "$raw_value" =~ ^[0-9]+$ ]]; then
+    echo "⚠️ WARNING: Invalid SAVE_WAIT_SECONDS value '$raw_value' for ${context}. Using default of 5 seconds." >&2
+    echo "$sanitized_value"
+    return 0
+  fi
+
+  sanitized_value="$raw_value"
+  if [ "$sanitized_value" -lt 1 ]; then
+    sanitized_value=1
+  elif [ "$sanitized_value" -gt 60 ]; then
+    sanitized_value=60
+  fi
+
+  echo "$sanitized_value"
+}
+
+_get_compose_file_save_wait_seconds() {
+  local docker_compose_file="$1"
+  local context="${2:-compose file}"
+  local raw_value
+
   if [ ! -f "$docker_compose_file" ]; then
-    # Try to find any docker-compose file in the instance directory
-    local found_compose_files=($(find "${instance_dir}" -maxdepth 1 -name 'docker-compose-*.yaml' 2>/dev/null || true))
-    
-    if [ ${#found_compose_files[@]} -gt 0 ]; then
-      # Take the first one found
-      local found_compose_file="${found_compose_files[0]}"
-      local found_instance_name=$(basename "$found_compose_file" | sed 's/docker-compose-//g' | sed 's/\.yaml//g')
-      
-      echo "⚠️ Found a docker-compose file for instance '$found_instance_name' in folder for '$instance_name'"
-      echo "This may happen if you renamed the folder manually instead of using the script's rename feature."
-      
-      # Ask user which name they want to use
-      echo "Would you like to:"
-      echo "1) Change the docker-compose file to match the folder name: '$instance_name'"
-      echo "2) Use the instance name from the docker-compose file: '$found_instance_name'"
-      read -p "Enter your choice (1 or 2): " name_choice
-      
-      if [[ "$name_choice" == "2" ]]; then
-        echo "Using instance name from docker-compose file: '$found_instance_name'"
-        instance_name="$found_instance_name"
-        docker_compose_file="$found_compose_file"
-      else
-        echo "Automatically fixing the docker-compose file to match the instance name: '$instance_name'"
-        
-        # Create a backup of the original file
-        local backup_file="${found_compose_file}.backup_$(date +%Y%m%d_%H%M%S)"
-        cp "$found_compose_file" "$backup_file"
-        # Set the correct ownership for the backup file to match parent folder
-        local parent_ownership=$(stat -c "%u:%g" "${instance_dir}")
-        chown "$parent_ownership" "$backup_file"
-        echo "Created backup of original docker-compose file at: $backup_file"
-        
-        # Update the compose file - container name, instance name and volumes
-        echo "Updating docker-compose file to match new instance name: $instance_name"
-        
-        # Update container name - handle both quoted and unquoted formats
-        sed -i "s/container_name: \"asa_${found_instance_name}\"/container_name: \"asa_${instance_name}\"/g" "$found_compose_file"
-        sed -i "s/container_name: asa_${found_instance_name}/container_name: asa_${instance_name}/g" "$found_compose_file"
-        
-        # Update environment variables for instance name
-        sed -i "s/INSTANCE_NAME=${found_instance_name}/INSTANCE_NAME=${instance_name}/g" "$found_compose_file"
-        sed -i "s/- INSTANCE_NAME=${found_instance_name}/- INSTANCE_NAME=${instance_name}/g" "$found_compose_file"
-        
-        # Update volume paths
-        sed -i "s|Instance_${found_instance_name}/Saved|Instance_${instance_name}/Saved|g" "$found_compose_file"
-        sed -i "s|Instance_${found_instance_name}/API_Logs|Instance_${instance_name}/API_Logs|g" "$found_compose_file"
-        
-        # Rename the file itself to match the new instance name
-        mv "$found_compose_file" "$docker_compose_file"
-        echo "Renamed docker-compose file to match new instance name"
-        
-        echo "Using updated docker-compose file: $docker_compose_file"
-      fi
-    else
-      echo "❌ ERROR: Docker Compose file not found at $docker_compose_file"
-      echo "Make sure the instance ${instance_name} exists and is properly configured."
-      exit 1
-    fi
-  else
-    # Docker compose file exists, but let's verify its contents match the instance name
-    local file_instance_name=$(grep -E "container_name:.*asa_" "$docker_compose_file" | sed -E 's/.*container_name:.*asa_([^"]*).*/\1/' | tr -d ' ')
-    local env_instance_name=$(grep -E "INSTANCE_NAME=" "$docker_compose_file" | sed -E 's/.*INSTANCE_NAME=([^"]*).*/\1/' | tr -d ' ')
-    
-    if [[ "$file_instance_name" != "$instance_name" || "$env_instance_name" != "$instance_name" ]]; then
-      echo "⚠️ Docker compose file exists but contains mismatched instance names."
-      echo "Found container name in docker-compose file: 'asa_$file_instance_name'"
-      echo "Found INSTANCE_NAME in docker-compose file: '$env_instance_name'"
-      
-      # Ask user which name they want to use
-      echo "Would you like to:"
-      echo "1) Change the docker-compose file to match the folder name: '$instance_name'"
-      echo "2) Use the instance name from the docker-compose file: '$file_instance_name'"
-      read -p "Enter your choice (1 or 2): " name_choice
-      
-      if [[ "$name_choice" == "2" ]]; then
-        echo "Using instance name from docker-compose file: '$file_instance_name'"
-        instance_name="$file_instance_name"
-      else
-        echo "Automatically fixing the docker-compose file to match the instance name: '$instance_name'"
-        
-        # Create a backup of the original file
-        local backup_file="${docker_compose_file}.backup_$(date +%Y%m%d_%H%M%S)"
-        cp "$docker_compose_file" "$backup_file"
-        # Set the correct ownership for the backup file to match parent folder
-        local parent_ownership=$(stat -c "%u:%g" "${instance_dir}")
-        chown "$parent_ownership" "$backup_file"
-        echo "Created backup of original docker-compose file at: $backup_file"
-        
-        # Update container name - handle both quoted and unquoted formats
-        sed -i "s/container_name: \"asa_${file_instance_name}\"/container_name: \"asa_${instance_name}\"/g" "$docker_compose_file"
-        sed -i "s/container_name: asa_${file_instance_name}/container_name: asa_${instance_name}/g" "$docker_compose_file"
-        
-        # Update environment variables for instance name - handle both formats with and without leading hyphen
-        sed -i "s/INSTANCE_NAME=${env_instance_name}/INSTANCE_NAME=${instance_name}/g" "$docker_compose_file"
-        sed -i "s/- INSTANCE_NAME=${env_instance_name}/- INSTANCE_NAME=${instance_name}/g" "$docker_compose_file"
-        
-        # Update volume paths if they contain the old instance name
-        sed -i "s|Instance_${file_instance_name}/Saved|Instance_${instance_name}/Saved|g" "$docker_compose_file"
-        sed -i "s|Instance_${file_instance_name}/API_Logs|Instance_${instance_name}/API_Logs|g" "$docker_compose_file"
-        
-        echo "Updated docker-compose file to match instance name: $instance_name"
-      fi
-    fi
+    echo "5"
+    return 0
   fi
-  
-  # Validate docker-compose file to ensure all instance names match
+
+  raw_value=$(_compose_env_value "$docker_compose_file" "SAVE_WAIT_SECONDS")
+  _sanitize_save_wait_seconds "$raw_value" "$context"
+}
+
+_get_instance_save_wait_seconds() {
+  local instance_name="$1"
+  local docker_compose_file="${BASE_DIR}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
+  _get_compose_file_save_wait_seconds "$docker_compose_file" "instance ${instance_name}"
+}
+
+_instance_save_log_path() {
+  local instance_name="$1"
+  echo "${BASE_DIR}/Instance_${instance_name}/Saved/Logs/ShooterGame.log"
+}
+
+_manager_env_value_is_truthy() {
+  case "${1^^}" in
+  TRUE|YES|1)
+    return 0
+    ;;
+  *)
+    return 1
+    ;;
+  esac
+}
+
+_compose_rcon_enabled() {
+  local docker_compose_file="$1"
+  local raw_value
+
+  raw_value=$(_compose_env_value "$docker_compose_file" "RCON_ENABLED")
+  _manager_env_value_is_truthy "${raw_value:-FALSE}"
+}
+
+_instance_stop_health_probe() {
+  local container_name="$1"
+  local probe_output=""
+
+  probe_output="$(docker exec "$container_name" /bin/bash -lc "/home/pok/scripts/health_probe.sh" 2>/dev/null || true)"
+
+  case "$probe_output" in
+  ok:*)
+    echo "ok|$probe_output"
+    ;;
+  degraded:*)
+    echo "degraded|$probe_output"
+    ;;
+  starting:*)
+    echo "starting|$probe_output"
+    ;;
+  unhealthy:*)
+    echo "unhealthy|$probe_output"
+    ;;
+  *)
+    echo "unhealthy|unhealthy: health probe unavailable"
+    ;;
+  esac
+}
+
+_instance_quick_save_policy() {
+  local instance_name="$1"
+  local container_name="$2"
+  local docker_compose_file="$3"
+  local health_result
+  local health_state
+  local health_detail
+
+  health_result=$(_instance_stop_health_probe "$container_name")
+  health_state="${health_result%%|*}"
+  health_detail="${health_result#*|}"
+
+  case "$health_state" in
+  ok)
+    if _compose_rcon_enabled "$docker_compose_file"; then
+      echo "attempt|${health_detail}"
+    else
+      echo "skip|Skipping quick save for ${instance_name}; server health is ok but RCON is disabled."
+    fi
+    ;;
+  degraded)
+    echo "attempt|Instance ${instance_name} is degraded; attempting quick save anyway before stop."
+    ;;
+  starting)
+    echo "skip|Skipping quick save for ${instance_name}; server health is starting."
+    ;;
+  unhealthy)
+    echo "skip|Skipping quick save for ${instance_name}; server health is unhealthy."
+    ;;
+  *)
+    echo "skip|Skipping quick save for ${instance_name}; server health could not be determined."
+    ;;
+  esac
+}
+
+_instance_save_log_line_count() {
+  local instance_name="$1"
+  local log_file
+  log_file=$(_instance_save_log_path "$instance_name")
+
+  if [ ! -f "$log_file" ]; then
+    echo "0"
+    return 0
+  fi
+
+  wc -l < "$log_file" 2>/dev/null || echo "0"
+}
+
+_save_completion_logged_since() {
+  local instance_name="$1"
+  local since_line="$2"
+  local log_file
+  log_file=$(_instance_save_log_path "$instance_name")
+
+  if [ ! -f "$log_file" ]; then
+    return 1
+  fi
+
+  tail -n "+$((since_line + 1))" "$log_file" 2>/dev/null | grep -qF "World Save Complete. Took:"
+}
+
+_wait_for_single_instance_save() {
+  local instance_name="$1"
+  local wait_seconds="$2"
+  local initial_line_count="$3"
+  local elapsed=0
+
+  while [ "$elapsed" -lt "$wait_seconds" ]; do
+    if _save_completion_logged_since "$instance_name" "$initial_line_count"; then
+      echo "Save completion detected in ShooterGame.log"
+      return 0
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+
+  echo "World Save Complete. Took: was not seen within ${wait_seconds} seconds; stopping anyway. Recent progression may be lost."
+  return 1
+}
+
+_start_instance_expected_owner() {
+  local image_tag="$1"
+  if [[ "$image_tag" == 2_0* ]]; then
+    echo "1000:1000"
+  else
+    echo "7777:7777"
+  fi
+}
+
+_start_instance_apply_owner() {
+  local target_owner="$1"
+  local target_path="$2"
+  if is_sudo; then
+    chown "$target_owner" "$target_path"
+  else
+    sudo chown "$target_owner" "$target_path"
+  fi
+}
+
+_start_instance_backup_compose_file() {
+  local docker_compose_file="$1"
+  local instance_dir="$2"
+  local backup_file="${docker_compose_file}.backup_$(date +%Y%m%d_%H%M%S)"
+  local parent_ownership
+
+  cp "$docker_compose_file" "$backup_file"
+  parent_ownership=$(stat -c "%u:%g" "${instance_dir}")
+  _start_instance_apply_owner "$parent_ownership" "$backup_file"
+  echo "Created backup of original docker-compose file at: $backup_file"
+}
+
+_start_instance_replace_compose_instance_references() {
+  local docker_compose_file="$1"
+  local old_container_instance_name="$2"
+  local old_env_instance_name="$3"
+  local new_instance_name="$4"
+
+  sed -i "s/container_name: \"asa_${old_container_instance_name}\"/container_name: \"asa_${new_instance_name}\"/g" "$docker_compose_file"
+  sed -i "s/container_name: asa_${old_container_instance_name}/container_name: asa_${new_instance_name}/g" "$docker_compose_file"
+  sed -i "s/INSTANCE_NAME=${old_env_instance_name}/INSTANCE_NAME=${new_instance_name}/g" "$docker_compose_file"
+  sed -i "s/- INSTANCE_NAME=${old_env_instance_name}/- INSTANCE_NAME=${new_instance_name}/g" "$docker_compose_file"
+  sed -i "s|Instance_${old_container_instance_name}/Saved|Instance_${new_instance_name}/Saved|g" "$docker_compose_file"
+  sed -i "s|Instance_${old_container_instance_name}/API_Logs|Instance_${new_instance_name}/API_Logs|g" "$docker_compose_file"
+}
+
+_start_instance_handle_missing_compose_file() {
+  local instance_name_var="$1"
+  local instance_dir="$2"
+  local docker_compose_file_var="$3"
+  local current_instance_name="${!instance_name_var}"
+  local current_docker_compose_file="${!docker_compose_file_var}"
+
+  if [ -f "$current_docker_compose_file" ]; then
+    return 0
+  fi
+
+  local found_compose_files=($(find "${instance_dir}" -maxdepth 1 -name 'docker-compose-*.yaml' 2>/dev/null || true))
+  if [ ${#found_compose_files[@]} -eq 0 ]; then
+    echo "❌ ERROR: Docker Compose file not found at $current_docker_compose_file"
+    echo "Make sure the instance ${current_instance_name} exists and is properly configured."
+    exit 1
+  fi
+
+  local found_compose_file="${found_compose_files[0]}"
+  local found_instance_name
+  found_instance_name=$(_compose_file_instance_name "$found_compose_file")
+
+  echo "⚠️ Found a docker-compose file for instance '$found_instance_name' in folder for '$current_instance_name'"
+  echo "This may happen if you renamed the folder manually instead of using the script's rename feature."
+  echo "Would you like to:"
+  echo "1) Change the docker-compose file to match the folder name: '$current_instance_name'"
+  echo "2) Use the instance name from the docker-compose file: '$found_instance_name'"
+  read -p "Enter your choice (1 or 2): " name_choice
+
+  if [[ "$name_choice" == "2" ]]; then
+    echo "Using instance name from docker-compose file: '$found_instance_name'"
+    printf -v "$instance_name_var" '%s' "$found_instance_name"
+    printf -v "$docker_compose_file_var" '%s' "$found_compose_file"
+    return 0
+  fi
+
+  echo "Automatically fixing the docker-compose file to match the instance name: '$current_instance_name'"
+  _start_instance_backup_compose_file "$found_compose_file" "$instance_dir"
+  echo "Updating docker-compose file to match new instance name: $current_instance_name"
+  _start_instance_replace_compose_instance_references "$found_compose_file" "$found_instance_name" "$found_instance_name" "$current_instance_name"
+  mv "$found_compose_file" "$current_docker_compose_file"
+  echo "Renamed docker-compose file to match new instance name"
+  echo "Using updated docker-compose file: $current_docker_compose_file"
+}
+
+_start_instance_reconcile_compose_identity() {
+  local instance_name_var="$1"
+  local instance_dir="$2"
+  local docker_compose_file_var="$3"
+  local current_instance_name="${!instance_name_var}"
+  local current_docker_compose_file="${!docker_compose_file_var}"
+  local file_instance_name
+  local env_instance_name
+
+  file_instance_name=$(_compose_container_instance_name "$current_docker_compose_file")
+  env_instance_name=$(_compose_env_instance_name "$current_docker_compose_file")
+
+  if [[ "$file_instance_name" == "$current_instance_name" && "$env_instance_name" == "$current_instance_name" ]]; then
+    return 0
+  fi
+
+  echo "⚠️ Docker compose file exists but contains mismatched instance names."
+  echo "Found container name in docker-compose file: 'asa_$file_instance_name'"
+  echo "Found INSTANCE_NAME in docker-compose file: '$env_instance_name'"
+  echo "Would you like to:"
+  echo "1) Change the docker-compose file to match the folder name: '$current_instance_name'"
+  echo "2) Use the instance name from the docker-compose file: '$file_instance_name'"
+  read -p "Enter your choice (1 or 2): " name_choice
+
+  if [[ "$name_choice" == "2" ]]; then
+    echo "Using instance name from docker-compose file: '$file_instance_name'"
+    printf -v "$instance_name_var" '%s' "$file_instance_name"
+    return 0
+  fi
+
+  echo "Automatically fixing the docker-compose file to match the instance name: '$current_instance_name'"
+  _start_instance_backup_compose_file "$current_docker_compose_file" "$instance_dir"
+  _start_instance_replace_compose_instance_references "$current_docker_compose_file" "$file_instance_name" "$env_instance_name" "$current_instance_name"
+  echo "Updated docker-compose file to match instance name: $current_instance_name"
+}
+
+_start_instance_validate_compose_consistency() {
+  local instance_name_var="$1"
+  local instance_dir="$2"
+  local docker_compose_file_var="$3"
+  local current_instance_name="${!instance_name_var}"
+  local current_docker_compose_file="${!docker_compose_file_var}"
+  local compose_file_name
+  local container_name
+  local env_instance_name
+
   echo "Validating docker-compose file for consistency..."
-  local compose_file_name=$(basename "$docker_compose_file" | sed 's/docker-compose-//g' | sed 's/\.yaml//g')
-  local container_name=$(grep -E "container_name:.*asa_" "$docker_compose_file" | sed -E 's/.*container_name:.*asa_([^"]*).*/\1/' | tr -d ' ')
-  local env_instance_name=$(grep -E "INSTANCE_NAME=" "$docker_compose_file" | sed -E 's/.*INSTANCE_NAME=([^"]*).*/\1/' | tr -d ' ')
-  
-  if [[ "$compose_file_name" != "$instance_name" || "$container_name" != "$instance_name" || "$env_instance_name" != "$instance_name" ]]; then
-    echo "⚠️ WARNING: Inconsistencies found in docker-compose file:"
-    echo "  - Folder instance name: $instance_name"
-    echo "  - Docker compose filename instance: $compose_file_name"
-    echo "  - Container name instance: $container_name"
-    echo "  - Environment INSTANCE_NAME: $env_instance_name"
-    echo "These inconsistencies may cause issues with server operation."
-    
-    # Only prompt for fixing if running interactively
-    if [ -t 0 ]; then
-      echo "Would you like to fix these inconsistencies automatically? (y/N)"
-      read -p "> " fix_inconsistencies
-      
-      if [[ "$fix_inconsistencies" =~ ^[Yy]$ ]]; then
-        echo "Creating backup of current docker-compose file..."
-        local backup_file="${docker_compose_file}.backup_$(date +%Y%m%d_%H%M%S)"
-        cp "$docker_compose_file" "$backup_file"
-        # Set the correct ownership for the backup file to match parent folder
-        local parent_ownership=$(stat -c "%u:%g" "${instance_dir}")
-        chown "$parent_ownership" "$backup_file"
-        
-        echo "Fixing inconsistencies to use instance name: $instance_name"
-        # Update container name - handle both quoted and unquoted formats
-        sed -i "s/container_name: \"asa_${container_name}\"/container_name: \"asa_${instance_name}\"/g" "$docker_compose_file"
-        sed -i "s/container_name: asa_${container_name}/container_name: asa_${instance_name}/g" "$docker_compose_file"
-        
-        # Update environment variables - handle both formats with and without leading hyphen
-        sed -i "s/INSTANCE_NAME=${env_instance_name}/INSTANCE_NAME=${instance_name}/g" "$docker_compose_file"
-        sed -i "s/- INSTANCE_NAME=${env_instance_name}/- INSTANCE_NAME=${instance_name}/g" "$docker_compose_file"
-        
-        # Update volume paths
-        sed -i "s|Instance_${container_name}/Saved|Instance_${instance_name}/Saved|g" "$docker_compose_file"
-        sed -i "s|Instance_${container_name}/API_Logs|Instance_${instance_name}/API_Logs|g" "$docker_compose_file"
-        
-        # If the filename doesn't match, rename it
-        if [[ "$compose_file_name" != "$instance_name" ]]; then
-          local new_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
-          mv "$docker_compose_file" "$new_compose_file"
-          docker_compose_file="$new_compose_file"
-          echo "Renamed docker-compose file to: $(basename "$docker_compose_file")"
-        fi
-        
-        echo "✅ All inconsistencies fixed. Using instance name: $instance_name"
-      else
-        echo "Continuing with existing configuration. Some features may not work correctly."
-      fi
-    else
-      # In non-interactive mode, automatically fix inconsistencies
-      echo "Running in non-interactive mode. Automatically fixing inconsistencies..."
-      local backup_file="${docker_compose_file}.backup_$(date +%Y%m%d_%H%M%S)"
-      cp "$docker_compose_file" "$backup_file"
-      local parent_ownership=$(stat -c "%u:%g" "${instance_dir}")
-      chown "$parent_ownership" "$backup_file"
-      
-      # Fix inconsistencies
-      sed -i "s/container_name: \"asa_${container_name}\"/container_name: \"asa_${instance_name}\"/g" "$docker_compose_file"
-      sed -i "s/container_name: asa_${container_name}/container_name: asa_${instance_name}/g" "$docker_compose_file"
-      sed -i "s/INSTANCE_NAME=${env_instance_name}/INSTANCE_NAME=${instance_name}/g" "$docker_compose_file"
-      sed -i "s/- INSTANCE_NAME=${env_instance_name}/- INSTANCE_NAME=${instance_name}/g" "$docker_compose_file"
-      sed -i "s|Instance_${container_name}/Saved|Instance_${instance_name}/Saved|g" "$docker_compose_file"
-      sed -i "s|Instance_${container_name}/API_Logs|Instance_${instance_name}/API_Logs|g" "$docker_compose_file"
-      
-      if [[ "$compose_file_name" != "$instance_name" ]]; then
-        local new_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
-        mv "$docker_compose_file" "$new_compose_file"
-        docker_compose_file="$new_compose_file"
-        echo "Renamed docker-compose file to: $(basename "$docker_compose_file")"
-      fi
-      
-      echo "✅ All inconsistencies fixed automatically. Using instance name: $instance_name"
-    fi
-  else
-    echo "✅ Docker-compose file validation passed. All instance names match: $instance_name"
+  compose_file_name=$(_compose_file_instance_name "$current_docker_compose_file")
+  container_name=$(_compose_container_instance_name "$current_docker_compose_file")
+  env_instance_name=$(_compose_env_instance_name "$current_docker_compose_file")
+
+  if [[ "$compose_file_name" == "$current_instance_name" && "$container_name" == "$current_instance_name" && "$env_instance_name" == "$current_instance_name" ]]; then
+    echo "✅ Docker-compose file validation passed. All instance names match: $current_instance_name"
+    return 0
   fi
+
+  echo "⚠️ WARNING: Inconsistencies found in docker-compose file:"
+  echo "  - Folder instance name: $current_instance_name"
+  echo "  - Docker compose filename instance: $compose_file_name"
+  echo "  - Container name instance: $container_name"
+  echo "  - Environment INSTANCE_NAME: $env_instance_name"
+  echo "These inconsistencies may cause issues with server operation."
+
+  if [ -t 0 ]; then
+    echo "Would you like to fix these inconsistencies automatically? (y/N)"
+    read -p "> " fix_inconsistencies
+    if [[ ! "$fix_inconsistencies" =~ ^[Yy]$ ]]; then
+      echo "Continuing with existing configuration. Some features may not work correctly."
+      return 0
+    fi
+
+    echo "Creating backup of current docker-compose file..."
+    _start_instance_backup_compose_file "$current_docker_compose_file" "$instance_dir"
+    echo "Fixing inconsistencies to use instance name: $current_instance_name"
+  else
+    echo "Running in non-interactive mode. Automatically fixing inconsistencies..."
+    _start_instance_backup_compose_file "$current_docker_compose_file" "$instance_dir"
+  fi
+
+  _start_instance_replace_compose_instance_references "$current_docker_compose_file" "$container_name" "$env_instance_name" "$current_instance_name"
+
+  if [[ "$compose_file_name" != "$current_instance_name" ]]; then
+    local new_compose_file="${instance_dir}/docker-compose-${current_instance_name}.yaml"
+    mv "$current_docker_compose_file" "$new_compose_file"
+    printf -v "$docker_compose_file_var" '%s' "$new_compose_file"
+    echo "Renamed docker-compose file to: $(basename "$new_compose_file")"
+  fi
+
+  if [ -t 0 ]; then
+    echo "✅ All inconsistencies fixed. Using instance name: $current_instance_name"
+  else
+    echo "✅ All inconsistencies fixed automatically. Using instance name: $current_instance_name"
+  fi
+}
+
+_start_instance_validate_start_prerequisites() {
+  local instance_name="$1"
 
   echo ""
   if ! ensure_volume_mount_directories "$instance_name"; then
@@ -2327,7 +2984,6 @@ start_instance() {
   fi
   echo ""
 
-  # Check for root-owned files that might cause permission issues
   if ! validate_server_files_ownership; then
     echo ""
     echo "❌ Cannot start server until ownership issues are resolved."
@@ -2345,238 +3001,176 @@ start_instance() {
   if detect_root_owned_files; then
     echo ""
     echo "⚠️ Found root-owned files that will cause permission issues with the container."
-    
-    # Check if we're already running with sudo
+
     if is_sudo; then
       echo "Since we're already running with sudo, we'll fix these permissions automatically."
       fix_root_owned_files
-    else
-      echo "Attempting to fix permission issues automatically using sudo..."
-      echo "You may be prompted for your password."
-      echo ""
-      
-      # Try to run the fix command with sudo
-      if sudo "$0" -fix; then
-        echo "✅ Permission issues fixed successfully."
-      else
-        echo "❌ Failed to automatically fix permissions."
-        echo ""
-        echo "This is likely because sudo requires a password, or you're not authorized to use sudo."
-        echo "Please run the fix command manually: sudo ./POK-manager.sh -fix"
-        echo ""
-        # In non-interactive mode or for restart operations, continue without prompting
-        if [ ! -t 0 ] || [[ "$RESTART_IN_PROGRESS" == "true" ]]; then
-          echo "Continuing with server start despite permission issues (non-interactive mode or restart in progress)..."
-        else
-          echo "Would you like to continue starting the server anyway? (This might cause container errors)"
-          read -p "Continue despite permission issues? (y/N): " continue_start
-          if [[ ! "$continue_start" =~ ^[Yy]$ ]]; then
-            echo "Server start cancelled. Please run 'sudo ./POK-manager.sh -fix' to fix permissions."
-            exit 1
-          fi
-          echo "Continuing with server start despite permission issues..."
-        fi
-      fi
+      return 0
     fi
+
+    echo "Attempting to fix permission issues automatically using sudo..."
+    echo "You may be prompted for your password."
+    echo ""
+
+    if sudo "$0" -fix; then
+      echo "✅ Permission issues fixed successfully."
+      return 0
+    fi
+
+    echo "❌ Failed to automatically fix permissions."
+    echo ""
+    echo "This is likely because sudo requires a password, or you're not authorized to use sudo."
+    echo "Please run the fix command manually: sudo ./POK-manager.sh -fix"
+    echo ""
+
+    if [ ! -t 0 ] || [[ "$RESTART_IN_PROGRESS" == "true" ]]; then
+      echo "Continuing with server start despite permission issues (non-interactive mode or restart in progress)..."
+      return 0
+    fi
+
+    echo "Would you like to continue starting the server anyway? (This might cause container errors)"
+    read -p "Continue despite permission issues? (y/N): " continue_start
+    if [[ ! "$continue_start" =~ ^[Yy]$ ]]; then
+      echo "Server start cancelled. Please run 'sudo ./POK-manager.sh -fix' to fix permissions."
+      exit 1
+    fi
+
+    echo "Continuing with server start despite permission issues..."
   fi
-  
-  # Ensure the API_Logs directory exists for this instance
-  local base_dir="${BASE_DIR}"
-  local instance_dir="${base_dir}/Instance_${instance_name}"
+}
+
+_start_instance_sync_api_logs_volume() {
+  local instance_name="$1"
+  local docker_compose_file="$2"
+  local image_tag="$3"
+  local instance_dir="${BASE_DIR}/Instance_${instance_name}"
   local api_logs_dir="${instance_dir}/API_Logs"
-  local api_logs_created=false
-  
-  # Create API_Logs directory if it doesn't exist
+  local target_owner
+  local api_logs_updated=false
+
+  target_owner=$(_start_instance_expected_owner "$image_tag")
+
   if [ ! -d "$api_logs_dir" ]; then
     echo "Creating API_Logs directory for instance: $instance_name"
     mkdir -p "$api_logs_dir"
-    api_logs_created=true
+    api_logs_updated=true
   else
-    # Check if permissions need to be updated on existing directory
-    local current_owner=$(stat -c "%u:%g" "$api_logs_dir")
-    local target_owner=""
-    
-    if [[ "$image_tag" == 2_0* ]]; then
-      target_owner="1000:1000"
-    else
-      target_owner="7777:7777"
-    fi
-    
+    local current_owner
+    current_owner=$(stat -c "%u:%g" "$api_logs_dir")
     if [ "$current_owner" != "$target_owner" ]; then
       echo "Updating API_Logs directory ownership to match container ($target_owner)"
-      api_logs_created=true
+      api_logs_updated=true
     fi
   fi
-  
-  # Set proper permissions on the directory based on image tag
-  if [ "$api_logs_created" = true ]; then
+
+  if [ "$api_logs_updated" = true ]; then
     if [[ "$image_tag" == 2_0* ]]; then
       echo "Setting 1000:1000 ownership on API_Logs directory for 2_0_latest image compatibility"
-      if is_sudo; then
-        chown 1000:1000 "$api_logs_dir"
-      else
-        sudo chown 1000:1000 "$api_logs_dir"
-      fi
     else
       echo "Setting 7777:7777 ownership on API_Logs directory for 2_1_latest image compatibility"
-      if is_sudo; then
-        chown 7777:7777 "$api_logs_dir"
-      else
-        sudo chown 7777:7777 "$api_logs_dir"
-      fi
     fi
+    _start_instance_apply_owner "$target_owner" "$api_logs_dir"
     chmod 755 "$api_logs_dir"
   fi
-  
-  # Check if the docker-compose file needs to be updated to include the API_Logs volume
+
   if ! grep -q "API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs" "$docker_compose_file"; then
-    # Only add API_Logs volume if API=TRUE
-    if grep -q "^ *- API=TRUE" "$docker_compose_file" || grep -q "^ *- API:TRUE" "$docker_compose_file"; then
+    if _compose_api_enabled "$docker_compose_file"; then
+      local tmp_file="${docker_compose_file}.tmp"
+      local abs_instance_dir
+
       echo "Adding API_Logs volume mapping to docker-compose file"
-      
-      # Create a temporary file
-      local tmp_file="${docker_compose_file}.tmp"
-      
-      # Get absolute path for consistency with other volume paths
-      local abs_instance_dir=$(realpath "$instance_dir")
-      
-      # Use sed to add the API_Logs volume after the Saved volume with absolute path
+      abs_instance_dir=$(realpath "$instance_dir")
       sed -e "/Saved:.*ShooterGame\/Saved/ a\\      - \"$abs_instance_dir/API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs\"" "$docker_compose_file" > "$tmp_file"
-      
-      # Replace the original file with the updated one
       mv -f "$tmp_file" "$docker_compose_file"
-      
-      # Set proper permissions on the file
-      if is_sudo; then
-        # Match file ownership with the API_Logs directory
-        if [[ "$image_tag" == 2_0* ]]; then
-          chown 1000:1000 "$docker_compose_file"
-        else
-          chown 7777:7777 "$docker_compose_file"
-        fi
-      else
-        # Use sudo as needed
-        if [[ "$image_tag" == 2_0* ]]; then
-          sudo chown 1000:1000 "$docker_compose_file"
-        else
-          sudo chown 7777:7777 "$docker_compose_file"
-        fi
-      fi
+      _start_instance_apply_owner "$target_owner" "$docker_compose_file"
     fi
-  elif ! (grep -q "^ *- API=TRUE" "$docker_compose_file" || grep -q "^ *- API:TRUE" "$docker_compose_file") && grep -q "API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs" "$docker_compose_file"; then
-    # If API=FALSE, blank, or not present but API_Logs volume exists, remove it
-    echo "Removing API_Logs volume mapping from docker-compose file since API is disabled or not set"
-    
-    # Create a temporary file
+  elif ! _compose_api_enabled "$docker_compose_file"; then
     local tmp_file="${docker_compose_file}.tmp"
-    
-    # Remove the API_Logs line
+
+    echo "Removing API_Logs volume mapping from docker-compose file since API is disabled or not set"
     grep -v "API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs" "$docker_compose_file" > "$tmp_file"
-    
-    # Replace the original file with the updated one
     mv -f "$tmp_file" "$docker_compose_file"
-    
-    # Set proper permissions on the file
-    if is_sudo; then
-      # Match file ownership with the instance directory
-      if [[ "$image_tag" == 2_0* ]]; then
-        chown 1000:1000 "$docker_compose_file"
-      else
-        chown 7777:7777 "$docker_compose_file"
-      fi
-    else
-      # Use sudo as needed
-      if [[ "$image_tag" == 2_0* ]]; then
-        sudo chown 1000:1000 "$docker_compose_file"
-      else
-        sudo chown 7777:7777 "$docker_compose_file"
-      fi
-    fi
+    _start_instance_apply_owner "$target_owner" "$docker_compose_file"
   fi
-  
-  # Fix any relative paths in the API_Logs volume mapping
-  if grep -q "API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs" "$docker_compose_file"; then
-    # Check if the path is relative (starts with ./)
-    if grep -q "^ *- \"\./Instance_" "$docker_compose_file"; then
-      echo "Converting relative API_Logs path to absolute path"
-      
-      # Create a temporary file
-      local tmp_file="${docker_compose_file}.tmp"
-      
-      # Get absolute path for consistency with other volume paths
-      local abs_instance_dir=$(realpath "$instance_dir")
-      
-      # Use sed to replace the relative path with absolute path
-      sed -e "s|^ *- \"\./Instance_${instance_name}/API_Logs|      - \"$abs_instance_dir/API_Logs|g" "$docker_compose_file" > "$tmp_file"
-      
-      # Replace the original file with the updated one
-      mv -f "$tmp_file" "$docker_compose_file"
-      
-      # Set proper permissions on the file
-      if is_sudo; then
-        # Match file ownership with the API_Logs directory
-        if [[ "$image_tag" == 2_0* ]]; then
-          chown 1000:1000 "$docker_compose_file"
-        else
-          chown 7777:7777 "$docker_compose_file"
-        fi
-      else
-        # Use sudo as needed
-        if [[ "$image_tag" == 2_0* ]]; then
-          sudo chown 1000:1000 "$docker_compose_file"
-        else
-          sudo chown 7777:7777 "$docker_compose_file"
-        fi
-      fi
-    fi
+
+  if grep -q "API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs" "$docker_compose_file" && grep -q "^ *- \"\./Instance_" "$docker_compose_file"; then
+    local tmp_file="${docker_compose_file}.tmp"
+    local abs_instance_dir
+
+    echo "Converting relative API_Logs path to absolute path"
+    abs_instance_dir=$(realpath "$instance_dir")
+    sed -e "s|^ *- \"\./Instance_${instance_name}/API_Logs|      - \"$abs_instance_dir/API_Logs|g" "$docker_compose_file" > "$tmp_file"
+    mv -f "$tmp_file" "$docker_compose_file"
+    _start_instance_apply_owner "$target_owner" "$docker_compose_file"
   fi
-  
-  # Check if API is enabled but file ownership is 1000:1000
+}
+
+_start_instance_sync_save_wait_seconds_env() {
+  local docker_compose_file="$1"
+
+  if grep -q '^[[:space:]]*-[[:space:]]*SAVE_WAIT_SECONDS=' "$docker_compose_file"; then
+    return 0
+  fi
+
+  local tmp_file="${docker_compose_file}.tmp"
+  awk '
+    {
+      print
+
+      if (!inserted && $0 ~ /^[[:space:]]*-[[:space:]]*RESTART_NOTICE_MINUTES=/) {
+        match($0, /^[[:space:]]*/)
+        print substr($0, RSTART, RLENGTH) "- SAVE_WAIT_SECONDS=5"
+        inserted=1
+      }
+    }
+  ' "$docker_compose_file" > "$tmp_file"
+
+  mv "$tmp_file" "$docker_compose_file"
+}
+
+_start_instance_handle_api_compatibility() {
+  local instance_name="$1"
+  local docker_compose_file="$2"
+  local image_tag_var="$3"
+  local current_image_tag="${!image_tag_var}"
   local api_enabled=false
   local file_ownership_legacy=false
-  
-  # Check if API is enabled in the docker-compose file
-  if grep -q "^ *- API=TRUE" "$docker_compose_file" || grep -q "^ *- API:TRUE" "$docker_compose_file"; then
+  local server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
+
+  if _compose_api_enabled "$docker_compose_file"; then
     api_enabled=true
   else
-    # API is either FALSE, blank, or not present - treat as disabled
-    api_enabled=false
-    
-    # If API is not explicitly defined, add it as FALSE for clarity
     if ! grep -q "^ *- API=" "$docker_compose_file" && ! grep -q "^ *- API:" "$docker_compose_file"; then
       echo "API setting not found, adding API=FALSE to docker-compose file for clarity"
       sed -i "/- INSTANCE_NAME/a \ \ \ \ \ \ - API=FALSE" "$docker_compose_file"
-    # Check for blank API setting (e.g., "- API=" or "- API:")
     elif grep -q "^ *- API=$" "$docker_compose_file" || grep -q "^ *- API:$" "$docker_compose_file"; then
-      echo "Blank API setting found, setting to FALSE for clarity"
       local tmp_file="${docker_compose_file}.tmp"
+
+      echo "Blank API setting found, setting to FALSE for clarity"
       grep -v "^ *- API=$\|^ *- API:$" "$docker_compose_file" > "$tmp_file"
       mv "$tmp_file" "$docker_compose_file"
       sed -i "/- INSTANCE_NAME/a \ \ \ \ \ \ - API=FALSE" "$docker_compose_file"
     fi
   fi
-  
-  # Check server files ownership
-  local server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
+
   if [ -d "$server_files_dir" ]; then
-    local file_ownership=$(stat -c '%u:%g' "$server_files_dir")
+    local file_ownership
+    file_ownership=$(stat -c '%u:%g' "$server_files_dir")
     if [ "$file_ownership" = "1000:1000" ]; then
       file_ownership_legacy=true
     fi
   fi
-  
-  # If API is enabled but using legacy ownership, recommend migration
+
   if [ "$api_enabled" = "true" ] && [ "$file_ownership_legacy" = "true" ]; then
     echo ""
     echo "⚠️ IMPORTANT API COMPATIBILITY WARNING ⚠️"
     echo "You're trying to start instance '$instance_name' with AsaApi enabled, but using legacy"
-    echo "1000:1000 file ownership (image tag: $image_tag)."
+    echo "1000:1000 file ownership (image tag: $current_image_tag)."
     echo ""
     echo "For optimal API compatibility, it's strongly recommended to migrate to the newer"
     echo "7777:7777 ownership structure which works better with AsaApi."
     echo ""
-    
-    # Only prompt for migration if running interactively and not during a restart
+
     if [ -t 0 ] && [[ "$RESTART_IN_PROGRESS" != "true" ]]; then
       echo "Would you like to migrate to the recommended 7777:7777 ownership now?"
       echo "This process will:"
@@ -2586,43 +3180,28 @@ start_instance() {
       echo "  4. Restart your servers with API enabled"
       echo ""
       read -p "Perform migration now? (Strongly Recommended) [Y/n]: " perform_migration
-      
-      # Default to yes if nothing entered
+
       if [[ -z "$perform_migration" || "$perform_migration" =~ ^[Yy]$ ]]; then
         echo ""
         echo "🔄 Starting migration to 7777:7777 ownership..."
-        
-        # We need to run migration with sudo
+
         if ! is_sudo; then
           echo "Migration requires sudo privileges. Please enter your password when prompted."
-          
-          # Store all arguments to pass to sudo
-          local all_args="-migrate"
-          
-          # Execute the same script with sudo and the migrate option
-          if sudo "$0" $all_args; then
+          if sudo "$0" -migrate; then
             echo "✅ Migration completed successfully."
-            
-            # After migration completed, start the server fresh
             echo ""
             echo "Starting server with new 7777:7777 ownership..."
             sudo "$0" -start "$instance_name"
-            
-            # Exit because the above command will handle the start
             exit 0
           else
             echo "❌ Migration failed. The server will still be started but AsaApi may not work correctly."
           fi
         else
-          # Already running with sudo, so directly call migrate_file_ownership
           if migrate_file_ownership; then
             echo "✅ Migration completed successfully."
             echo ""
             echo "Continuing with server start using new ownership..."
-            
-            # Server will be started below with the normal flow
-            # The image tag should automatically update to 2_1_latest
-            image_tag="2_1_latest"
+            current_image_tag="2_1_latest"
           else
             echo "❌ Migration failed. The server will still be started but AsaApi may not work correctly."
           fi
@@ -2634,87 +3213,94 @@ start_instance() {
         echo ""
       fi
     else
-      # Non-interactive mode or restart in progress, just warn and continue
       echo "When running in non-interactive mode or during restart, migration is not performed automatically."
       echo "Consider running './POK-manager.sh -migrate' manually for proper API compatibility."
       echo "Proceeding with server start as requested..."
       echo ""
     fi
   fi
-  
-  # Check for permission mismatches between files and container before starting
+
+  printf -v "$image_tag_var" '%s' "$current_image_tag"
+}
+
+_start_instance_validate_image_permissions() {
+  local instance_name="$1"
+  local image_tag="$2"
   local server_files_dir="${BASE_DIR}/ServerFiles/arkserver"
-  if [ -d "$server_files_dir" ]; then
-    local file_ownership=$(stat -c '%u:%g' "$server_files_dir")
-    local file_uid=$(echo "$file_ownership" | cut -d: -f1)
-    local file_gid=$(echo "$file_ownership" | cut -d: -f2)
-    
-    # Check if image_tag is for beta (which uses 7777:7777)
-    if [[ "$image_tag" == *"_beta" || "$image_tag" == "2_1_latest" ]]; then
-      local container_uid=7777
-      local container_gid=7777
-      
-      # If files are owned by 1000:1000 but container uses 7777:7777
-      if [ "$file_uid" = "1000" ] && [ "$file_gid" = "1000" ]; then
-        echo "❌ ERROR: PERMISSION MISMATCH DETECTED!"
-        echo "Your server files are owned by UID:GID ${file_uid}:${file_gid} (1000:1000)"
-        echo "But your container image '$image_tag' expects UID:GID ${container_uid}:${container_gid} (7777:7777)"
+
+  if [ ! -d "$server_files_dir" ]; then
+    return 0
+  fi
+
+  local file_ownership
+  local file_uid
+  local file_gid
+  file_ownership=$(stat -c '%u:%g' "$server_files_dir")
+  file_uid=$(echo "$file_ownership" | cut -d: -f1)
+  file_gid=$(echo "$file_ownership" | cut -d: -f2)
+
+  if [[ "$image_tag" == *"_beta" || "$image_tag" == "2_1_latest" ]]; then
+    local container_uid=7777
+    local container_gid=7777
+
+    if [ "$file_uid" = "1000" ] && [ "$file_gid" = "1000" ]; then
+      echo "❌ ERROR: PERMISSION MISMATCH DETECTED!"
+      echo "Your server files are owned by UID:GID ${file_uid}:${file_gid} (1000:1000)"
+      echo "But your container image '$image_tag' expects UID:GID ${container_uid}:${container_gid} (7777:7777)"
+      echo ""
+      echo "This will cause permission issues between the host and container."
+
+      if [[ "$RESTART_IN_PROGRESS" == "true" ]]; then
+        echo "⚠️ WARNING: Continuing despite permission mismatch because this is part of a restart operation."
+        echo "Some features may not work correctly until permissions are fixed."
         echo ""
-        echo "This will cause permission issues between the host and container."
-        
-        # For restart operations, continue with a warning instead of exiting
-        if [[ "$RESTART_IN_PROGRESS" == "true" ]]; then
-          echo "⚠️ WARNING: Continuing despite permission mismatch because this is part of a restart operation."
-          echo "Some features may not work correctly until permissions are fixed."
-          echo ""
-        else
-          echo "The server will NOT be started to prevent potential data corruption or access problems."
-          echo ""
-          echo "To fix this, you have two options:"
-          echo "1. Change file ownership to match the container:"
-          echo "   sudo chown -R 7777:7777 ${BASE_DIR}"
-          echo "   (Recommended for beta branch and 2_1_latest images)"
-          echo ""
-          echo "2. Change to the stable branch with 1000:1000 permissions:"
-          echo "   ./POK-manager.sh -stable"
-          echo "   (This will revert to using the 2_0_latest image that matches your current file ownership)"
-          echo ""
-          echo "You can also run: ./POK-manager.sh -migrate"
-          echo "This will help you migrate your server files to the new 7777:7777 ownership structure."
-          exit 1
-        fi
+        return 0
       fi
-    # Check if image_tag is for stable 2_0 (which uses 1000:1000)
-    elif [[ "$image_tag" == "2_0_latest" ]]; then
-      local container_uid=1000
-      local container_gid=1000
-      
-      # If files are owned by 7777:7777 but container uses 1000:1000
-      if [ "$file_uid" = "7777" ] && [ "$file_gid" = "7777" ]; then
-        echo "❌ ERROR: PERMISSION MISMATCH DETECTED!"
-        echo "Your server files are owned by UID:GID ${file_uid}:${file_gid} (7777:7777)"
-        echo "But your container image '$image_tag' expects UID:GID ${container_uid}:${container_gid} (1000:1000)"
-        echo ""
-        echo "This will cause permission issues between the host and container."
-        echo "The server will NOT be started to prevent potential data corruption or access problems."
-        echo ""
-        echo "To fix this, you have two options:"
-        echo "1. Change file ownership to match the container:"
-        echo "   sudo chown -R 1000:1000 ${BASE_DIR}"
-        echo "   (Only use this if you specifically need the 2_0_latest image with 1000:1000 permissions)"
-        echo ""
-        echo "2. Change to the beta branch or use 2_1_latest to match your file ownership:"
-        echo "   ./POK-manager.sh -beta"
-        echo "   (This will use the newer image that matches your current file ownership)"
-        exit 1
-      fi
+
+      echo "The server will NOT be started to prevent potential data corruption or access problems."
+      echo ""
+      echo "To fix this, you have two options:"
+      echo "1. Change file ownership to match the container:"
+      echo "   sudo chown -R 7777:7777 ${BASE_DIR}"
+      echo "   (Recommended for beta branch and 2_1_latest images)"
+      echo ""
+      echo "2. Change to the stable branch with 1000:1000 permissions:"
+      echo "   ./POK-manager.sh -stable"
+      echo "   (This will revert to using the 2_0_latest image that matches your current file ownership)"
+      echo ""
+      echo "You can also run: ./POK-manager.sh -migrate"
+      echo "This will help you migrate your server files to the new 7777:7777 ownership structure."
+      exit 1
+    fi
+  elif [[ "$image_tag" == "2_0_latest" ]]; then
+    local container_uid=1000
+    local container_gid=1000
+
+    if [ "$file_uid" = "7777" ] && [ "$file_gid" = "7777" ]; then
+      echo "❌ ERROR: PERMISSION MISMATCH DETECTED!"
+      echo "Your server files are owned by UID:GID ${file_uid}:${file_gid} (7777:7777)"
+      echo "But your container image '$image_tag' expects UID:GID ${container_uid}:${container_gid} (1000:1000)"
+      echo ""
+      echo "This will cause permission issues between the host and container."
+      echo "The server will NOT be started to prevent potential data corruption or access problems."
+      echo ""
+      echo "To fix this, you have two options:"
+      echo "1. Change file ownership to match the container:"
+      echo "   sudo chown -R 1000:1000 ${BASE_DIR}"
+      echo "   (Only use this if you specifically need the 2_0_latest image with 1000:1000 permissions)"
+      echo ""
+      echo "2. Change to the beta branch or use 2_1_latest to match your file ownership:"
+      echo "   ./POK-manager.sh -beta"
+      echo "   (This will use the newer image that matches your current file ownership)"
+      exit 1
     fi
   fi
-  
-  # Update the docker-compose.yaml file to use the correct image tag
-  update_docker_compose_image_tag "$docker_compose_file" "$image_tag"
-  
-  # Check permission issues with the compose file
+}
+
+_start_instance_warn_on_local_permission_mismatch() {
+  local instance_name="$1"
+  local docker_compose_file="$2"
+
   if [ ! -r "$docker_compose_file" ]; then
     echo "❌ ERROR: Cannot read the Docker Compose file due to permission issues."
     echo "Current user: $(id -un) (UID:$(id -u), GID:$(id -g))"
@@ -2722,8 +3308,10 @@ start_instance() {
     echo ""
     echo "You can fix this by:"
     echo "1. Running with the correct user who owns the files:"
-    local file_owner=$(stat -c '%u' "$docker_compose_file")
-    local possible_users=$(getent passwd "$file_owner" | cut -d: -f1)
+    local file_owner
+    local possible_users
+    file_owner=$(stat -c '%u' "$docker_compose_file")
+    possible_users=$(getent passwd "$file_owner" | cut -d: -f1)
     if [ -n "$possible_users" ]; then
       echo "   - Switch to user '$possible_users' with: su - $possible_users"
       echo "   - Then run: ./POK-manager.sh -start $instance_name"
@@ -2736,38 +3324,39 @@ start_instance() {
     echo "   sudo chown -R $(id -u):$(id -g) ./Instance_${instance_name}"
     exit 1
   fi
-  
-  # Check for PUID/PGID settings in the compose file
-  local compose_puid=$(grep -o "PUID=[0-9]*" "$docker_compose_file" | head -1 | awk -F= '{print $2}')
-  local compose_pgid=$(grep -o "PGID=[0-9]*" "$docker_compose_file" | head -1 | awk -F= '{print $2}')
-  
-  # Check if the PUID/PGID in the compose file are commented out
+
+  local compose_puid
+  local compose_pgid
+  compose_puid=$(grep -o "PUID=[0-9]*" "$docker_compose_file" | head -1 | awk -F= '{print $2}')
+  compose_pgid=$(grep -o "PGID=[0-9]*" "$docker_compose_file" | head -1 | awk -F= '{print $2}')
+
   if grep -q "^[[:space:]]*#[[:space:]]*-[[:space:]]*PUID=" "$docker_compose_file" || grep -q "^[[:space:]]*#[[:space:]]*-[[:space:]]*PGID=" "$docker_compose_file"; then
     echo "⚠️ WARNING: PUID/PGID settings are commented out in your Docker Compose file."
     echo "This may cause permission issues. Consider uncommenting them."
     echo ""
   fi
-  
-  # If not running as sudo, check for permission mismatches
+
   if ! is_sudo; then
-    # Get the server files directory for this instance
     local instance_dir="${BASE_DIR}/Instance_${instance_name}"
-    
+
     if [ -d "$instance_dir" ]; then
-      local dir_ownership="$(stat -c '%u:%g' "$instance_dir")"
-      local dir_uid=$(echo "$dir_ownership" | cut -d: -f1)
-      local dir_gid=$(echo "$dir_ownership" | cut -d: -f2)
-      local current_uid=$(id -u)
-      local current_gid=$(id -g)
-      
-      # Check if the current user's UID/GID don't match the directory ownership
+      local dir_ownership
+      local dir_uid
+      local dir_gid
+      local current_uid
+      local current_gid
+      dir_ownership="$(stat -c '%u:%g' "$instance_dir")"
+      dir_uid=$(echo "$dir_ownership" | cut -d: -f1)
+      dir_gid=$(echo "$dir_ownership" | cut -d: -f2)
+      current_uid=$(id -u)
+      current_gid=$(id -g)
+
       if [ "$current_uid" -ne "$dir_uid" ] || [ "$current_gid" -ne "$dir_gid" ]; then
         echo "⚠️ WARNING: Your current user (UID:$current_uid, GID:$current_gid) doesn't match the instance directory ownership (UID:$dir_uid, GID:$dir_gid)."
         echo "This may cause permission issues when starting or accessing the server."
         echo ""
       fi
-      
-      # Check if compose PUID/PGID don't match the directory ownership
+
       if [ -n "$compose_puid" ] && [ -n "$compose_pgid" ] && ([ "$compose_puid" -ne "$dir_uid" ] || [ "$compose_pgid" -ne "$dir_gid" ]); then
         echo "⚠️ WARNING: The PUID/PGID in your Docker Compose file ($compose_puid:$compose_pgid) don't match the instance directory ownership ($dir_uid:$dir_gid)."
         echo "This may cause permission issues with server files."
@@ -2775,229 +3364,435 @@ start_instance() {
       fi
     fi
   fi
-  
+}
+
+_start_instance_launch_container() {
+  local instance_name="$1"
+  local docker_compose_file="$2"
+  local image_tag="$3"
+  local start_output_mode="${4:-standard}"
+  local use_sudo
+
   get_docker_compose_cmd
   echo "Using $DOCKER_COMPOSE_CMD for ${instance_name}..."
-  
-  # Rest of the existing function
-  if [ -f "$docker_compose_file" ]; then
-    local use_sudo
-    local config_file=$(get_config_file_path)
-    if [ -f "$config_file" ]; then
-      use_sudo=$(cat "$config_file")
-    else
-      use_sudo="true"
-    fi
-    
-    if [ "$use_sudo" = "true" ]; then
-      echo "Using 'sudo' for Docker commands..."
-      sudo docker pull acekorneya/asa_server:${image_tag} || {
-        echo "❌ ERROR: Failed to pull the Docker image. Check your internet connection and Docker configuration."
-        exit 1
-      }
-      check_vm_max_map_count
-      sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d || {
-        echo "❌ ERROR: Failed to start the server container."
-        echo "Check the Docker Compose file and ensure Docker is correctly configured."
-        echo "You can view more detailed logs with: sudo $DOCKER_COMPOSE_CMD -f \"$docker_compose_file\" logs"
-        exit 1
-      }
-    else
-      docker pull acekorneya/asa_server:${image_tag} || {
-        local pull_exit_code=$?
-        if [ $pull_exit_code -eq 1 ] && [[ $(docker pull acekorneya/asa_server:${image_tag} 2>&1) =~ "permission denied" ]]; then
-          echo "Permission denied error occurred while pulling the Docker image."
-          echo "It seems the user is not set up correctly to run Docker commands without 'sudo'."
-          echo "Falling back to using 'sudo' for Docker commands."
-          echo "To grant your user permission to run Docker commands, run:"
-          echo "   sudo usermod -aG docker $(id -un)"
-          echo "Then log out and back in for changes to take effect."
-          sudo docker pull acekorneya/asa_server:${image_tag} || {
-            echo "❌ ERROR: Failed to pull the Docker image even with sudo. Check your internet connection and Docker configuration."
-            exit 1
-          }
-          check_vm_max_map_count
-          sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d || {
-            echo "❌ ERROR: Failed to start the server container even with sudo."
-            exit 1
-          }
-        else
-          echo "Failed to pull the Docker image. Please check your Docker configuration."
-          exit 1
-        fi
-      }
-      
-      check_vm_max_map_count
-      $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d || {
-        local compose_exit_code=$?
-        if [ $compose_exit_code -eq 1 ] && [[ $($DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d 2>&1) =~ "permission denied" ]]; then
-          echo "Permission denied error occurred while starting the container."
-          echo "Falling back to using 'sudo'."
-          sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d || {
-            echo "❌ ERROR: Failed to start the server container even with sudo."
-            exit 1
-          }
-        else
-          echo "❌ ERROR: Failed to start the server container."
-          echo "Check the Docker Compose file and ensure Docker is correctly configured."
-          exit 1
-        fi
-      }
-    fi
-    
-    echo "✅ Server ${instance_name} started successfully with image tag ${image_tag}."
-    echo "You can view logs while container is running with: ./POK-manager.sh -logs -live ${instance_name}"
-  else
+
+  if [ ! -f "$docker_compose_file" ]; then
     echo "❌ ERROR: Docker Compose file not found for instance ${instance_name}."
     exit 1
   fi
+
+  use_sudo=$(get_docker_sudo_preference)
+  if [ "$use_sudo" = "true" ]; then
+    echo "Using 'sudo' for Docker commands..."
+    sudo docker pull acekorneya/asa_server:${image_tag} || {
+      echo "❌ ERROR: Failed to pull the Docker image. Check your internet connection and Docker configuration."
+      exit 1
+    }
+    check_vm_max_map_count
+    sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d || {
+      echo "❌ ERROR: Failed to start the server container."
+      echo "Check the Docker Compose file and ensure Docker is correctly configured."
+      echo "You can view more detailed logs with: sudo $DOCKER_COMPOSE_CMD -f \"$docker_compose_file\" logs"
+      exit 1
+    }
+  else
+    docker pull acekorneya/asa_server:${image_tag} || {
+      local pull_exit_code=$?
+      if [ $pull_exit_code -eq 1 ] && [[ $(docker pull acekorneya/asa_server:${image_tag} 2>&1) =~ "permission denied" ]]; then
+        echo "Permission denied error occurred while pulling the Docker image."
+        echo "It seems the user is not set up correctly to run Docker commands without 'sudo'."
+        echo "Falling back to using 'sudo' for Docker commands."
+        echo "To grant your user permission to run Docker commands, run:"
+        echo "   sudo usermod -aG docker $(id -un)"
+        echo "Then log out and back in for changes to take effect."
+        sudo docker pull acekorneya/asa_server:${image_tag} || {
+          echo "❌ ERROR: Failed to pull the Docker image even with sudo. Check your internet connection and Docker configuration."
+          exit 1
+        }
+        check_vm_max_map_count
+        sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d || {
+          echo "❌ ERROR: Failed to start the server container even with sudo."
+          exit 1
+        }
+      else
+        echo "Failed to pull the Docker image. Please check your Docker configuration."
+        exit 1
+      fi
+    }
+
+    check_vm_max_map_count
+    $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d || {
+      local compose_exit_code=$?
+      if [ $compose_exit_code -eq 1 ] && [[ $($DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d 2>&1) =~ "permission denied" ]]; then
+        echo "Permission denied error occurred while starting the container."
+        echo "Falling back to using 'sudo'."
+        sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" up -d || {
+          echo "❌ ERROR: Failed to start the server container even with sudo."
+          exit 1
+        }
+      else
+        echo "❌ ERROR: Failed to start the server container."
+        echo "Check the Docker Compose file and ensure Docker is correctly configured."
+        exit 1
+      fi
+    }
+  fi
+
+  echo "✅ Server ${instance_name} started successfully with image tag ${image_tag}."
+  if [ "$start_output_mode" != "coordinated_all" ]; then
+    echo "You can view logs while container is running with: ./POK-manager.sh -logs -live ${instance_name}"
+  fi
+}
+
+_stop_instance_resolve_compose_context() {
+  local instance_name="$1"
+  local instance_dir="$2"
+  local docker_compose_file_var="$3"
+  local container_name_var="$4"
+  local found_instance_name_var="$5"
+  local current_docker_compose_file="${!docker_compose_file_var}"
+  local current_container_name="${!container_name_var}"
+
+  if [ -f "$current_docker_compose_file" ]; then
+    return 0
+  fi
+
+  local found_compose_files=($(find "${instance_dir}" -maxdepth 1 -name 'docker-compose-*.yaml' 2>/dev/null || true))
+  if [ ${#found_compose_files[@]} -eq 0 ]; then
+    return 0
+  fi
+
+  local found_compose_file="${found_compose_files[0]}"
+  local resolved_instance_name
+  resolved_instance_name=$(_compose_file_instance_name "$found_compose_file")
+
+  echo "⚠️ Found a docker-compose file for instance '$resolved_instance_name' in folder for '$instance_name'"
+  echo "This may happen if you renamed the folder manually instead of using the script's rename feature."
+  echo "Using the found docker-compose file: $found_compose_file"
+
+  local found_container_name
+  found_container_name=$(_compose_full_container_name "$found_compose_file")
+  if [ -n "$found_container_name" ]; then
+    current_container_name="$found_container_name"
+    printf -v "$container_name_var" '%s' "$current_container_name"
+    echo "Using container name from docker-compose file: $current_container_name"
+  fi
+
+  printf -v "$docker_compose_file_var" '%s' "$found_compose_file"
+  printf -v "$found_instance_name_var" '%s' "$resolved_instance_name"
+}
+
+_stop_instance_find_container_id() {
+  local instance_name="$1"
+  local found_instance_name="$2"
+  local container_id
+
+  container_id=$(get_instance_container_id "$instance_name")
+  if [ -z "$container_id" ] && [ -n "$found_instance_name" ]; then
+    container_id=$(get_instance_container_id "$found_instance_name")
+    if [ -n "$container_id" ]; then
+      echo "Found running container for '$found_instance_name' instead of '$instance_name'" >&2
+    fi
+  fi
+
+  echo "$container_id"
+}
+
+_dispatch_quick_save_command() {
+  local instance_name="$1"
+  local container_name="$2"
+
+  (
+    timeout 3s docker exec "$container_name" /bin/bash -c "/home/pok/scripts/rcon_interface.sh -saveworld" >/dev/null 2>&1
+    save_exit_code=$?
+    if [ $save_exit_code -eq 124 ]; then
+      echo "Save command timed out, continuing with container stop"
+    elif [ $save_exit_code -ne 0 ]; then
+      echo "Save command failed or not available, continuing with container stop"
+    else
+      echo "Save command sent successfully"
+    fi
+  ) &
+}
+
+_max_instance_save_wait_seconds() {
+  local max_wait=1
+  local instance_name
+  local save_wait
+
+  for instance_name in "$@"; do
+    save_wait=$(_get_instance_save_wait_seconds "$instance_name")
+    if [ "$save_wait" -gt "$max_wait" ]; then
+      max_wait="$save_wait"
+    fi
+  done
+
+  echo "$max_wait"
+}
+
+_save_instances_then_wait() {
+  local start_message="$1"
+  local wait_message_template="$2"
+  shift 2
+  local instances=("$@")
+  local instance_name
+  local wait_seconds
+  local elapsed=0
+  local pending_count=0
+  local save_policy
+  local save_action
+  local save_message
+  local docker_compose_file
+  local -A initial_log_lines=()
+  local -A pending_instances=()
+
+  [ ${#instances[@]} -gt 0 ] || return 0
+
+  echo "$start_message"
+  for instance_name in "${instances[@]}"; do
+    local container_name="asa_${instance_name}"
+    docker_compose_file="${BASE_DIR}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
+    save_policy=$(_instance_quick_save_policy "$instance_name" "$container_name" "$docker_compose_file")
+    save_action="${save_policy%%|*}"
+    save_message="${save_policy#*|}"
+
+    if [ "$save_action" != "attempt" ]; then
+      echo "  ${save_message}"
+      continue
+    fi
+
+    if [[ "$save_message" == Instance* ]]; then
+      echo "  ${save_message}"
+    fi
+
+    initial_log_lines["$instance_name"]=$(_instance_save_log_line_count "$instance_name")
+    pending_instances["$instance_name"]=1
+    echo "  Sending quick save command to ${instance_name}..."
+    (
+      timeout 3s docker exec "$container_name" /bin/bash -c "/home/pok/scripts/rcon_interface.sh -saveworld" >/dev/null 2>&1
+      save_exit_code=$?
+      if [ $save_exit_code -eq 0 ]; then
+        echo "  Save command sent successfully to ${instance_name}"
+      else
+        echo "  Save command failed or timed out for ${instance_name}, proceeding with stop"
+      fi
+    ) &
+  done
+
+  if [ "${#pending_instances[@]}" -eq 0 ]; then
+    echo "No instances are save-ready for a quick save. Proceeding with stop."
+    return 0
+  fi
+
+  local wait_instances=()
+  for instance_name in "${instances[@]}"; do
+    [ -n "${pending_instances[$instance_name]:-}" ] && wait_instances+=("$instance_name")
+  done
+
+  wait_seconds=$(_max_instance_save_wait_seconds "${wait_instances[@]}")
+  printf "$wait_message_template\n" "$wait_seconds"
+  pending_count=${#wait_instances[@]}
+
+  while [ "$elapsed" -lt "$wait_seconds" ] && [ "$pending_count" -gt 0 ]; do
+    for instance_name in "${instances[@]}"; do
+      [ -n "${pending_instances[$instance_name]:-}" ] || continue
+      if _save_completion_logged_since "$instance_name" "${initial_log_lines[$instance_name]}"; then
+        echo "  Save completion detected for ${instance_name}"
+        unset 'pending_instances[$instance_name]'
+        pending_count=$((pending_count - 1))
+      fi
+    done
+
+    [ "$pending_count" -eq 0 ] && break
+
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+
+  if [ "$pending_count" -gt 0 ]; then
+    local pending_list=()
+    for instance_name in "${instances[@]}"; do
+      [ -n "${pending_instances[$instance_name]:-}" ] && pending_list+=("$instance_name")
+    done
+    echo "World Save Complete. Took: was not seen within ${wait_seconds} seconds for: ${pending_list[*]}. Stopping anyway. Recent progression may be lost."
+  fi
+}
+
+_stop_instance_attempt_quick_save() {
+  local instance_name="$1"
+  local container_id="$2"
+  local container_name="$3"
+  local docker_compose_file="$4"
+  local wait_seconds
+  local initial_line_count
+  local save_policy
+  local save_action
+  local save_message
+
+  if [ -z "$container_id" ]; then
+    echo "Container is not running, proceeding with stop."
+    return 0
+  fi
+
+  save_policy=$(_instance_quick_save_policy "$instance_name" "$container_name" "$docker_compose_file")
+  save_action="${save_policy%%|*}"
+  save_message="${save_policy#*|}"
+
+  if [ "$save_action" != "attempt" ]; then
+    echo "$save_message"
+    return 0
+  fi
+
+  if [[ "$save_message" == Instance* ]]; then
+    echo "$save_message"
+  fi
+
+  echo "Server is running. Attempting quick save before stopping..."
+  initial_line_count=$(_instance_save_log_line_count "$instance_name")
+  _dispatch_quick_save_command "$instance_name" "$container_name"
+  wait_seconds=$(_get_compose_file_save_wait_seconds "$docker_compose_file" "instance ${instance_name}")
+  echo "Waiting up to ${wait_seconds} seconds for save to complete..."
+  _wait_for_single_instance_save "$instance_name" "$wait_seconds" "$initial_line_count" || true
+}
+
+_stop_instance_stop_with_sudo() {
+  local docker_compose_file="$1"
+  local container_name="$2"
+
+  if [ -f "$docker_compose_file" ]; then
+    sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down || {
+      echo "Warning: Error occurred while stopping the container using docker-compose down"
+      sudo docker stop "$container_name" || {
+        echo "Error: Failed to stop container using fallback method"
+        return 1
+      }
+    }
+  else
+    sudo docker stop "$container_name" || {
+      echo "Error: Failed to stop container"
+      return 1
+    }
+  fi
+}
+
+_stop_instance_stop_without_sudo() {
+  local docker_compose_file="$1"
+  local container_name="$2"
+
+  if [ -f "$docker_compose_file" ]; then
+    $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down || {
+      local exit_code=$?
+      if [ $exit_code -eq 1 ] && [[ $($DOCKER_COMPOSE_CMD -f "$docker_compose_file" down 2>&1) =~ "permission denied" ]]; then
+        echo "Permission denied error occurred. Falling back to sudo..."
+        sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down || {
+          echo "Error: Failed to stop container even with sudo"
+          return 1
+        }
+      else
+        echo "Error: Failed to stop container with docker-compose"
+        echo "Attempting fallback to docker stop..."
+        docker stop "$container_name" || sudo docker stop "$container_name" || {
+          echo "Error: All stop attempts failed"
+          return 1
+        }
+      fi
+    }
+  else
+    docker stop "$container_name" || {
+      local exit_code=$?
+      if [ $exit_code -eq 1 ] && [[ $(docker stop "$container_name" 2>&1) =~ "permission denied" ]]; then
+        echo "Permission denied error occurred. Falling back to sudo..."
+        sudo docker stop "$container_name" || {
+          echo "Error: Failed to stop container even with sudo"
+          return 1
+        }
+      else
+        echo "Error: Failed to stop container"
+        return 1
+      fi
+    }
+  fi
+}
+
+_stop_instance_stop_container() {
+  local docker_compose_file="$1"
+  local container_name="$2"
+  local use_sudo
+
+  use_sudo=$(get_docker_sudo_preference)
+  echo "Stopping container..."
+
+  if [ "$use_sudo" = "true" ]; then
+    _stop_instance_stop_with_sudo "$docker_compose_file" "$container_name"
+  else
+    _stop_instance_stop_without_sudo "$docker_compose_file" "$container_name"
+  fi
+}
+
+# Function to start an instance
+start_instance() {
+  local instance_name="$1"
+  local coordination_mode="${2:-preserve}"
+  local start_output_mode="${3:-standard}"
+  local instance_dir="${BASE_DIR}/Instance_${instance_name}"
+  local docker_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
+  local image_tag=$(get_docker_image_tag "$instance_name")
+
+  case "$coordination_mode" in
+    promote_single)
+      if _coordination_instance_is_auto_update_eligible "$instance_name" && [ "$(_coordination_count_auto_update_instances)" -gt 1 ]; then
+        echo "Promoting ${instance_name} to coordination master for this managed start."
+        normalize_update_coordination_assignments "$instance_name"
+      else
+        normalize_update_coordination_assignments
+      fi
+      ;;
+    *)
+      normalize_update_coordination_assignments
+      ;;
+  esac
+  
+  echo "-----Starting ${instance_name} Server with image tag ${image_tag}-----"
+
+  check_volume_paths
+
+  _start_instance_handle_missing_compose_file instance_name "$instance_dir" docker_compose_file
+  _start_instance_reconcile_compose_identity instance_name "$instance_dir" docker_compose_file
+  _start_instance_validate_compose_consistency instance_name "$instance_dir" docker_compose_file
+
+  if ! _start_instance_validate_start_prerequisites "$instance_name"; then
+    return 1
+  fi
+
+  _start_instance_sync_save_wait_seconds_env "$docker_compose_file"
+  _start_instance_sync_api_logs_volume "$instance_name" "$docker_compose_file" "$image_tag"
+  _start_instance_handle_api_compatibility "$instance_name" "$docker_compose_file" image_tag
+  _start_instance_validate_image_permissions "$instance_name" "$image_tag"
+  update_docker_compose_image_tag "$docker_compose_file" "$image_tag"
+  _start_instance_warn_on_local_permission_mismatch "$instance_name" "$docker_compose_file"
+  _start_instance_launch_container "$instance_name" "$docker_compose_file" "$image_tag" "$start_output_mode"
 }
 
 # Function to stop an instance
 stop_instance() {
   local instance_name="$1"
-  local base_dir="${BASE_DIR}"
-  local instance_dir="${base_dir}/Instance_${instance_name}"
+  local save_mode="${2:-with_save}"
+  local instance_dir="${BASE_DIR}/Instance_${instance_name}"
   local docker_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
   local container_name="asa_${instance_name}"
-  
-  # Check if the docker-compose file exists
-  if [ ! -f "$docker_compose_file" ]; then
-    # Try to find any docker-compose file in the instance directory
-    local found_compose_files=($(find "${instance_dir}" -maxdepth 1 -name 'docker-compose-*.yaml' 2>/dev/null || true))
-    
-    if [ ${#found_compose_files[@]} -gt 0 ]; then
-      # Take the first one found
-      local found_compose_file="${found_compose_files[0]}"
-      local found_instance_name=$(basename "$found_compose_file" | sed 's/docker-compose-//g' | sed 's/\.yaml//g')
-      
-      echo "⚠️ Found a docker-compose file for instance '$found_instance_name' in folder for '$instance_name'"
-      echo "This may happen if you renamed the folder manually instead of using the script's rename feature."
-      echo "Using the found docker-compose file: $found_compose_file"
-      
-      # Get the container name from the found docker-compose file
-      if grep -q "container_name:" "$found_compose_file"; then
-        # Extract container name handling both quoted and unquoted formats
-        local found_container=""
-        if grep -q "container_name: \"" "$found_compose_file"; then
-          # Extract quoted container name
-          found_container=$(grep "container_name:" "$found_compose_file" | sed 's/.*container_name: "\(.*\)".*/\1/')
-        else
-          # Extract unquoted container name
-          found_container=$(grep "container_name:" "$found_compose_file" | sed 's/.*container_name: \(.*\)/\1/')
-        fi
-        
-        if [ -n "$found_container" ]; then
-          container_name="$found_container"
-          echo "Using container name from docker-compose file: $container_name"
-        fi
-      fi
-      
-      docker_compose_file="$found_compose_file"
-    fi
-  fi
-  
-  # Get container ID using our more robust method
-  local container_id=$(get_instance_container_id "$instance_name")
+  local found_instance_name=""
+  local container_id
 
-  # If we couldn't find a container for the instance_name, try with the found_instance_name if available
-  if [ -z "$container_id" ] && [ -n "$found_instance_name" ]; then
-    container_id=$(get_instance_container_id "$found_instance_name")
-    if [ -n "$container_id" ]; then
-      echo "Found running container for '$found_instance_name' instead of '$instance_name'"
-    fi
-  fi
+  _stop_instance_resolve_compose_context "$instance_name" "$instance_dir" docker_compose_file container_name found_instance_name
+  container_id=$(_stop_instance_find_container_id "$instance_name" "$found_instance_name")
 
   echo "-----Stopping ${instance_name} Server-----"
   
-  # Check if the container is running
-  if [ -n "$container_id" ]; then
-    echo "Server is running. Attempting quick save before stopping..."
-    
-    # Attempt a quick saveworld with timeout - run in background and kill if it takes too long
-    (
-      # Use timeout to limit how long the RCON command can run
-      timeout 3s docker exec "$container_name" /bin/bash -c "/home/pok/scripts/rcon_interface.sh -saveworld" >/dev/null 2>&1
-      save_exit_code=$?
-      if [ $save_exit_code -eq 124 ]; then
-        echo "Save command timed out, continuing with container stop"
-      elif [ $save_exit_code -ne 0 ]; then
-        echo "Save command failed or not available, continuing with container stop"
-      else
-        echo "Save command sent successfully"
-      fi
-    ) &
-    
-    # Wait briefly for save to complete (maximum 5 seconds)
-    echo "Waiting up to 5 seconds for save to complete..."
-    sleep 5
-  else
-    echo "Container is not running, proceeding with stop."
+  if [ "$save_mode" != "skip_save" ]; then
+    _stop_instance_attempt_quick_save "$instance_name" "$container_id" "$container_name" "$docker_compose_file"
   fi
 
-  # Get sudo preference
-  local use_sudo
-  local config_file=$(get_config_file_path)
-  if [ -f "$config_file" ]; then
-    use_sudo=$(cat "$config_file")
-  else
-    use_sudo="true"
-  fi
-
-  # Stop the container with default timeout
-  echo "Stopping container..."
-  if [ "$use_sudo" = "true" ]; then
-    if [ -f "$docker_compose_file" ]; then
-      sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down || {
-        echo "Warning: Error occurred while stopping the container using docker-compose down"
-        # Fallback to docker stop if docker-compose fails
-        sudo docker stop "$container_name" || {
-          echo "Error: Failed to stop container using fallback method"
-          return 1
-        }
-      }
-    else
-      sudo docker stop "$container_name" || {
-        echo "Error: Failed to stop container"
-        return 1
-      }
-    fi
-  else
-    if [ -f "$docker_compose_file" ]; then
-      $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down || {
-        local exit_code=$?
-        if [ $exit_code -eq 1 ] && [[ $($DOCKER_COMPOSE_CMD -f "$docker_compose_file" down 2>&1) =~ "permission denied" ]]; then
-          echo "Permission denied error occurred. Falling back to sudo..."
-          sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down || {
-            echo "Error: Failed to stop container even with sudo"
-            return 1
-          }
-        else
-          echo "Error: Failed to stop container with docker-compose"
-          echo "Attempting fallback to docker stop..."
-          docker stop "$container_name" || sudo docker stop "$container_name" || {
-            echo "Error: All stop attempts failed"
-            return 1
-          }
-        fi
-      }
-    else
-      docker stop "$container_name" || {
-        local exit_code=$?
-        if [ $exit_code -eq 1 ] && [[ $(docker stop "$container_name" 2>&1) =~ "permission denied" ]]; then
-          echo "Permission denied error occurred. Falling back to sudo..."
-          sudo docker stop "$container_name" || {
-            echo "Error: Failed to stop container even with sudo"
-            return 1
-          }
-        else
-          echo "Error: Failed to stop container"
-          return 1
-        fi
-      }
-    fi
-  fi
-
+  _stop_instance_stop_container "$docker_compose_file" "$container_name" || return 1
   echo "Instance ${instance_name} stopped successfully."
   return 0
 }
@@ -3015,268 +3810,305 @@ list_running_instances() {
 
   echo "${running_instances[@]}"
 }
-execute_rcon_command() {
-  local action="$1"
-  local wait_time="${3:-1}" # Default wait time set to 1 if not specified
-  shift # Remove the action from the argument list.
 
-  # Check for common typos of -all like -al, -a, -aall, etc.
-  if [[ "$1" =~ ^-a+l*$ ]]; then
-    echo "Note: Interpreted '$1' as '-all'"
-    shift
-    local message="$*" # Remaining arguments form the message/command
-    local target_all=true
-  elif [[ "$1" == "-all" ]]; then
-    shift
-    local message="$*" # Remaining arguments form the message/command
-    local target_all=true
-  else
-    local instance_name="$1"
-    shift
-    local message="$*" # Remaining arguments form the message/command
-    local target_all=false
+_rcon_is_all_target() {
+  local token="${1:-}"
+  [[ "$token" == "-all" || "$token" =~ ^-a+l*$ ]]
+}
+
+_rcon_print_running_instances() {
+  local running_instances
+  running_instances="$(list_running_instances)"
+
+  if [ -n "$running_instances" ]; then
+    printf '%s\n' $running_instances
   fi
+}
 
-  # New validation to check for extra dash in RCON command
+_rcon_validate_message() {
+  local message="$1"
+
   if [[ "$message" =~ ^- ]]; then
     echo "Error: RCON command should not start with a dash. Please use '-custom <RCON command>' instead."
     echo "Usage: ./POK-manager.sh -custom <RCON command> <instance_name|-all>"
     return 1
   fi
+}
 
-  if [[ "$target_all" == "true" ]]; then
-    # Get list of running instances
-    local running_instances=($(list_running_instances))
-    
-    # Check if there are any running instances before processing the command
-    if [ -n "$running_instances" ]; then
-      if [[ "$action" == "-shutdown" ]]; then
-        # Validate wait_time or set default
-        if [ -z "$wait_time" ]; then
-          echo "No shutdown time specified. Using default of 1 minute."
-          wait_time=1
-        fi
-        
-        # Validate that wait_time is a number
-        if ! [[ "$wait_time" =~ ^[0-9]+$ ]]; then
-          echo "Error: Invalid shutdown time '$wait_time'. Must be a positive number."
-          echo "Using default of 1 minute instead."
-          wait_time=1
-        fi
-        
-        # Use the enhanced shutdown command for better visuals and consistent experience
-        echo "Using enhanced shutdown functionality for all instances..."
-        enhanced_shutdown_command "$wait_time" "-all"
-        
-        # enhanced_shutdown_command exits the script when done, so no additional code is needed here
+_RCON_NORMALIZED_WAIT_TIME=1
+_rcon_normalize_wait_time() {
+  local wait_time="${1:-}"
+
+  _RCON_NORMALIZED_WAIT_TIME=1
+
+  if [ -z "$wait_time" ]; then
+    echo "No shutdown time specified. Using default of 1 minute."
+    return
+  fi
+
+  if ! [[ "$wait_time" =~ ^[0-9]+$ ]]; then
+    echo "Error: Invalid shutdown time '$wait_time'. Must be a positive number."
+    echo "Using default of 1 minute instead."
+    return
+  fi
+
+  _RCON_NORMALIZED_WAIT_TIME="$wait_time"
+}
+
+_rcon_instance_has_api_enabled() {
+  local instance_name="$1"
+  local docker_compose_file="${BASE_DIR}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
+
+  [ -f "$docker_compose_file" ] &&
+    (grep -q "^ *- API=TRUE" "$docker_compose_file" || grep -q "^ *- API:TRUE" "$docker_compose_file")
+}
+
+_rcon_print_mixed_restart_warning() {
+  local header="$1"
+
+  echo "$header"
+  echo "When restarting with mixed API modes, the running containers will be stopped,"
+  echo "server files WILL be updated, and containers will be brought back up."
+  echo "If a game update is available, it WILL be applied during this process."
+  echo ""
+  echo "This process follows these steps automatically:"
+  echo "1. Stop all containers"
+  echo "2. Update server files"
+  echo "3. Start all containers"
+  echo ""
+  echo "This ensures all server files are updated correctly while minimizing downtime."
+  sleep 3
+}
+
+_rcon_warn_on_mixed_restart_modes_for_all() {
+  local api_instances=()
+  local non_api_instances=()
+  local instance
+  local running_instances=()
+
+  mapfile -t running_instances < <(_rcon_print_running_instances)
+  for instance in "${running_instances[@]}"; do
+    if _rcon_instance_has_api_enabled "$instance"; then
+      api_instances+=("$instance")
+    else
+      non_api_instances+=("$instance")
+    fi
+  done
+
+  if [ ${#api_instances[@]} -gt 0 ] && [ ${#non_api_instances[@]} -gt 0 ]; then
+    _rcon_print_mixed_restart_warning "⚠️ WARNING: Mixed API modes detected (both TRUE and FALSE). ⚠️"
+  fi
+}
+
+_rcon_warn_on_mixed_restart_modes_for_instance() {
+  local instance_name="$1"
+  local this_instance_api=false
+  local instance
+  local running_instances=()
+
+  if _rcon_instance_has_api_enabled "$instance_name"; then
+    this_instance_api=true
+  fi
+
+  mapfile -t running_instances < <(_rcon_print_running_instances)
+  for instance in "${running_instances[@]}"; do
+    if [ "$instance" = "$instance_name" ]; then
+      continue
+    fi
+
+    if _rcon_instance_has_api_enabled "$instance"; then
+      if [ "$this_instance_api" = "false" ]; then
+        _rcon_print_mixed_restart_warning "⚠️ WARNING: Mixed API modes detected across running instances. ⚠️"
         return
-      elif [[ "$action" == "-restart" ]]; then
-        # Check if there are any running instances before processing the command
-        if [ -n "$(list_running_instances)" ]; then
-          # First, check if there's a mix of API and non-API instances
-          local api_instances=()
-          local non_api_instances=()
-          
-          for instance in $(list_running_instances); do
-            local docker_compose_file="${BASE_DIR}/Instance_${instance}/docker-compose-${instance}.yaml"
-            
-            # Check if API=TRUE in the docker-compose file
-            if [ -f "$docker_compose_file" ] && (grep -q "^ *- API=TRUE" "$docker_compose_file" || grep -q "^ *- API:TRUE" "$docker_compose_file"); then
-              api_instances+=("$instance")
-            else
-              non_api_instances+=("$instance")
-            fi
-          done
-          
-          # If mixed API modes, show warning
-          if [ ${#api_instances[@]} -gt 0 ] && [ ${#non_api_instances[@]} -gt 0 ]; then
-            echo "⚠️ WARNING: Mixed API modes detected (both TRUE and FALSE). ⚠️"
-            echo "When restarting with mixed API modes, the running containers will be stopped,"
-            echo "server files WILL be updated, and containers will be brought back up."
-            echo "If a game update is available, it WILL be applied during this process."
-            echo ""
-            echo "This process follows these steps automatically:"
-            echo "1. Stop all containers"
-            echo "2. Update server files"
-            echo "3. Start all containers"
-            echo ""
-            echo "This ensures all server files are updated correctly while minimizing downtime."
-            sleep 3
-          fi
-          
-          # Use the enhanced restart command for all instances
-          echo "Using enhanced restart functionality for all instances..."
-          enhanced_restart_command "$message" "-all"
-        else
-          echo "---- No Running Instances Found for command: $action -----"
-          echo " To start an instance, use the -start -all or -start <instance_name> command."
-        fi
-        # Don't exit immediately - the enhanced restart function will handle everything
-      else
-        # For other commands (-status, -saveworld, etc.)
-        # Create an associative array to store the output for each instance
-        declare -A instance_outputs
-        echo "----- Processing $action command for all running instances. Please wait... -----"
-        for instance in $(list_running_instances); do
-          if ! validate_instance "$instance"; then
-            echo "Instance $instance is not running or does not exist. Skipping..."
-            continue
-          fi
-
-          if [[ "$action" == "-status" ]]; then
-            local container_name="asa_${instance}"
-            local pdb_file="/home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.pdb"
-            local update_flag="/home/pok/update.flag"
-
-            if ! docker exec "$container_name" test -f "$pdb_file"; then
-              if docker exec "$container_name" test -f "$update_flag"; then
-                echo "Instance $instance is still updating/installing. Please wait until the update is complete before checking the status."
-                continue
-              else
-                echo "Instance $instance has not fully started yet. Please wait a few minutes before checking the status."
-                echo "If the instance is still not running, please check the logs for more information."
-                echo "you can use the -logs -live $instance command to follow the logs."
-                continue
-              fi
-            fi
-          fi
-
-          # Capture the command output in a variable
-          instance_outputs["$instance"]=$(run_in_container "$instance" "$action" "$message")
-        done
-
-        # Print the outputs in the desired format
-        for instance in "${!instance_outputs[@]}"; do
-          echo "----- Server $instance: Command: ${action#-}${message:+ $message} -----"
-          echo "${instance_outputs[$instance]}"
-        done
-
-        echo "----- All running instances processed with $action command. -----"
       fi
     else
+      if [ "$this_instance_api" = "true" ]; then
+        _rcon_print_mixed_restart_warning "⚠️ WARNING: Mixed API modes detected across running instances. ⚠️"
+        return
+      fi
+    fi
+  done
+}
+
+_rcon_status_ready() {
+  local instance_name="$1"
+  local show_logs_hint="${2:-false}"
+  local container_name="asa_${instance_name}"
+  local pdb_file="/home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.pdb"
+  local update_flag="/home/pok/update.flag"
+
+  if docker exec "$container_name" test -f "$pdb_file"; then
+    return 0
+  fi
+
+  if docker exec "$container_name" test -f "$update_flag"; then
+    echo "Instance $instance_name is still updating/installing. Please wait until the update is complete before checking the status."
+    return 1
+  fi
+
+  echo "Instance $instance_name has not fully started yet. Please wait a few minutes before checking the status."
+  if [ "$show_logs_hint" = "true" ]; then
+    echo "If the instance is still not running, please check the logs for more information."
+    echo "you can use the -logs -live $instance_name command to follow the logs."
+  fi
+  return 1
+}
+
+_rcon_process_all_running_instances() {
+  local action="$1"
+  local message="$2"
+  shift 2
+  local running_instances=("$@")
+  local instance
+  declare -A instance_outputs
+
+  echo "----- Processing $action command for all running instances. Please wait... -----"
+  for instance in "${running_instances[@]}"; do
+    if ! validate_instance "$instance"; then
+      echo "Instance $instance is not running or does not exist. Skipping..."
+      continue
+    fi
+
+    if [[ "$action" == "-status" ]] && ! _rcon_status_ready "$instance" "true"; then
+      continue
+    fi
+
+    instance_outputs["$instance"]="$(run_in_container "$instance" "$action" "$message")"
+  done
+
+  for instance in "${!instance_outputs[@]}"; do
+    echo "----- Server $instance: Command: ${action#-}${message:+ $message} -----"
+    echo "${instance_outputs[$instance]}"
+  done
+
+  echo "----- All running instances processed with $action command. -----"
+}
+
+_rcon_target_name_is_valid() {
+  local instance_name="$1"
+  ! [[ "$instance_name" == -* && "${instance_name,,}" != "-all" ]]
+}
+
+_rcon_handle_invalid_target_name() {
+  local action="$1"
+  local instance_name="$2"
+  local wait_time="$3"
+  local message="$4"
+  local process_all=""
+
+  echo "Warning: '$instance_name' appears to be an invalid flag or typo."
+  echo "If you meant to target all instances, use '-all' instead."
+  echo "Otherwise, instance names shouldn't start with a dash (-)"
+  echo ""
+  read -p "Would you like to process all running instances instead? (y/N): " process_all
+  if [[ "$process_all" =~ ^[Yy]$ ]]; then
+    execute_rcon_command "$action" "-all" "$wait_time" "$message"
+    return $?
+  fi
+
+  echo "Command canceled. Please try again with a valid instance name."
+  return 1
+}
+
+_rcon_run_single_instance_command() {
+  local action="$1"
+  local instance_name="$2"
+  local message="$3"
+
+  if [[ "$action" == "-status" ]] && ! _rcon_status_ready "$instance_name"; then
+    return 0
+  fi
+
+  if [[ "$run_in_background" == "true" ]]; then
+    run_in_container_background "$instance_name" "$action" "$message"
+    exit 0
+  fi
+
+  run_in_container "$instance_name" "$action" "$message"
+}
+
+execute_rcon_command() {
+  local action="$1"
+  local wait_time="${3:-1}"
+  local target_all=false
+  local instance_name=""
+  local message=""
+  local running_instances=()
+
+  shift
+
+  if _rcon_is_all_target "$1"; then
+    if [[ "$1" != "-all" ]]; then
+      echo "Note: Interpreted '$1' as '-all'"
+    fi
+    target_all=true
+    shift
+  else
+    instance_name="$1"
+    shift
+  fi
+  message="$*"
+
+  _rcon_validate_message "$message" || return 1
+
+  if [ "$target_all" = "true" ]; then
+    mapfile -t running_instances < <(_rcon_print_running_instances)
+    if [ ${#running_instances[@]} -eq 0 ]; then
       echo "---- No Running Instances Found for command: $action -----"
       echo " To start an instance, use the -start -all or -start <instance_name> command."
-    fi
-  else
-    # Handle single instance
-    # Check if the instance name starts with a dash but isn't a valid command flag
-    if [[ "$instance_name" == -* ]] && ! [[ "${instance_name,,}" == "-all" ]]; then
-      echo "Warning: '$instance_name' appears to be an invalid flag or typo."
-      echo "If you meant to target all instances, use '-all' instead."
-      echo "Otherwise, instance names shouldn't start with a dash (-)"
-      echo ""
-      read -p "Would you like to process all running instances instead? (y/N): " process_all
-      if [[ "$process_all" =~ ^[Yy]$ ]]; then
-        # Recursively call this function with -all
-        execute_rcon_command "$action" "-all" "$wait_time" "$message"
-        return
-      else
-        echo "Command canceled. Please try again with a valid instance name."
-        return 1
-      fi
+      return 0
     fi
 
-    # Validate the instance for a single-instance command
-    if validate_instance "$instance_name"; then
-      echo "Processing $action command on $instance_name..."
-
-      if [[ "$action" == "-status" ]]; then
-        local container_name="asa_${instance_name}"
-        local pdb_file="/home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.pdb"
-        local update_flag="/home/pok/update.flag"
-
-        if ! docker exec "$container_name" test -f "$pdb_file"; then
-          if docker exec "$container_name" test -f "$update_flag"; then
-            echo "Instance $instance_name is still updating/installing. Please wait until the update is complete before checking the status."
-            return
-          else
-            echo "Instance $instance_name has not fully started yet. Please wait a few minutes before checking the status."
-            return
-          fi
-        fi
-      fi
-
-      if [[ "$action" == "-shutdown" ]]; then
-        # Validate wait_time or set default
-        if [ -z "$wait_time" ]; then
-          echo "No shutdown time specified. Using default of 1 minute."
-          wait_time=1
-        fi
-        
-        # Validate that wait_time is a number
-        if ! [[ "$wait_time" =~ ^[0-9]+$ ]]; then
-          echo "Error: Invalid shutdown time '$wait_time'. Must be a positive number."
-          echo "Using default of 1 minute instead."
-          wait_time=1
-        fi
-        
-        # Use the enhanced shutdown command for better visuals and consistent experience
-        echo "Using enhanced shutdown functionality for instance: $instance_name"
-        enhanced_shutdown_command "$wait_time" "$instance_name"
-        
-        # enhanced_shutdown_command exits the script when done
-        return
-      elif [[ "$action" == "-restart" ]]; then
-        # Use the enhanced restart command for a single instance
-        echo "Using enhanced restart functionality for instance: $instance_name"
-        
-        # First check if there's a mix of API and non-API instances
-        local all_api=true
-        local all_non_api=true
-        
-        # Check if the current instance is API=TRUE
-        local this_instance_api=false
-        local docker_compose_file="${BASE_DIR}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
-        if [ -f "$docker_compose_file" ] && (grep -q "^ *- API=TRUE" "$docker_compose_file" || grep -q "^ *- API:TRUE" "$docker_compose_file"); then
-          this_instance_api=true
-        fi
-        
-        # Check other running instances
-        for instance in $(list_running_instances | grep -v "^$instance_name$"); do
-          local other_docker_compose_file="${BASE_DIR}/Instance_${instance}/docker-compose-${instance}.yaml"
-          
-          if [ -f "$other_docker_compose_file" ] && (grep -q "^ *- API=TRUE" "$other_docker_compose_file" || grep -q "^ *- API:TRUE" "$other_docker_compose_file"); then
-            # This instance is API=TRUE
-            if [ "$this_instance_api" = "false" ]; then
-              all_api=false  # Mixed mode detected
-            fi
-          else
-            # This instance is API=FALSE
-            if [ "$this_instance_api" = "true" ]; then
-              all_non_api=false  # Mixed mode detected
-            fi
-          fi
-        done
-        
-        # If mixed modes detected, show warning
-        if [ "$all_api" = "false" ] && [ "$all_non_api" = "false" ]; then
-          echo "⚠️ WARNING: Mixed API modes detected across running instances. ⚠️"
-          echo "When restarting with mixed API modes, the running containers will be stopped,"
-          echo "server files WILL be updated, and containers will be brought back up."
-          echo "If a game update is available, it WILL be applied during this process."
-          echo ""
-          echo "This process follows these steps automatically:"
-          echo "1. Stop all containers"
-          echo "2. Update server files"
-          echo "3. Start all containers"
-          echo ""
-          echo "This ensures all server files are updated correctly while minimizing downtime."
-          sleep 3
-        fi
-        
-        enhanced_restart_command "$message" "$instance_name"
-        # Don't exit immediately - the enhanced restart function will handle everything
-      elif [[ "$run_in_background" == "true" ]]; then
-        run_in_container_background "$instance_name" "$action" "$message"
-        exit 0 # Exit script after background job is complete
-      else
-        run_in_container "$instance_name" "$action" "$message"
-      fi
-    else
-      echo "---- Instance $instance_name is not running or does not exist. -----"
-      echo " To start an instance, use the -start -all or -start <instance_name> command."
-    fi
+    case "$action" in
+    -shutdown)
+      _rcon_normalize_wait_time "$wait_time"
+      echo "Using enhanced shutdown functionality for all instances..."
+      enhanced_shutdown_command "$_RCON_NORMALIZED_WAIT_TIME" "-all"
+      return
+      ;;
+    -restart)
+      _rcon_warn_on_mixed_restart_modes_for_all
+      echo "Using enhanced restart functionality for all instances..."
+      enhanced_restart_command "$message" "-all"
+      return
+      ;;
+    *)
+      _rcon_process_all_running_instances "$action" "$message" "${running_instances[@]}"
+      return
+      ;;
+    esac
   fi
+
+  if ! _rcon_target_name_is_valid "$instance_name"; then
+    _rcon_handle_invalid_target_name "$action" "$instance_name" "$wait_time" "$message"
+    return $?
+  fi
+
+  if ! validate_instance "$instance_name"; then
+    echo "---- Instance $instance_name is not running or does not exist. -----"
+    echo " To start an instance, use the -start -all or -start <instance_name> command."
+    return 0
+  fi
+
+  echo "Processing $action command on $instance_name..."
+
+  case "$action" in
+  -shutdown)
+    _rcon_normalize_wait_time "$wait_time"
+    echo "Using enhanced shutdown functionality for instance: $instance_name"
+    enhanced_shutdown_command "$_RCON_NORMALIZED_WAIT_TIME" "$instance_name"
+    return
+    ;;
+  -restart)
+    echo "Using enhanced restart functionality for instance: $instance_name"
+    _rcon_warn_on_mixed_restart_modes_for_instance "$instance_name"
+    enhanced_restart_command "$message" "$instance_name"
+    return
+    ;;
+  *)
+    _rcon_run_single_instance_command "$action" "$instance_name" "$message"
+    ;;
+  esac
 }
 
 # Updated function to wait for shutdown completion
@@ -3521,7 +4353,7 @@ check_for_POK_updates() {
     fi
     
     # Extract version information from the current script
-    local current_script_version=$(grep -m 1 "POK_MANAGER_VERSION=" "$0" | cut -d'"' -f2)
+    local current_script_version=$(grep -m 1 "POK_MANAGER_VERSION=" "$POK_MANAGER_SCRIPT_PATH" | cut -d'"' -f2)
     if [ -n "$current_script_version" ]; then
       # Update the POK_MANAGER_VERSION variable with the actual current version
       POK_MANAGER_VERSION="$current_script_version"
@@ -4210,7 +5042,7 @@ backup_single_instance() {
 restore_instance() {
   local instance_name="$1"
   # Remove the trailing slash from $MAIN_DIR if it exists
-  local base_dir=$(dirname "$(realpath "$0")")
+  local base_dir="${BASE_DIR}"
   local backup_dir="${base_dir}/backups"
 
   if [ -z "$instance_name" ]; then
@@ -4422,30 +5254,577 @@ display_single_instance_logs() {
     docker logs "$container_name"
   fi
 }
-manage_service() {
-  get_docker_compose_cmd
-  local action=$1
-  local instance_name="$2"
-  local additional_args="${@:3}"
-  # Ensure root privileges for specific actions
-  if [[ "$action" == "-setup" ]]; then
-  check_puid_pgid_user "$PUID" "$PGID"
-  fi
 
-  # Adjust Docker permissions only for actions that explicitly require Docker interaction
-  case $action in
-  -start | -stop | -update | -create | -edit | -restore | -logs | -backup | -restart | -shutdown | -status | -chat | -saveworld | -fix)
-    adjust_docker_permissions
+_manage_service_requires_docker_permissions() {
+  local action="$1"
+
+  case "$action" in
+  -start | -stop | -update | -create | -edit | -restore | -logs | -backup | -delete | -restart | -shutdown | -status | -chat | -saveworld | -fix)
+    return 0
     ;;
   esac
 
-  # Special handling for -start all and -stop all actions
+  return 1
+}
+
+_manage_service_handle_all_instance_shortcut() {
+  local action="$1"
+  local instance_name="$2"
+
   if [[ "$action" == "-start" || "$action" == "-stop" ]] && [[ "${instance_name,,}" == "-all" ]]; then
     perform_action_on_all_instances "$action"
+    return 0
+  fi
+
+  return 1
+}
+
+_manage_service_handle_setup() {
+  root_tasks
+  echo ""
+  echo "Creating base server files directory structure..."
+  local server_files_root="${BASE_DIR}/ServerFiles/arkserver"
+  local expected_uid="${PUID:-7777}"
+  local expected_gid="${PGID:-7777}"
+
+  mkdir -p "${server_files_root}/ShooterGame/Saved/Config" 2>/dev/null
+  mkdir -p "${server_files_root}/ShooterGame/Binaries/Win64" 2>/dev/null
+
+  if is_sudo && [ -d "$server_files_root" ]; then
+    chown -R "${expected_uid}:${expected_gid}" "$server_files_root" 2>/dev/null || true
+  fi
+
+  echo ""
+  local setup_validation_failed=false
+  if ! validate_server_files_ownership; then
+    setup_validation_failed=true
+  fi
+  if ! validate_directory_permissions; then
+    setup_validation_failed=true
+  fi
+  if [ "$setup_validation_failed" = true ]; then
+    echo ""
+    echo "❌ Setup detected host permission issues that require attention."
+    echo "   Please run: sudo ./POK-manager.sh -fix"
+    exit 1
+  fi
+
+  echo "Setup completed. Please run './POK-manager.sh -create <instance_name>' to create an instance."
+}
+
+_manage_service_handle_create() {
+  local instance_name="$1"
+
+  instance_name=$(prompt_for_instance_name "$instance_name")
+  check_puid_pgid_user "$PUID" "$PGID"
+  generate_docker_compose "$instance_name"
+  adjust_ownership_and_permissions "$MAIN_DIR"
+  start_instance "$instance_name"
+}
+
+_manage_service_handle_backup() {
+  local instance_name="$1"
+
+  if [[ -z "$instance_name" || "${instance_name,,}" == "-all" ]]; then
+    if [[ -z "$instance_name" ]]; then
+      echo "No instance name or '-all' flag specified. Defaulting to backing up all instances."
+    fi
+    backup_instance "-all"
+  else
+    backup_instance "$instance_name"
+  fi
+}
+
+_manage_service_delete_instance_is_running() {
+  local instance_name="$1"
+  local running_instance
+
+  for running_instance in $(list_running_instances); do
+    if [ "$running_instance" = "$instance_name" ]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+_manage_service_delete_confirm_single() {
+  local instance_name="$1"
+
+  echo "⚠️ WARNING: You are about to permanently delete instance '$instance_name'."
+  echo "This will remove the instance folder and all save/config files inside it."
+  echo "If you want to keep a recoverable copy, run './POK-manager.sh -backup $instance_name' first."
+  echo "Existing backup archives under '${BASE_DIR}/backups/${instance_name}' will be preserved."
+
+  if [ ! -t 0 ]; then
+    echo "Error: -delete requires interactive confirmation."
+    return 1
+  fi
+
+  read -r -p "Type DELETE to permanently remove instance '$instance_name': " confirmation
+  if [ "$confirmation" != "DELETE" ]; then
+    echo "Deletion cancelled."
+    return 1
+  fi
+
+  return 0
+}
+
+_manage_service_delete_confirm_all() {
+  echo "⚠️ WARNING: You are about to permanently delete ALL instances."
+  echo "This will remove every instance folder and all save/config files inside them."
+  echo "If you want to keep recoverable copies, run './POK-manager.sh -backup -all' first."
+  echo "Existing backup archives under '${BASE_DIR}/backups/' will be preserved."
+
+  if [ ! -t 0 ]; then
+    echo "Error: -delete requires interactive confirmation."
+    return 1
+  fi
+
+  read -r -p "Type DELETE ALL to permanently remove all instances: " confirmation
+  if [ "$confirmation" != "DELETE ALL" ]; then
+    echo "Deletion cancelled."
+    return 1
+  fi
+
+  return 0
+}
+
+_manage_service_delete_path() {
+  local target_path="$1"
+
+  if [ ! -e "$target_path" ]; then
+    return 0
+  fi
+
+  if is_sudo; then
+    rm -rf -- "$target_path"
+  else
+    sudo rm -rf -- "$target_path"
+  fi
+}
+
+_manage_service_delete_instance_paths() {
+  local instance_name="$1"
+  local instance_dir="${BASE_DIR}/Instance_${instance_name}"
+  local local_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
+  local top_level_compose_file="${BASE_DIR}/docker-compose-${instance_name}.yaml"
+  local backup_config_file="${BASE_DIR}/config/POK-manager/backup_${instance_name}.conf"
+
+  _manage_service_delete_path "$instance_dir"
+  _manage_service_delete_path "$local_compose_file"
+  _manage_service_delete_path "$top_level_compose_file"
+  _manage_service_delete_path "$backup_config_file"
+}
+
+_manage_service_delete_single() {
+  local instance_name="$1"
+  local instance_dir="${BASE_DIR}/Instance_${instance_name}"
+  local local_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
+  local top_level_compose_file="${BASE_DIR}/docker-compose-${instance_name}.yaml"
+  local backup_config_file="${BASE_DIR}/config/POK-manager/backup_${instance_name}.conf"
+  local backup_dir="${BASE_DIR}/backups/${instance_name}"
+  local instance_running=false
+
+  if [ ! -d "$instance_dir" ] && [ ! -f "$local_compose_file" ] && [ ! -f "$top_level_compose_file" ] && [ ! -f "$backup_config_file" ]; then
+    echo "Instance '$instance_name' does not exist."
+    return 1
+  fi
+
+  if _manage_service_delete_instance_is_running "$instance_name"; then
+    instance_running=true
+    echo "Instance '$instance_name' is currently running and will be stopped before deletion."
+  fi
+
+  _manage_service_delete_confirm_single "$instance_name" || return 1
+
+  if [ "$instance_running" = true ]; then
+    stop_instance "$instance_name" || {
+      echo "Failed to stop instance '$instance_name'. Deletion aborted."
+      return 1
+    }
+  fi
+
+  _manage_service_delete_instance_paths "$instance_name"
+  normalize_update_coordination_assignments
+  echo "Deleted instance '$instance_name'."
+  if [ -d "$backup_dir" ]; then
+    echo "Preserved existing backups in '${backup_dir}'."
+  fi
+}
+
+_manage_service_handle_delete() {
+  local instance_name="$1"
+  local instances=()
+  local instance
+
+  if [[ -z "$instance_name" ]]; then
+    echo "Error: Missing required parameter. Usage: $0 -delete <instance_name|-all>"
+    return 1
+  fi
+
+  if [[ "${instance_name,,}" == "-all" ]]; then
+    instances=($(list_instances))
+    if [ ${#instances[@]} -eq 0 ]; then
+      echo "No instances found to delete."
+      return 1
+    fi
+
+    _manage_service_delete_confirm_all || return 1
+
+    for instance in "${instances[@]}"; do
+      _manage_service_delete_single "$instance" || return 1
+    done
+    return 0
+  fi
+
+  _manage_service_delete_single "$instance_name"
+}
+
+_manage_service_handle_fix() {
+  echo "===== POK-MANAGER FILE PERMISSION FIX ====="
+  echo ""
+
+  if [ "$(id -u)" -eq 0 ]; then
+    local script_path="$POK_MANAGER_SCRIPT_PATH"
+    echo "First ensuring POK-manager.sh has correct permissions..."
+
+    local ownership
+    local expected_uid
+    local expected_gid
+    local target_owner
+    ownership=$(get_expected_ownership)
+    expected_uid=$(echo "$ownership" | cut -d: -f1)
+    expected_gid=$(echo "$ownership" | cut -d: -f2)
+    target_owner="${expected_uid}:${expected_gid}"
+
+    if [ -n "$SUDO_USER" ]; then
+      local sudo_uid
+      local sudo_gid
+      sudo_uid=$(id -u "$SUDO_USER")
+      sudo_gid=$(id -g "$SUDO_USER")
+
+      if [ "$sudo_uid" = "$expected_uid" ] || id -G "$SUDO_USER" | grep -q -w "$expected_gid"; then
+        target_owner="${sudo_uid}:${expected_gid}"
+      fi
+    fi
+
+    echo "Setting POK-manager.sh ownership to $target_owner"
+    chown $target_owner "$script_path"
+    chmod +x "$script_path"
+
+    if [ -f "$LAST_VERSION_FILE" ]; then
+      echo "Setting $LAST_VERSION_FILE ownership to $target_owner"
+      chown $target_owner "$LAST_VERSION_FILE"
+    fi
+
+    if [ -d "${BASE_DIR}/config/POK-manager" ]; then
+      local config_dir_ownership
+      config_dir_ownership="$(stat -c '%u:%g' ${BASE_DIR}/config/POK-manager)"
+      if [ "$config_dir_ownership" != "$target_owner" ]; then
+        echo "Setting config directory ownership to $target_owner"
+        chown -R $target_owner "${BASE_DIR}/config/POK-manager"
+      fi
+    fi
+  fi
+
+  echo "Step 1: Ensuring ServerFiles directory has correct ownership..."
+  mkdir -p "${BASE_DIR}/ServerFiles/arkserver"
+  adjust_ownership_and_permissions "${BASE_DIR}/ServerFiles/arkserver"
+
+  echo ""
+  echo "Step 2: Ensuring FirstLaunchFlags directory structure exists..."
+  mkdir -p "${BASE_DIR}/ServerFiles/arkserver/ShooterGame/Saved/Config/FirstLaunchFlags"
+  adjust_ownership_and_permissions "${BASE_DIR}/ServerFiles/arkserver/ShooterGame/Saved/Config"
+
+  echo ""
+  echo "Step 3: Scanning for remaining ownership issues..."
+  fix_root_owned_files
+  local fix_root_status=$?
+  local fix_failed=false
+  if [ "$fix_root_status" -ne 0 ]; then
+    fix_failed=true
+  fi
+
+  echo ""
+  echo "Step 4: Validating server files ownership and permissions..."
+  if ! validate_server_files_ownership; then
+    fix_failed=true
+  fi
+  if ! validate_directory_permissions; then
+    fix_failed=true
+  fi
+
+  if is_sudo; then
+    echo ""
+    echo "Step 5: Normalizing file and directory permissions..."
+    local server_files_root="${BASE_DIR}/ServerFiles/arkserver"
+    local expected_uid="${PUID:-7777}"
+    local expected_gid="${PGID:-7777}"
+
+    mkdir -p "${server_files_root}/ShooterGame/Saved/Config" 2>/dev/null
+    mkdir -p "${server_files_root}/ShooterGame/Binaries/Win64" 2>/dev/null
+
+    if [ -d "$server_files_root" ]; then
+      chown -R "${expected_uid}:${expected_gid}" "$server_files_root" 2>/dev/null || true
+      find "$server_files_root" -type f -exec chmod u+rw {} \; 2>/dev/null || true
+      find "$server_files_root" -type d -exec chmod u+rwx {} \; 2>/dev/null || true
+    fi
+
+    echo "  - Verifying instance-specific volume mounts..."
+    for instance in $(list_instances); do
+      ensure_volume_mount_directories "$instance" || true
+    done
+
+    echo "✅ Server files are now owner-readable and writable."
+  else
+    echo ""
+    echo "Step 5: Skipped permission normalization (requires sudo)."
+  fi
+
+  echo ""
+  if [ "$fix_failed" = true ]; then
+    echo "⚠️ Permission fix completed with warnings. Review the messages above for manual follow-up."
+    echo "If issues persist, run: sudo ./POK-manager.sh -fix"
+  else
+    echo "✅ Permission check and fix completed."
+    echo "If you were running the script using sudo before, try running it without sudo now:"
+    echo "./POK-manager.sh [your-command]"
+  fi
+}
+
+_manage_service_select_log_instance() {
+  local instances=($(list_running_instances))
+
+  >&2 echo "Available running instances:"
+  if [ ${#instances[@]} -eq 0 ]; then
+    >&2 echo "No running instances found."
+    exit 1
+  fi
+
+  for ((i=0; i<${#instances[@]}; i++)); do
+    >&2 echo "$((i+1)). ${instances[i]}"
+  done
+
+  while true; do
+    read -p "Enter the number of the running instance: " choice
+    if [[ $choice =~ ^[0-9]+$ ]] && [ $choice -ge 1 ] && [ $choice -le ${#instances[@]} ]; then
+      echo "${instances[$((choice-1))]}"
+      return 0
+    fi
+    echo "Invalid choice. Please try again."
+  done
+}
+
+_manage_service_handle_logs() {
+  local instance_name="$1"
+  local additional_args_string="$2"
+  local live=""
+
+  if [[ "$instance_name" == "-live" ]]; then
+    live="-live"
+    instance_name="$additional_args_string"
+  fi
+
+  if [[ -z "$instance_name" || "$instance_name" == "-all" ]]; then
+    instance_name=$(_manage_service_select_log_instance)
+  fi
+
+  display_logs "$instance_name" "$live"
+}
+
+_manage_service_handle_clearupdateflag() {
+  local instance_name="$1"
+
+  if [ -z "$instance_name" ] || [ "${instance_name,,}" == "-all" ]; then
+    echo "Clearing update flags for all instances..."
+    for instance in $(list_instances); do
+      echo "Processing instance: $instance"
+      docker exec -it "asa_${instance}" /bin/bash -c "/home/pok/scripts/rcon_interface.sh -clearupdateflag" || echo "Failed to clear update flag for $instance"
+    done
+  else
+    echo "Clearing update flag for instance: $instance_name"
+    docker exec -it "asa_${instance_name}" /bin/bash -c "/home/pok/scripts/rcon_interface.sh -clearupdateflag"
+  fi
+}
+
+_manage_service_handle_api() {
+  local api_state="$1"
+  local instance_name="$2"
+
+  if [[ -z "$api_state" ]]; then
+    echo "Error: -API requires a TRUE/FALSE value and an instance name or -all."
+    echo "Usage: $0 -API <TRUE|FALSE> <instance_name|-all>"
+    echo "Examples:"
+    echo "  $0 -API TRUE my_instance    # Enable ArkServerAPI for 'my_instance'"
+    echo "  $0 -API FALSE -all          # Disable ArkServerAPI for all instances"
+    exit 1
+  fi
+
+  if [[ -z "$instance_name" ]]; then
+    echo "Error: -API requires an instance name or -all after the TRUE/FALSE value."
+    echo "Usage: $0 -API <TRUE|FALSE> <instance_name|-all>"
+    echo "Examples:"
+    echo "  $0 -API TRUE my_instance    # Enable ArkServerAPI for 'my_instance'"
+    echo "  $0 -API FALSE -all          # Disable ArkServerAPI for all instances"
+    exit 1
+  fi
+
+  configure_api "$api_state" "$instance_name"
+}
+
+_rename_instance_is_container_running() {
+  local instance_name="$1"
+  local container_name="asa_${instance_name}"
+
+  if docker ps -q --filter "name=${container_name}" | grep -q .; then
+    return 0
+  fi
+  return 1
+}
+
+_rename_instance() {
+  local oldname="$1"
+  local newname="$2"
+  local old_folder="Instance_${oldname}"
+  local new_folder="Instance_${newname}"
+  local restart_after=false
+
+  if _rename_instance_is_container_running "$oldname"; then
+    echo "Container for '$oldname' is currently running."
+    read -p "Do you want to stop it to proceed with the rename? (y/n): " should_stop
+    if [[ "${should_stop,,}" == "y" ]]; then
+      echo "Stopping container asa_${oldname}..."
+      stop_instance "$oldname"
+      read -p "Would you like to restart the container after renaming? (y/n): " should_restart
+      if [[ "${should_restart,,}" == "y" ]]; then
+        restart_after=true
+      fi
+    else
+      echo "Cannot rename a running container. Operation cancelled."
+      return 1
+    fi
+  fi
+
+  mv "$old_folder" "$new_folder"
+  [ "$(id -u)" -eq 0 ] && chown -R $PUID:$PGID "$new_folder" || sudo chown -R $PUID:$PGID "$new_folder"
+
+  local compose_files=()
+  local restart_file=""
+
+  while IFS= read -r -d $'\0' file; do
+    if [[ "$file" == *docker-compose*.y*ml ]]; then
+      compose_files+=("$file")
+      restart_file="$file"
+    fi
+  done < <(find "$new_folder" -type f -name "*docker-compose*.y*ml" -print0)
+
+  while IFS= read -r -d $'\0' file; do
+    if [[ "$file" == *"${oldname}"* && "$file" == *docker-compose*.y*ml ]]; then
+      compose_files+=("$file")
+    fi
+  done < <(find "$(dirname "$new_folder")" -maxdepth 1 -type f -name "*docker-compose*.y*ml" -print0)
+
+  for compose_file in "${compose_files[@]}"; do
+    echo "Updating file: $compose_file"
+    sed -i "s|/home/factorioserver/ASA_Server/Instance_${oldname}/|/home/factorioserver/ASA_Server/Instance_${newname}/|g" "$compose_file"
+    sed -i "s/${oldname}/${newname}/g" "$compose_file"
+
+    if [[ "$(basename "$compose_file")" == *"${oldname}"* ]]; then
+      local new_filename
+      new_filename="$(dirname "$compose_file")/$(basename "$compose_file" | sed "s/${oldname}/${newname}/g")"
+      echo "Renaming file from $(basename "$compose_file") to $(basename "$new_filename")"
+      mv "$compose_file" "$new_filename"
+
+      if [[ "$compose_file" == "$restart_file" ]]; then
+        restart_file="$new_filename"
+      fi
+    fi
+  done
+
+  local instance_config_dir="${new_folder}/config/POK-manager"
+  local base_config_dir="${BASE_DIR}/config/POK-manager"
+  mkdir -p "$base_config_dir"
+
+  if [[ -f "${instance_config_dir}/docker_compose_cmd" ]]; then
+    cp "${instance_config_dir}/docker_compose_cmd" "${base_config_dir}/docker_compose_cmd"
+    echo "Copied docker_compose_cmd config to main config directory"
+  fi
+
+  echo "Renamed instance '${oldname}' to '${newname}' in folder and updated docker-compose configuration."
+  normalize_update_coordination_assignments
+
+  if [[ "$restart_after" == true ]]; then
+    echo "Starting container with new name: asa_${newname}..."
+    start_instance "$newname"
+    echo "Container started with new name."
+  fi
+
+  return 0
+}
+
+_manage_service_handle_rename() {
+  local instance_name="$1"
+
+  if [[ -z "$instance_name" ]]; then
+    echo "Error: Missing required parameter. Usage: $0 -rename <instance_name|-all>"
+    echo "Please specify an instance name or use '-all' to rename all instances."
+    exit 1
+  elif [[ "${instance_name,,}" == "-all" ]]; then
+    echo "Renaming all instances..."
+    for instance_dir in Instance_*; do
+      if [[ -d "$instance_dir" ]]; then
+        local oldname="${instance_dir#Instance_}"
+        echo "Current instance: $oldname"
+        read -p "Enter new name for instance '$oldname' (press enter to keep unchanged): " newname
+        if [[ -n "$newname" ]]; then
+          _rename_instance "$oldname" "$newname"
+        else
+          echo "Instance '$oldname' remains unchanged."
+        fi
+      fi
+    done
+  else
+    local instance="$instance_name"
+    local instance_folder="Instance_${instance}"
+
+    if [[ ! -d "$instance_folder" ]]; then
+      echo "Instance folder '$instance_folder' not found."
+      exit 1
+    fi
+
+    echo "Current instance: $instance"
+    read -p "Enter new name for instance '$instance' (press enter to keep unchanged): " newname
+    if [[ -n "$newname" ]]; then
+      _rename_instance "$instance" "$newname"
+    else
+      echo "Instance '$instance' remains unchanged."
+    fi
+  fi
+
+  exit 0
+}
+
+manage_service() {
+  get_docker_compose_cmd
+  local action="$1"
+  local instance_name="$2"
+  shift 2 2>/dev/null || true
+  local additional_args=("$@")
+  local additional_args_string="$*"
+
+  if [[ "$action" == "-setup" ]]; then
+    check_puid_pgid_user "$PUID" "$PGID"
+  fi
+
+  if _manage_service_requires_docker_permissions "$action"; then
+    adjust_docker_permissions
+  fi
+
+  if _manage_service_handle_all_instance_shortcut "$action" "$instance_name"; then
     return
   fi
 
-  # Handle actions
   case $action in
   -list)
     list_instances
@@ -4454,57 +5833,19 @@ manage_service() {
     edit_instance
     ;;
   -setup)
-    root_tasks
-    echo ""
-    echo "Creating base server files directory structure..."
-    local server_files_root="${BASE_DIR}/ServerFiles/arkserver"
-    local expected_uid="${PUID:-7777}"
-    local expected_gid="${PGID:-7777}"
-
-    mkdir -p "${server_files_root}/ShooterGame/Saved/Config" 2>/dev/null
-    mkdir -p "${server_files_root}/ShooterGame/Binaries/Win64" 2>/dev/null
-
-    if is_sudo && [ -d "$server_files_root" ]; then
-      chown -R "${expected_uid}:${expected_gid}" "$server_files_root" 2>/dev/null || true
-    fi
-
-    echo ""
-    local setup_validation_failed=false
-    if ! validate_server_files_ownership; then
-      setup_validation_failed=true
-    fi
-    if ! validate_directory_permissions; then
-      setup_validation_failed=true
-    fi
-    if [ "$setup_validation_failed" = true ]; then
-      echo ""
-      echo "❌ Setup detected host permission issues that require attention."
-      echo "   Please run: sudo ./POK-manager.sh -fix"
-      exit 1
-    fi
-    echo "Setup completed. Please run './POK-manager.sh -create <instance_name>' to create an instance."
+    _manage_service_handle_setup
     ;;
   -create)
-    # No need for root privileges here unless specific actions require it
-    instance_name=$(prompt_for_instance_name "$instance_name")
-    check_puid_pgid_user "$PUID" "$PGID"
-    generate_docker_compose "$instance_name" 
-    adjust_ownership_and_permissions "$MAIN_DIR"
-    # Ensure POK-manager.sh is executable
-    start_instance "$instance_name"
+    _manage_service_handle_create "$instance_name"
     ;;
   -start)
-    start_instance "$instance_name"
+    start_instance "$instance_name" "promote_single"
     ;;
   -backup)
-    if [[ -z "$instance_name" ]]; then
-      echo "No instance name or '-all' flag specified. Defaulting to backing up all instances."
-      backup_instance "-all"
-    elif [[ "${instance_name,,}" == "-all" ]]; then
-      backup_instance "-all"
-    else
-      backup_instance "$instance_name"
-    fi
+    _manage_service_handle_backup "$instance_name"
+    ;;
+  -delete)
+    _manage_service_handle_delete "$instance_name"
     ;;
   -restore)
     restore_instance "$instance_name"
@@ -4517,121 +5858,7 @@ manage_service() {
     exit 0
     ;;
   -fix)
-    echo "===== POK-MANAGER FILE PERMISSION FIX ====="
-    echo ""
-    
-    # Check if running with sudo or root
-    if [ "$(id -u)" -eq 0 ]; then
-      # Make sure to fix the script itself first
-      local script_path="$(realpath "$0")"
-      echo "First ensuring POK-manager.sh has correct permissions..."
-      
-      # Get the expected ownership based on installation mode
-      local ownership=$(get_expected_ownership)
-      local expected_uid=$(echo "$ownership" | cut -d: -f1)
-      local expected_gid=$(echo "$ownership" | cut -d: -f2)
-      
-      # Define the target owner variable before using it
-      local target_owner="${expected_uid}:${expected_gid}"
-      
-      # If running with sudo, use the actual user if possible
-      if [ -n "$SUDO_USER" ]; then
-        # Only use the sudo user if they're the expected owner (makes sense for personal installs)
-        local sudo_uid=$(id -u "$SUDO_USER")
-        local sudo_gid=$(id -g "$SUDO_USER")
-        
-        # If the sudo user is the expected owner or a member of the expected group, use them
-        if [ "$sudo_uid" = "$expected_uid" ] || id -G "$SUDO_USER" | grep -q -w "$expected_gid"; then
-          target_owner="${sudo_uid}:${expected_gid}"
-        fi
-      fi
-      
-      echo "Setting POK-manager.sh ownership to $target_owner"
-      # Force change ownership regardless of current state
-      chown $target_owner "$script_path"
-      chmod +x "$script_path"
-      
-      # Also fix the last_displayed_version.txt file if it exists
-      if [ -f "$LAST_VERSION_FILE" ]; then
-        echo "Setting $LAST_VERSION_FILE ownership to $target_owner"
-        chown $target_owner "$LAST_VERSION_FILE"
-      fi
-      
-      # Fix the config directory ownership if needed
-      if [ -d "${BASE_DIR}/config/POK-manager" ]; then
-        local config_dir_ownership="$(stat -c '%u:%g' ${BASE_DIR}/config/POK-manager)"
-        if [ "$config_dir_ownership" != "$target_owner" ]; then
-          echo "Setting config directory ownership to $target_owner"
-          chown -R $target_owner "${BASE_DIR}/config/POK-manager"
-        fi
-      fi
-    fi
-    
-    # Ensure ServerFiles directory has correct permissions to prevent SteamCMD error 0x602
-    echo "Step 1: Ensuring ServerFiles directory has correct ownership..."
-    mkdir -p "${BASE_DIR}/ServerFiles/arkserver"
-    adjust_ownership_and_permissions "${BASE_DIR}/ServerFiles/arkserver"
-    
-    # Create FirstLaunchFlags directory structure to prevent container startup errors
-    echo ""
-    echo "Step 2: Ensuring FirstLaunchFlags directory structure exists..."
-    mkdir -p "${BASE_DIR}/ServerFiles/arkserver/ShooterGame/Saved/Config/FirstLaunchFlags"
-    adjust_ownership_and_permissions "${BASE_DIR}/ServerFiles/arkserver/ShooterGame/Saved/Config"
-    
-    echo ""
-    echo "Step 3: Scanning for remaining ownership issues..."
-    fix_root_owned_files
-    local fix_root_status=$?
-    local fix_failed=false
-    if [ "$fix_root_status" -ne 0 ]; then
-      fix_failed=true
-    fi
-    
-    echo ""
-    echo "Step 4: Validating server files ownership and permissions..."
-    if ! validate_server_files_ownership; then
-      fix_failed=true
-    fi
-    if ! validate_directory_permissions; then
-      fix_failed=true
-    fi
-    
-    if is_sudo; then
-      echo ""
-      echo "Step 5: Normalizing file and directory permissions..."
-      local server_files_root="${BASE_DIR}/ServerFiles/arkserver"
-      local expected_uid="${PUID:-7777}"
-      local expected_gid="${PGID:-7777}"
-
-      mkdir -p "${server_files_root}/ShooterGame/Saved/Config" 2>/dev/null
-      mkdir -p "${server_files_root}/ShooterGame/Binaries/Win64" 2>/dev/null
-
-      if [ -d "$server_files_root" ]; then
-        chown -R "${expected_uid}:${expected_gid}" "$server_files_root" 2>/dev/null || true
-        find "$server_files_root" -type f -exec chmod u+rw {} \; 2>/dev/null || true
-        find "$server_files_root" -type d -exec chmod u+rwx {} \; 2>/dev/null || true
-      fi
-
-      echo "  - Verifying instance-specific volume mounts..."
-      for instance in $(list_instances); do
-        ensure_volume_mount_directories "$instance" || true
-      done
-
-      echo "✅ Server files are now owner-readable and writable."
-    else
-      echo ""
-      echo "Step 5: Skipped permission normalization (requires sudo)."
-    fi
-    
-    echo ""
-    if [ "$fix_failed" = true ]; then
-      echo "⚠️ Permission fix completed with warnings. Review the messages above for manual follow-up."
-      echo "If issues persist, run: sudo ./POK-manager.sh -fix"
-    else
-      echo "✅ Permission check and fix completed."
-      echo "If you were running the script using sudo before, try running it without sudo now:"
-      echo "./POK-manager.sh [your-command]"
-    fi
+    _manage_service_handle_fix
     ;;
   -restart | -shutdown)
     execute_rcon_command "$action" "$instance_name" "${additional_args[@]}"
@@ -4641,247 +5868,41 @@ manage_service() {
     ;;
   -chat)
     local message="$instance_name"
-    instance_name="$additional_args"
+    instance_name="$additional_args_string"
     execute_rcon_command "$action" "$instance_name" "$message"
     ;;
   -custom)
     local rcon_command="$instance_name"
-    instance_name="$additional_args"
+    instance_name="$additional_args_string"
     execute_rcon_command "$action" "$instance_name" "$rcon_command"
     ;;
   -logs)
-    local live=""
-    if [[ "$instance_name" == "-live" ]]; then
-      live="-live"
-      instance_name="$additional_args"
-    fi
-
-    if [[ -z "$instance_name" ]]; then
-      echo "Available running instances:"
-      local instances=($(list_running_instances))
-      if [ ${#instances[@]} -eq 0 ]; then
-        echo "No running instances found."
-        exit 1
-      fi
-      for ((i=0; i<${#instances[@]}; i++)); do
-        echo "$((i+1)). ${instances[i]}"
-      done
-      while true; do
-        read -p "Enter the number of the running instance: " choice
-        if [[ $choice =~ ^[0-9]+$ ]] && [ $choice -ge 1 ] && [ $choice -le ${#instances[@]} ]; then
-          instance_name="${instances[$((choice-1))]}"
-          break
-        else
-          echo "Invalid choice. Please try again."
-        fi
-      done
-    fi
-    display_logs "$instance_name" "$live"
+    _manage_service_handle_logs "$instance_name" "$additional_args_string"
     ;;
   -clearupdateflag)
-    if [ -z "$instance_name" ] || [ "${instance_name,,}" == "-all" ]; then
-      echo "Clearing update flags for all instances..."
-      for instance in $(list_instances); do
-        echo "Processing instance: $instance"
-        docker exec -it "asa_${instance}" /bin/bash -c "/home/pok/scripts/rcon_interface.sh -clearupdateflag" || echo "Failed to clear update flag for $instance"
-      done
-    else
-      echo "Clearing update flag for instance: $instance_name"
-      docker exec -it "asa_${instance_name}" /bin/bash -c "/home/pok/scripts/rcon_interface.sh -clearupdateflag"
-    fi
+    _manage_service_handle_clearupdateflag "$instance_name"
     ;;
   -API)
-    if [[ -z "$instance_name" ]]; then
-      echo "Error: -API requires a TRUE/FALSE value and an instance name or -all."
-      echo "Usage: $0 -API <TRUE|FALSE> <instance_name|-all>"
-      echo "Examples:"
-      echo "  $0 -API TRUE my_instance    # Enable ArkServerAPI for 'my_instance'"
-      echo "  $0 -API FALSE -all          # Disable ArkServerAPI for all instances"
-      exit 1
-    fi
-    
     local api_state="$instance_name"
-    instance_name="$additional_args"
-    
-    if [[ -z "$instance_name" ]]; then
-      echo "Error: -API requires an instance name or -all after the TRUE/FALSE value."
-      echo "Usage: $0 -API <TRUE|FALSE> <instance_name|-all>"
-      echo "Examples:"
-      echo "  $0 -API TRUE my_instance    # Enable ArkServerAPI for 'my_instance'"
-      echo "  $0 -API FALSE -all          # Disable ArkServerAPI for all instances"
-      exit 1
-    fi
-    
-    configure_api "$api_state" "$instance_name"
+    instance_name="$additional_args_string"
+    _manage_service_handle_api "$api_state" "$instance_name"
     ;;
   -changelog)
     display_changelog
     ;;
   -rename)
-    # Helper function to check if a container is running
-    is_container_running() {
-      local instance_name="$1"
-      local container_name="asa_${instance_name}"
-      if docker ps -q --filter "name=${container_name}" | grep -q .; then
-        return 0  # Container is running
-      else
-        return 1  # Container is not running
-      fi
-    }
-
-    # Helper function to stop a running container, rename instance, and optionally restart
-    rename_instance() {
-      local oldname="$1"
-      local newname="$2"
-      local old_folder="Instance_${oldname}"
-      local new_folder="Instance_${newname}"
-      local container_running=false
-      local restart_after=false
-      
-      # Check if container is running and stop it if needed
-      if is_container_running "$oldname"; then
-        container_running=true
-        echo "Container for '$oldname' is currently running."
-        read -p "Do you want to stop it to proceed with the rename? (y/n): " should_stop
-        if [[ "${should_stop,,}" == "y" ]]; then
-          echo "Stopping container asa_${oldname}..."
-          # Use the script's stop_instance function instead of direct docker stop
-          stop_instance "$oldname"
-          read -p "Would you like to restart the container after renaming? (y/n): " should_restart
-          if [[ "${should_restart,,}" == "y" ]]; then
-            restart_after=true
-          fi
-        else
-          echo "Cannot rename a running container. Operation cancelled."
-          return 1
-        fi
-      fi
-      
-      # Perform the rename operation
-      mv "$old_folder" "$new_folder"
-      [ "$(id -u)" -eq 0 ] && chown -R $PUID:$PGID "$new_folder" || sudo chown -R $PUID:$PGID "$new_folder"
-      
-      # Find all docker-compose files in the renamed folder
-      local compose_files=()
-      local restart_file=""
-      
-      while IFS= read -r -d $'\0' file; do
-        if [[ "$file" == *docker-compose*.y*ml ]]; then
-          compose_files+=("$file")
-          # If we found a compose file, use it for restarting later
-          restart_file="$file"
-        fi
-      done < <(find "$new_folder" -type f -name "*docker-compose*.y*ml" -print0)
-      
-      # Also check parent directory for docker-compose files related to this instance
-      while IFS= read -r -d $'\0' file; do
-        if [[ "$file" == *"${oldname}"* && "$file" == *docker-compose*.y*ml ]]; then
-          compose_files+=("$file")
-        fi
-      done < <(find "$(dirname "$new_folder")" -maxdepth 1 -type f -name "*docker-compose*.y*ml" -print0)
-
-      # Update the docker-compose files to reflect the new name
-      for compose_file in "${compose_files[@]}"; do
-        echo "Updating file: $compose_file"
-
-        # Update volume paths in docker-compose files to use the new instance name
-        # This is crucial for maintaining save data and config access
-        sed -i "s|/home/factorioserver/ASA_Server/Instance_${oldname}/|/home/factorioserver/ASA_Server/Instance_${newname}/|g" "$compose_file"
-        
-        # Also update any other references to the old instance name in the compose file
-        sed -i "s/${oldname}/${newname}/g" "$compose_file"
-        
-        # Handle file renaming if the compose file has the old name in its filename
-        if [[ "$(basename "$compose_file")" == *"${oldname}"* ]]; then
-          local new_filename="$(dirname "$compose_file")/$(basename "$compose_file" | sed "s/${oldname}/${newname}/g")"
-          echo "Renaming file from $(basename "$compose_file") to $(basename "$new_filename")"
-          mv "$compose_file" "$new_filename"
-          
-          # If this was the restart file, update the reference
-          if [[ "$compose_file" == "$restart_file" ]]; then
-            restart_file="$new_filename"
-          fi
-        fi
-      done
-
-      # Ensure the docker_compose_cmd config file is in the correct location
-      local instance_config_dir="${new_folder}/config/POK-manager"
-      local base_config_dir="${BASE_DIR}/config/POK-manager"
-      
-      # Create base config directory if it doesn't exist
-      mkdir -p "$base_config_dir"
-      
-      # If docker_compose_cmd exists in instance config, move it to base config
-      if [[ -f "${instance_config_dir}/docker_compose_cmd" ]]; then
-        cp "${instance_config_dir}/docker_compose_cmd" "${base_config_dir}/docker_compose_cmd"
-        echo "Copied docker_compose_cmd config to main config directory"
-      fi
-
-      echo "Renamed instance '${oldname}' to '${newname}' in folder and updated docker-compose configuration."
-      
-      # Restart the container if requested
-      if [[ "$restart_after" == true ]]; then
-        echo "Starting container with new name: asa_${newname}..."
-        # Use the script's start_instance function instead of direct docker start
-        start_instance "$newname"
-        echo "Container started with new name."
-      fi
-      
-      # This return statement ensures the function completes successfully
-      # and allows the rename_all_instances function to continue with other renames
-      return 0
-    }
-
-    # Check if the user wants to rename all instances (case-insensitive for '-all')
-    if [[ -z "$2" ]]; then
-      echo "Error: Missing required parameter. Usage: $0 -rename <instance_name|-all>"
-      echo "Please specify an instance name or use '-all' to rename all instances."
-      exit 1
-    elif [[ "${2,,}" == "-all" ]]; then
-      echo "Renaming all instances..."
-      # Loop over instance directories; assuming they are named 'Instance_*'
-      for instance_dir in Instance_*; do
-        if [[ -d "$instance_dir" ]]; then
-          # Extract old instance name from folder name (everything after 'Instance_')
-          oldname=${instance_dir#Instance_}
-          echo "Current instance: $oldname"
-          read -p "Enter new name for instance '$oldname' (press enter to keep unchanged): " newname
-          if [[ -n "$newname" ]]; then
-            rename_instance "$oldname" "$newname"
-          else
-            echo "Instance '$oldname' remains unchanged."
-          fi
-        fi
-      done
-    else
-      # Rename a single specified instance
-      instance="$2"
-      # Expect instance folder to be named 'Instance_<instance>'
-      instance_folder="Instance_${instance}"
-      if [[ ! -d "$instance_folder" ]]; then
-        echo "Instance folder '$instance_folder' not found."
-        exit 1
-      fi
-      echo "Current instance: $instance"
-      read -p "Enter new name for instance '$instance' (press enter to keep unchanged): " newname
-      if [[ -n "$newname" ]]; then
-        rename_instance "$instance" "$newname"
-      else
-        echo "Instance '$instance' remains unchanged."
-      fi
-    fi
-    exit 0
+    _manage_service_handle_rename "$instance_name"
     ;;
   *)
     echo "Invalid action. Usage: $0 {action} [additional_args...] {instance_name}"
-    echo "Actions include: -start, -stop, -update, -create, -setup, -status, -restart, -saveworld, -chat, -custom, -backup, -restore"
+    echo "Actions include: -start, -stop, -update, -create, -setup, -status, -restart, -saveworld, -chat, -custom, -backup, -delete, -restore"
     exit 1
     ;;
   esac
 }
 # Define valid actions
 declare -a valid_actions
-valid_actions=("-create" "-start" "-stop" "-saveworld" "-shutdown" "-restart" "-status" "-update" "-list" "-beta" "-stable" "-version" "-upgrade" "-logs" "-backup" "-restore" "-migrate" "-setup" "-edit" "-custom" "-chat" "-clearupdateflag" "-API" "-validate_update" "-force-restore" "-emergency-restore" "-fix" "-api-recovery" "-changelog" "-rename")
+valid_actions=("-create" "-start" "-stop" "-saveworld" "-shutdown" "-restart" "-status" "-update" "-list" "-beta" "-stable" "-version" "-upgrade" "-logs" "-backup" "-delete" "-restore" "-migrate" "-setup" "-edit" "-custom" "-chat" "-clearupdateflag" "-API" "-validate_update" "-force-restore" "-emergency-restore" "-fix" "-api-recovery" "-changelog" "-rename")
 
 display_usage() {
   echo "Usage: $0 {action} [instance_name|-all] [additional_args...]"
@@ -4903,6 +5924,7 @@ display_usage() {
   echo "  -chat \"<message>\" <instance_name|-all>    Send a chat message to an instance or all instances"
   echo "  -custom <command> <instance_name|-all>    Execute a custom command on an instance or all instances"
   echo "  -backup [instance_name|-all]              Backup an instance or all instances (defaults to all if not specified)"
+  echo "  -delete <instance_name|-all>              Delete an instance after confirmation (preserves existing backups)"
   echo "  -restore [instance_name]                  Restore an instance from a backup"
   echo "  -logs [-live] <instance_name>             Display logs for an instance (optionally live)"
   echo "  -beta                                     Switch to beta mode to use beta version Docker images"
@@ -4920,7 +5942,7 @@ display_usage() {
 # Display version information
 display_version() {
   # Extract version information directly from the script file to ensure accuracy
-  local script_version=$(grep -m 1 "POK_MANAGER_VERSION=" "$0" | cut -d'"' -f2)
+  local script_version=$(grep -m 1 "POK_MANAGER_VERSION=" "$POK_MANAGER_SCRIPT_PATH" | cut -d'"' -f2)
   if [ -n "$script_version" ]; then
     # Update the global variable to ensure consistency
     POK_MANAGER_VERSION="$script_version"
@@ -5307,7 +6329,7 @@ upgrade_pok_manager() {
   fi
   
   # Keep track of the script's original path
-  local original_script="$0"
+  local original_script="$POK_MANAGER_SCRIPT_PATH"
   
   # Create a backup name
   local safe_backup="${BASE_DIR%/}/config/POK-manager/pok-manager.backup"
@@ -5572,7 +6594,7 @@ force_restore_from_backup() {
       rm -f "${BASE_DIR%/}/config/POK-manager/branch_switched" 2>/dev/null
       
       # Read the version from the restored script for display
-      local restored_version=$(grep -m 1 "POK_MANAGER_VERSION=" "$0" | cut -d'"' -f2)
+      local restored_version=$(grep -m 1 "POK_MANAGER_VERSION=" "$POK_MANAGER_SCRIPT_PATH" | cut -d'"' -f2)
       if [ -n "$restored_version" ]; then
         echo "Restored to version: $restored_version"
       fi
@@ -5840,6 +6862,153 @@ update_server_files_and_docker() {
   echo "----- Update process completed -----"
 }
 
+_MIGRATION_DIRS_TO_CHANGE=()
+_migration_collect_dirs_to_change() {
+  local instance_dir
+  local api_logs_dir
+
+  _MIGRATION_DIRS_TO_CHANGE=()
+
+  if [ -d "${BASE_DIR}/ServerFiles" ]; then
+    _MIGRATION_DIRS_TO_CHANGE+=("${BASE_DIR}/ServerFiles")
+  fi
+
+  for instance_dir in "${BASE_DIR}"/Instance_*/; do
+    if [ -d "$instance_dir" ]; then
+      _MIGRATION_DIRS_TO_CHANGE+=("$instance_dir")
+      api_logs_dir="${instance_dir}/API_Logs"
+      if [ ! -d "$api_logs_dir" ]; then
+        echo "Creating API_Logs directory for instance: $(basename "$instance_dir")"
+        mkdir -p "$api_logs_dir"
+      fi
+    fi
+  done
+
+  if [ -d "${BASE_DIR}/Cluster" ]; then
+    _MIGRATION_DIRS_TO_CHANGE+=("${BASE_DIR}/Cluster")
+  fi
+
+  mkdir -p "${BASE_DIR}/config/POK-manager"
+  _MIGRATION_DIRS_TO_CHANGE+=("${BASE_DIR}/config/POK-manager")
+}
+
+_migration_stop_running_instances() {
+  local running_instances=("$@")
+  local instance
+  local docker_compose_file
+
+  echo "Stopping all running instances..."
+  for instance in "${running_instances[@]}"; do
+    echo "Stopping instance: $instance"
+    docker_compose_file="${BASE_DIR}/Instance_${instance}/docker-compose-${instance}.yaml"
+
+    if [ -f "$docker_compose_file" ]; then
+      get_docker_compose_cmd
+      if is_sudo; then
+        $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down
+      else
+        sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down
+      fi
+    else
+      if is_sudo; then
+        docker stop -t 30 "asa_${instance}"
+      else
+        sudo docker stop -t 30 "asa_${instance}"
+      fi
+    fi
+    echo "Instance ${instance} stopped successfully."
+  done
+
+  echo "✅ All instances have been stopped successfully."
+  echo ""
+}
+
+_migration_print_dirs_to_change() {
+  local dir
+
+  echo "The following directories will have their ownership changed to 7777:7777:"
+  for dir in "${_MIGRATION_DIRS_TO_CHANGE[@]}"; do
+    echo "  - $dir"
+  done
+
+  echo -e "\nAdditionally, all other files and folders in the base directory will have their ownership changed."
+  echo "The base directory (${BASE_DIR}) will also have its ownership changed to 7777:7777."
+}
+
+_migration_apply_ownership_changes() {
+  local dir
+  local item
+
+  echo "Changing file ownership to 7777:7777..."
+  for dir in "${_MIGRATION_DIRS_TO_CHANGE[@]}"; do
+    echo "Processing: $dir"
+    chown -R 7777:7777 "$dir"
+  done
+
+  echo "Processing remaining files and directories in ${BASE_DIR}"
+  while IFS= read -r item; do
+    if [[ ! " ${_MIGRATION_DIRS_TO_CHANGE[*]} " =~ " ${item} " ]]; then
+      echo "Processing: $item"
+      chown -R 7777:7777 "$item"
+    fi
+  done < <(find "${BASE_DIR}" -maxdepth 1 -not -name "POK-manager.sh" -not -path "${BASE_DIR}")
+
+  echo "Changing ownership of base directory: ${BASE_DIR}"
+  chown 7777:7777 "${BASE_DIR}"
+
+  echo "Setting correct permissions for POK-manager.sh"
+  chown 7777:7777 "${BASE_DIR}/POK-manager.sh"
+  chmod 755 "${BASE_DIR}/POK-manager.sh"
+}
+
+_migration_update_api_logs_volume_for_instance_dir() {
+  local instance_dir="$1"
+  local instance_name
+  local docker_compose_file
+  local api_logs_dir
+  local tmp_file
+  local abs_instance_dir
+
+  instance_name="$(basename "$instance_dir" | sed 's/Instance_//')"
+  docker_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
+  api_logs_dir="${instance_dir}/API_Logs"
+
+  if [ ! -d "$api_logs_dir" ]; then
+    echo "Creating API_Logs directory for instance: $instance_name"
+    mkdir -p "$api_logs_dir"
+  fi
+
+  echo "Setting proper ownership on API_Logs directory"
+  chown -R 7777:7777 "$api_logs_dir"
+  chmod 755 "$api_logs_dir"
+
+  if [ -f "$docker_compose_file" ] &&
+     ! grep -q "API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs" "$docker_compose_file"; then
+    echo "Adding API_Logs volume mapping to docker-compose file for instance: $instance_name"
+    tmp_file="${docker_compose_file}.tmp"
+    abs_instance_dir="$(realpath "$instance_dir")"
+    sed -e "/Saved:.*ShooterGame\/Saved/ a\\      - \"$abs_instance_dir/API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs\"" "$docker_compose_file" > "$tmp_file"
+    mv -f "$tmp_file" "$docker_compose_file"
+    chown 7777:7777 "$docker_compose_file"
+  fi
+}
+
+_migration_update_api_logs_volumes() {
+  local instance_dir
+
+  echo "Updating docker-compose files to include API_Logs volume..."
+  for instance_dir in "${BASE_DIR}"/Instance_*/; do
+    if [ -d "$instance_dir" ]; then
+      _migration_update_api_logs_volume_for_instance_dir "$instance_dir"
+    fi
+  done
+}
+
+_migration_create_completion_flag() {
+  touch "${BASE_DIR}/config/POK-manager/migration_complete"
+  chown 7777:7777 "${BASE_DIR}/config/POK-manager/migration_complete"
+}
+
 # Function to help users migrate file ownership
 migrate_file_ownership() {
   echo "===== File Ownership Migration Tool ====="
@@ -5883,81 +7052,14 @@ migrate_file_ownership() {
       echo "Migration cancelled. Please stop all instances manually and try again."
       return 1
     fi
-    
-    echo "Stopping all running instances..."
-    # Use the same approach as perform_action_on_all_instances for stopping
-    for instance in "${running_instances[@]}"; do
-      echo "Stopping instance: $instance"
-      # Get the docker compose file path
-      local docker_compose_file="${BASE_DIR}/Instance_${instance}/docker-compose-${instance}.yaml"
-      
-      # If the compose file exists, use docker-compose down
-      if [ -f "$docker_compose_file" ]; then
-        get_docker_compose_cmd
-        if is_sudo; then
-          $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down
-        else
-          sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down
-        fi
-      else
-        # Otherwise use docker stop
-        if is_sudo; then
-          docker stop -t 30 "asa_${instance}"
-        else
-          sudo docker stop -t 30 "asa_${instance}"
-        fi
-      fi
-      echo "Instance ${instance} stopped successfully."
-    done
-    
-    echo "✅ All instances have been stopped successfully."
-    echo ""
+    _migration_stop_running_instances "${running_instances[@]}"
   else
     echo "No running instances detected. Proceeding with migration."
     echo ""
   fi
-  
-  # First list the specific directories that we know need to be changed
-  # (for better user information and backwards compatibility)
-  local dirs_to_change=()
-  
-  # Check if ServerFiles exists
-  if [ -d "${BASE_DIR}/ServerFiles" ]; then
-    dirs_to_change+=("${BASE_DIR}/ServerFiles")
-  fi
-  
-  # Check for instance directories
-  for instance_dir in "${BASE_DIR}"/Instance_*/; do
-    if [ -d "$instance_dir" ]; then
-      dirs_to_change+=("$instance_dir")
-      
-      # Create API_Logs directory for each instance if it doesn't exist
-      local api_logs_dir="${instance_dir}/API_Logs"
-      if [ ! -d "$api_logs_dir" ]; then
-        echo "Creating API_Logs directory for instance: $(basename "$instance_dir")"
-        mkdir -p "$api_logs_dir"
-      fi
-    fi
-  done
-  
-  # Check for Cluster directory
-  if [ -d "${BASE_DIR}/Cluster" ]; then
-    dirs_to_change+=("${BASE_DIR}/Cluster")
-  fi
-  
-  # Ensure config/POK-manager directory exists and is included
-  mkdir -p "${BASE_DIR}/config/POK-manager"
-  dirs_to_change+=("${BASE_DIR}/config/POK-manager")
-  
-  # Show the user which directories will be changed
-  echo "The following directories will have their ownership changed to 7777:7777:"
-  for dir in "${dirs_to_change[@]}"; do
-    echo "  - $dir"
-  done
-  
-  # Additional directories that will be changed
-  echo -e "\nAdditionally, all other files and folders in the base directory will have their ownership changed."
-  echo "The base directory (${BASE_DIR}) will also have its ownership changed to 7777:7777."
+
+  _migration_collect_dirs_to_change
+  _migration_print_dirs_to_change
   
   # Ask for confirmation
   read -p "Proceed with migration? (Y/n): " confirm
@@ -5965,80 +7067,10 @@ migrate_file_ownership() {
     echo "Migration cancelled."
     return 1
   fi
-  
-  # Change ownership of each directory
-  echo "Changing file ownership to 7777:7777..."
-  
-  # First process the specific directories we listed
-  for dir in "${dirs_to_change[@]}"; do
-    echo "Processing: $dir"
-    chown -R 7777:7777 "$dir"
-  done
-  
-  # Now process all other files and directories in BASE_DIR except POK-manager.sh
-  echo "Processing remaining files and directories in ${BASE_DIR}"
-  
-  # Find and change ownership of all other files/directories in BASE_DIR except POK-manager.sh
-  find "${BASE_DIR}" -maxdepth 1 -not -name "POK-manager.sh" -not -path "${BASE_DIR}" | while read item; do
-    if [[ ! " ${dirs_to_change[@]} " =~ " ${item} " ]]; then
-      echo "Processing: $item"
-      chown -R 7777:7777 "$item"
-    fi
-  done
-  
-  # IMPORTANT: Change ownership of the BASE_DIR itself
-  echo "Changing ownership of base directory: ${BASE_DIR}"
-  chown 7777:7777 "${BASE_DIR}"
-  
-  # Ensure POK-manager.sh has correct ownership and permissions
-  echo "Setting correct permissions for POK-manager.sh"
-  chown 7777:7777 "${BASE_DIR}/POK-manager.sh"
-  chmod 755 "${BASE_DIR}/POK-manager.sh"
-  
-  # Update docker-compose files to include API_Logs volume
-  echo "Updating docker-compose files to include API_Logs volume..."
-  for instance_dir in "${BASE_DIR}"/Instance_*/; do
-    if [ -d "$instance_dir" ]; then
-      local instance_name=$(basename "$instance_dir" | sed 's/Instance_//')
-      local docker_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
-      local api_logs_dir="${instance_dir}/API_Logs"
-      
-      # Ensure API_Logs directory exists and has proper ownership
-      if [ ! -d "$api_logs_dir" ]; then
-        echo "Creating API_Logs directory for instance: $instance_name"
-        mkdir -p "$api_logs_dir"
-      fi
-      
-      # Set proper ownership on the API_Logs directory (7777:7777 during migration)
-      echo "Setting proper ownership on API_Logs directory"
-      chown -R 7777:7777 "$api_logs_dir"
-      chmod 755 "$api_logs_dir"
-      
-      if [ -f "$docker_compose_file" ]; then
-        # Check if the API_Logs volume is already in the docker-compose file
-        if ! grep -q "API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs" "$docker_compose_file"; then
-          echo "Adding API_Logs volume mapping to docker-compose file for instance: $instance_name"
-          
-          # Create a temporary file
-          local tmp_file="${docker_compose_file}.tmp"
-          
-          # Get absolute path for the instance directory
-          local abs_instance_dir=$(realpath "$instance_dir")
-          
-          # Use sed to add the API_Logs volume after the Saved volume with absolute path
-          sed -e "/Saved:.*ShooterGame\/Saved/ a\\      - \"$abs_instance_dir/API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs\"" "$docker_compose_file" > "$tmp_file"
-          
-          # Replace the original file with the updated one
-          mv -f "$tmp_file" "$docker_compose_file"
-          chown 7777:7777 "$docker_compose_file"
-        fi
-      fi
-    fi
-  done
-  
-  # Create a flag file to indicate migration has completed successfully
-  touch "${BASE_DIR}/config/POK-manager/migration_complete"
-  chown 7777:7777 "${BASE_DIR}/config/POK-manager/migration_complete"
+
+  _migration_apply_ownership_changes
+  _migration_update_api_logs_volumes
+  _migration_create_completion_flag
   
   echo "✅ File ownership migration complete."
   echo ""
@@ -6343,7 +7375,7 @@ check_post_migration_permissions() {
 
 # Function to check if POK-manager.sh has permission issues
 check_script_permissions() {
-  local script_path="$(realpath "$0")"
+  local script_path="$POK_MANAGER_SCRIPT_PATH"
   
   # Check if script is executable
   if [ ! -x "$script_path" ]; then
@@ -6384,252 +7416,316 @@ check_script_permissions() {
   return 0
 }
 
-main() {
-  # Store the original command arguments right at the beginning
-  local original_args=("$@")
-  
-  # Force check and fix for script permissions if running with sudo
-  if [ "$(id -u)" -eq 0 ]; then
-    local is_fix_command=false
-    
-    # Check if this is a -fix command
-    for arg in "$@"; do
-      if [ "$arg" = "-fix" ]; then
-        is_fix_command=true
-        break
-      fi
-    done
-    
-    # If not already fixing, check and fix script ownership immediately
-    if [ "$is_fix_command" = "false" ]; then
-      # Get the expected ownership
-      local ownership=$(get_expected_ownership)
-      local expected_uid=$(echo "$ownership" | cut -d: -f1)
-      local expected_gid=$(echo "$ownership" | cut -d: -f2)
-      local script_path="$(realpath "$0")"
-      local script_owner="$(stat -c '%u:%g' "$script_path")"
-      local script_uid=$(echo "$script_owner" | cut -d: -f1)
-      local script_gid=$(echo "$script_owner" | cut -d: -f2)
-      
-      if [ "$script_uid" != "$expected_uid" ] || [ "$script_gid" != "$expected_gid" ]; then
-        echo "Auto-fixing script permissions to $expected_uid:$expected_gid..."
-        chown $expected_uid:$expected_gid "$script_path"
-      fi
+_main_auto_fix_script_owner_when_root() {
+  local arg
+  local is_fix_command=false
+
+  if [ "$(id -u)" -ne 0 ]; then
+    return
+  fi
+
+  for arg in "$@"; do
+    if [ "$arg" = "-fix" ]; then
+      is_fix_command=true
+      break
+    fi
+  done
+
+  if [ "$is_fix_command" = "true" ]; then
+    return
+  fi
+
+  local ownership
+  local expected_uid
+  local expected_gid
+  local script_path="$POK_MANAGER_SCRIPT_PATH"
+  local script_owner
+  local script_uid
+  local script_gid
+
+  ownership="$(get_expected_ownership)"
+  expected_uid="$(echo "$ownership" | cut -d: -f1)"
+  expected_gid="$(echo "$ownership" | cut -d: -f2)"
+  script_owner="$(stat -c '%u:%g' "$script_path")"
+  script_uid="$(echo "$script_owner" | cut -d: -f1)"
+  script_gid="$(echo "$script_owner" | cut -d: -f2)"
+
+  if [ "$script_uid" != "$expected_uid" ] || [ "$script_gid" != "$expected_gid" ]; then
+    echo "Auto-fixing script permissions to $expected_uid:$expected_gid..."
+    chown "$expected_uid:$expected_gid" "$script_path"
+  fi
+}
+
+_main_check_script_permissions_or_offer_fix() {
+  _MAIN_PERMISSION_FIX_HANDLED=false
+
+  if check_script_permissions; then
+    return 0
+  fi
+
+  if [ -t 0 ] && [ "$(id -u)" -ne 0 ]; then
+    local fix_response
+    echo ""
+    echo -n "Would you like to attempt to fix permissions with sudo? (y/n): "
+    read -r fix_response
+    if [[ "$fix_response" =~ ^[Yy]$ ]]; then
+      echo "Running sudo ./POK-manager.sh -fix to fix permissions..."
+      sudo "$0" -fix
+      echo "Permission fix completed. Please try your command again."
+      _MAIN_PERMISSION_FIX_HANDLED=true
     fi
   fi
-  
-  # Check script permissions first
-  check_script_permissions || {
-    # If critical permission issues exist, ask if user wants to auto-fix
-    if [ -t 0 ] && [ "$(id -u)" -ne 0 ]; then
-      echo ""
-      echo -n "Would you like to attempt to fix permissions with sudo? (y/n): "
-      read -r fix_response
-      if [[ "$fix_response" =~ ^[Yy]$ ]]; then
-        echo "Running sudo ./POK-manager.sh -fix to fix permissions..."
-        sudo "$0" -fix
-        echo "Permission fix completed. Please try your command again."
-        exit 0
-      fi
-    fi
-  }
-  
-  # Check for updates before anything else
-  check_for_POK_updates "${original_args[@]}"
-  
-  # Display the POK-Manager logo
-  display_logo
-  
-  # Check if docker-compose files have paths that need updating
-  check_volume_paths
-  
-  # Show patch notes if we've upgraded to a new version
-  # This will only display patch notes once after an update and track the last displayed version
-  show_patch_notes_if_updated
-  
-  # Check for saved command arguments from a previous run
+
+  return 0
+}
+
+_main_maybe_resume_saved_command() {
   local command_args_file="${BASE_DIR%/}/config/POK-manager/last_command_args"
+
   if [ -f "$command_args_file" ] && [ "$#" -eq 0 ]; then
-    # Only use saved args if no arguments were provided to the current execution
     local saved_args=()
     mapfile -t saved_args < "$command_args_file"
     if [ ${#saved_args[@]} -gt 0 ]; then
       echo "Reusing your previous command: ${saved_args[*]}"
-      # Remove the file to prevent reuse in future runs
       rm -f "$command_args_file"
-      # Execute with the saved arguments
       exec "$0" "${saved_args[@]}"
-      # This line shouldn't be reached, but just in case
-      exit 0
     fi
   fi
-  
-  # Extract the command portion without PUID/PGID
+}
+
+_main_build_command_args() {
   local command_args=""
-  
-  # Skip the script name in $0
+  local arg
+
   for arg in "$@"; do
     command_args="${command_args} ${arg}"
   done
-  
-  # Remove leading space
-  command_args="${command_args# }"
-  
-  # Ensure we're always using the correct version number from the script file itself
-  # This ensures consistency even after upgrades
-  local script_version=$(grep -m 1 "POK_MANAGER_VERSION=" "$0" | cut -d'"' -f2)
+
+  echo "${command_args# }"
+}
+
+_main_sync_version_state() {
+  local script_version
+  local upgraded_version_file="${BASE_DIR%/}/config/POK-manager/upgraded_version"
+  local upgraded_version
+
+  script_version="$(grep -m 1 "POK_MANAGER_VERSION=" "$POK_MANAGER_SCRIPT_PATH" | cut -d'"' -f2)"
   if [ -n "$script_version" ]; then
-    # Update the global variable to ensure consistency
     POK_MANAGER_VERSION="$script_version"
   fi
-  
-  # Check if we have a stored upgraded version from a recent upgrade
-  local upgraded_version_file="${BASE_DIR%/}/config/POK-manager/upgraded_version"
+
   if [ -f "$upgraded_version_file" ]; then
-    local upgraded_version=$(cat "$upgraded_version_file")
+    upgraded_version="$(cat "$upgraded_version_file")"
     if [ -n "$upgraded_version" ]; then
-      # Use the upgraded version instead of what's in the script
       POK_MANAGER_VERSION="$upgraded_version"
-      # Remove the file so we don't keep using it
       rm -f "$upgraded_version_file"
     fi
   fi
-  
-  # First, check if we need to perform an emergency rollback
-  # This needs to be done before any other operations
-  if [[ "$1" == "-emergency-restore" ]]; then
-    echo "Emergency restore requested. Attempting to recover from backup..."
-    local backup_path="${BASE_DIR%/}/config/POK-manager/pok-manager.backup"
-    if [ -f "$backup_path" ]; then
-      cp "$backup_path" "$0"
-      chmod +x "$0"
-      echo "✅ Emergency restoration complete. The script has been restored to the backup version."
-      echo "You can now run the script normally."
-      exit 0
-    else
-      echo "❌ ERROR: No backup file found at $backup_path"
-      echo "Cannot restore the script. You may need to re-download it from GitHub."
-      exit 1
-    fi
-  fi
-  
-  # Check for rollback early - before ANY other operations
-  # This ensures we can recover even if basic script processing is broken
-  check_for_rollback "$@"
-  
-  # Add a post-migration permissions check - MUST be first before any file operations
-  check_post_migration_permissions "$command_args"
-  
-  # Check for required user and group at the start
-  check_puid_pgid_user "$PUID" "$PGID" "$command_args"
-  
-  # Check if we're in beta mode
-  check_beta_mode
-  
-  if [ "$#" -lt 1 ]; then
-    display_usage
-    exit 1
-  fi
+}
 
+_main_handle_emergency_restore() {
   local action="$1"
-  shift # Remove the action from the argument list
-  local instance_name="${1:-}" # Default to empty if not provided
-  local additional_args="${@:2}" # Capture any additional arguments
+  local backup_path="${BASE_DIR%/}/config/POK-manager/pok-manager.backup"
 
-  # Handle validation update check
-  if [[ "$action" == "-validate_update" ]]; then
-    # Just return success - this is only called to verify a freshly updated script runs properly
-    exit 0
+  if [[ "$action" != "-emergency-restore" ]]; then
+    return 1
   fi
-  
-  # Handle force restore from backup
-  if [[ "$action" == "-force-restore" ]]; then
+
+  echo "Emergency restore requested. Attempting to recover from backup..."
+  if [ -f "$backup_path" ]; then
+    cp "$backup_path" "$0"
+    chmod +x "$0"
+    echo "✅ Emergency restoration complete. The script has been restored to the backup version."
+    echo "You can now run the script normally."
+    return 0
+  fi
+
+  echo "❌ ERROR: No backup file found at $backup_path"
+  echo "Cannot restore the script. You may need to re-download it from GitHub."
+  return 1
+}
+
+_MAIN_ACTION_HANDLED=false
+_main_handle_immediate_action() {
+  local action="$1"
+
+  _MAIN_ACTION_HANDLED=true
+  case "$action" in
+  -validate_update)
+    return 0
+    ;;
+  -force-restore)
     force_restore_from_backup
-    exit 0
-  fi
+    return $?
+    ;;
+  -api-recovery)
+    handle_api_recovery
+    return $?
+    ;;
+  *)
+    _MAIN_ACTION_HANDLED=false
+    return 0
+    ;;
+  esac
+}
 
-  # Check if the provided action is valid
-  local is_valid=false
+_main_action_is_valid() {
+  local action="$1"
+  local valid_action
+
   for valid_action in "${valid_actions[@]}"; do
     if [[ "$action" == "$valid_action" ]]; then
-      is_valid=true
-      break
+      return 0
     fi
   done
-  
-  if [[ "$is_valid" == "false" ]]; then
-    echo "Invalid action '${action}'."
-    display_usage
-    exit 1
-  fi
 
-  # Special cases for beta/stable/version/upgrade commands
-  if [[ "$action" == "-beta" ]]; then
+  return 1
+}
+
+_main_handle_meta_action() {
+  local action="$1"
+
+  _MAIN_ACTION_HANDLED=true
+  case "$action" in
+  -beta)
     set_beta_mode "beta"
-exit 0
-  elif [[ "$action" == "-stable" ]]; then
+    return $?
+    ;;
+  -stable)
     set_beta_mode "stable"
-    exit 0
-  elif [[ "$action" == "-version" ]]; then
+    return $?
+    ;;
+  -version)
     display_version
-    exit 0
-  elif [[ "$action" == "-upgrade" ]]; then
+    return $?
+    ;;
+  -upgrade)
     upgrade_pok_manager
-    exit 0
-  elif [[ "$action" == "-migrate" ]]; then
+    return $?
+    ;;
+  -migrate)
     migrate_file_ownership
-    exit 0
-  fi
+    return $?
+    ;;
+  *)
+    _MAIN_ACTION_HANDLED=false
+    return 0
+    ;;
+  esac
+}
 
-  # Check if instance_name or -all is provided for actions that require it
-  if [[ "$action" =~ ^(-start|-stop|-saveworld|-status)$ ]] && [[ -z "$instance_name" ]]; then
+_MAIN_ACTION=""
+_MAIN_INSTANCE_NAME=""
+_MAIN_ADDITIONAL_ARGS_STRING=""
+_MAIN_PERMISSION_FIX_HANDLED=false
+_main_parse_cli_arguments() {
+  _MAIN_ACTION="${1:-}"
+  _MAIN_INSTANCE_NAME="${2:-}"
+  _MAIN_ADDITIONAL_ARGS_STRING="${*:3}"
+}
+
+_main_validate_and_normalize_dispatch_args() {
+  local action="$1"
+
+  if [[ "$action" =~ ^(-start|-stop|-saveworld|-status)$ ]] && [[ -z "$_MAIN_INSTANCE_NAME" ]]; then
     echo "Error: $action requires an instance name or -all."
     echo "Usage: $0 $action <instance_name|-all>"
-    exit 1
-  elif [[ "$action" =~ ^(-shutdown|-restart)$ ]]; then
-    if [[ -z "$instance_name" ]]; then
+    return 1
+  fi
+
+  if [[ "$action" =~ ^(-shutdown|-restart)$ ]]; then
+    if [[ -z "$_MAIN_INSTANCE_NAME" ]]; then
       echo "Error: $action requires a timer (in minutes) and an instance name or -all."
       echo "Usage: $0 $action <minutes> <instance_name|-all>"
-      exit 1
-    elif [[ "$instance_name" =~ ^[0-9]+$ ]]; then
-      if [[ -z "$additional_args" ]]; then
+      return 1
+    fi
+
+    if [[ "$_MAIN_INSTANCE_NAME" =~ ^[0-9]+$ ]]; then
+      if [[ -z "$_MAIN_ADDITIONAL_ARGS_STRING" ]]; then
         echo "Error: $action requires an instance name or -all after the timer."
         echo "Usage: $0 $action <minutes> <instance_name|-all>"
-        exit 1
-      else
-        # Store the timer value separately
-        local timer="$instance_name"
-        instance_name="$additional_args"
-        additional_args=("$timer")
+        return 1
       fi
+
+      local timer="$_MAIN_INSTANCE_NAME"
+      _MAIN_INSTANCE_NAME="$_MAIN_ADDITIONAL_ARGS_STRING"
+      _MAIN_ADDITIONAL_ARGS_STRING="$timer"
     fi
   fi
 
-  # Special check for -chat action
-  if [[ "$action" == "-chat" ]]; then
-    if [[ "$#" -lt 2 ]]; then
-      echo "Error: -chat requires a quoted message and an instance name or -all"
-      echo "Usage: $0 -chat \"<message>\" <instance_name|-all>"
-      exit 1
-    fi
-    if [[ -z "$instance_name" ]]; then
-      echo "Error: -chat requires an instance name or -all."
-      echo "Usage: $0 -chat \"<message>\" <instance_name|-all>"
-      exit 1
-    fi
+  if [[ "$action" == "-chat" ]] && [[ -z "$_MAIN_INSTANCE_NAME" || -z "$_MAIN_ADDITIONAL_ARGS_STRING" ]]; then
+    echo "Error: -chat requires a quoted message and an instance name or -all"
+    echo "Usage: $0 -chat \"<message>\" <instance_name|-all>"
+    return 1
   fi
 
-  # Special check for -custom action
-  if [[ "$action" == "-custom" ]]; then
-    if [[ -z "$instance_name" && "$instance_name" != "-all" ]]; then
-      echo "Error: -custom requires an instance name or -all."
-      echo "Usage: $0 -custom <additional_args> <instance_name|-all>"
-      exit 1
-    fi
+  if [[ "$action" == "-custom" ]] && [[ -z "$_MAIN_INSTANCE_NAME" && "$_MAIN_INSTANCE_NAME" != "-all" ]]; then
+    echo "Error: -custom requires an instance name or -all."
+    echo "Usage: $0 -custom <additional_args> <instance_name|-all>"
+    return 1
   fi
 
-  # Pass to the manage_service function
-  manage_service "$action" "$instance_name" "$additional_args"
+  return 0
+}
+
+main() {
+  # Store the original command arguments right at the beginning
+  local original_args=("$@")
+  local command_args
+  local action_status
+  _init
+
+  _main_auto_fix_script_owner_when_root "$@"
+  _main_check_script_permissions_or_offer_fix
+  if [ "$_MAIN_PERMISSION_FIX_HANDLED" = "true" ]; then
+    return 0
+  fi
+  check_for_POK_updates "${original_args[@]}"
+  display_logo
+  check_volume_paths
+  show_patch_notes_if_updated
+
+  _main_maybe_resume_saved_command "$@"
+  command_args="$(_main_build_command_args "$@")"
+  _main_sync_version_state
+
+  if _main_handle_emergency_restore "${1:-}"; then
+    return 0
+  elif [[ "${1:-}" == "-emergency-restore" ]]; then
+    return 1
+  fi
+
+  check_for_rollback "$@"
+  check_post_migration_permissions "$command_args"
+  check_puid_pgid_user "$PUID" "$PGID" "$command_args"
+  check_beta_mode
+
+  if [ "$#" -lt 1 ]; then
+    display_usage
+    return 1
+  fi
+
+  _main_parse_cli_arguments "$@"
+  _main_handle_immediate_action "$_MAIN_ACTION"
+  action_status=$?
+  if [ "$_MAIN_ACTION_HANDLED" = "true" ]; then
+    return "$action_status"
+  fi
+
+  if ! _main_action_is_valid "$_MAIN_ACTION"; then
+    echo "Invalid action '${_MAIN_ACTION}'."
+    display_usage
+    return 1
+  fi
+
+  _main_handle_meta_action "$_MAIN_ACTION"
+  action_status=$?
+  if [ "$_MAIN_ACTION_HANDLED" = "true" ]; then
+    return "$action_status"
+  fi
+
+  _main_validate_and_normalize_dispatch_args "$_MAIN_ACTION" || return 1
+  manage_service "$_MAIN_ACTION" "$_MAIN_INSTANCE_NAME" "$_MAIN_ADDITIONAL_ARGS_STRING"
 }
 
 # Function to determine Docker image tag based on branch
@@ -6676,7 +7772,7 @@ get_docker_image_tag() {
 configure_api() {
   local api_state="$1"
   local instance_name="$2"
-  local base_dir=$(dirname "$(realpath "$0")")
+  local base_dir="${BASE_DIR}"
   local docker_compose_file="${base_dir}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
   local instance_dir="${base_dir}/Instance_${instance_name}"
   
@@ -6853,7 +7949,7 @@ fix_root_owned_files() {
   echo "🔍 Scanning for files with incorrect ownership..."
   
   # First, fix the POK-manager.sh script itself if needed
-  local script_path="$(realpath "$0")"
+  local script_path="$POK_MANAGER_SCRIPT_PATH"
   local script_owner="$(stat -c '%u:%g' "$script_path")"
   if [ "$script_owner" != "$PUID:$PGID" ]; then
     echo "Found POK-manager.sh owned by $script_owner, fixing to $PUID:$PGID..."
@@ -6982,7 +8078,7 @@ handle_api_recovery() {
   
   for instance in $(list_instances); do
     # Get the docker-compose file path
-    local base_dir=$(dirname "$(realpath "$0")")
+    local base_dir="${BASE_DIR}"
     local docker_compose_file="${base_dir}/Instance_${instance}/docker-compose-${instance}.yaml"
     
     # Skip if docker-compose file doesn't exist
@@ -7022,118 +8118,109 @@ handle_api_recovery() {
   done
 }
 
-# Add a cron-friendly recovery command that can be run periodically
-if [ "$1" = "-api-recovery" ]; then
-  handle_api_recovery
-  exit 0
-fi
+_RESTART_SKIP_UPDATE=false
+_RESTART_MODE="standard"
+_RESTART_INSTANCES_TO_PROCESS=()
+_RESTART_API_INSTANCES=()
+_RESTART_NON_API_INSTANCES=()
+_RESTART_NOTIFICATION_POINTS=()
+_COUNTDOWN_TARGET_INSTANCES=()
 
-# Add enhanced restart functionality with verification and mixed-mode support
-enhanced_restart_command() {
-  local minutes_arg="$1"
-  local instance_arg="$2"
-  local skip_update=false  # New parameter to control whether to skip the update
-  
-  # Default to 5 minutes if not specified
-  local countdown_minutes="${minutes_arg:-5}"
-  
-  # Determine if we should skip updating server files when a specific instance is specified
-  if [[ "${instance_arg,,}" != "-all" ]]; then
-    skip_update=true
-    echo "Restarting specific instance: Updates will be skipped to minimize downtime"
-    
-    # Enhanced validation for a specific instance
-    # Check if the instance directory exists
-    local instance_dir="${BASE_DIR}/Instance_${instance_arg}"
-    local docker_compose_file="${instance_dir}/docker-compose-${instance_arg}.yaml"
-    
-    if [ ! -d "$instance_dir" ]; then
-      echo "❌ ERROR: Instance directory not found at $instance_dir"
-      echo "The instance '${instance_arg}' does not exist. Please check for typos."
-      
-      # List available instances to help the user
-      echo ""
-      echo "Available instances:"
-      local available_instances=($(list_instances))
-      if [ ${#available_instances[@]} -eq 0 ]; then
-        echo "  No instances found. Use './POK-manager.sh -create <instance_name>' to create one."
-      else
-        for i in "${available_instances[@]}"; do
-          echo "  - $i"
-        done
-      fi
-      exit 1
-    fi
-    
-    # Check if the docker-compose file exists
-    if [ ! -f "$docker_compose_file" ]; then
-      echo "❌ ERROR: Docker Compose file not found at $docker_compose_file"
-      echo "The instance '${instance_arg}' exists but its configuration file is missing."
-      exit 1
-    fi
-  fi
-  
-  # Initialize arrays to track different types of instances
-  local api_instances=()
-  local non_api_instances=()
-  local instances_to_process=()
-  
-  # Define colors for the countdown (same as shutdown)
-  local status_color="\033[1;36m" # Cyan for status
-  local time_color="\033[1;33m" # Yellow for time
-  local reset_color="\033[0m"
-  local action_color="\033[1;35m" # Magenta for action status
-  local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
-  
-  # Determine which instances to process
-  if [[ "${instance_arg,,}" == "-all" ]]; then
-    # Get all running instances
-    instances_to_process=($(list_running_instances))
-    if [ ${#instances_to_process[@]} -eq 0 ]; then
-      echo "No running instances found."
-      exit 1  # Exit with error status
-    fi
-    echo "Processing all running instances for restart: ${instances_to_process[*]}"
-  else
-    # We already validated the instance exists above, so now just check if it's running
-    if docker ps -q -f name=^/asa_${instance_arg}$ > /dev/null; then
-      instances_to_process=("$instance_arg")
-      echo "Processing instance for restart: $instance_arg"
+_restart_validate_specific_instance() {
+  local instance_arg="$1"
+  local instance_dir="${BASE_DIR}/Instance_${instance_arg}"
+  local docker_compose_file="${instance_dir}/docker-compose-${instance_arg}.yaml"
+  local available_instances=()
+  local instance
+
+  if [ ! -d "$instance_dir" ]; then
+    echo "❌ ERROR: Instance directory not found at $instance_dir"
+    echo "The instance '${instance_arg}' does not exist. Please check for typos."
+    echo ""
+    echo "Available instances:"
+    available_instances=($(list_instances))
+    if [ ${#available_instances[@]} -eq 0 ]; then
+      echo "  No instances found. Use './POK-manager.sh -create <instance_name>' to create one."
     else
-      # Instance exists but is not running
-      echo "⚠️ Warning: Instance '$instance_arg' exists but is not currently running."
-      echo "Do you want to start it before performing the restart operation?"
-      read -p "Start the instance? (y/n): " start_choice
-      if [[ "$start_choice" =~ ^[Yy]$ ]]; then
-        echo "Starting instance $instance_arg..."
-        start_instance "$instance_arg"
-        sleep 5  # Give it a moment to start
-        instances_to_process=("$instance_arg")
-      else
-        echo "Operation canceled. The instance must be running to perform a restart."
-        exit 1
-      fi
+      for instance in "${available_instances[@]}"; do
+        echo "  - $instance"
+      done
     fi
+    return 1
   fi
-  
-  # Categorize instances based on API mode
-  for instance in "${instances_to_process[@]}"; do
-    local docker_compose_file="${BASE_DIR}/Instance_${instance}/docker-compose-${instance}.yaml"
-    
-    # Check if API=TRUE in the docker-compose file
-    if [ -f "$docker_compose_file" ] && (grep -q "^ *- API=TRUE" "$docker_compose_file" || grep -q "^ *- API:TRUE" "$docker_compose_file"); then
-      api_instances+=("$instance")
+
+  if [ ! -f "$docker_compose_file" ]; then
+    echo "❌ ERROR: Docker Compose file not found at $docker_compose_file"
+    echo "The instance '${instance_arg}' exists but its configuration file is missing."
+    return 1
+  fi
+
+  return 0
+}
+
+_restart_collect_instances_to_process() {
+  local instance_arg="$1"
+  local start_choice=""
+
+  _RESTART_SKIP_UPDATE=false
+  _RESTART_INSTANCES_TO_PROCESS=()
+
+  if [[ "${instance_arg,,}" == "-all" ]]; then
+    mapfile -t _RESTART_INSTANCES_TO_PROCESS < <(_rcon_print_running_instances)
+    if [ ${#_RESTART_INSTANCES_TO_PROCESS[@]} -eq 0 ]; then
+      echo "No running instances found."
+      return 1
+    fi
+
+    echo "Processing all running instances for restart: ${_RESTART_INSTANCES_TO_PROCESS[*]}"
+    return 0
+  fi
+
+  _RESTART_SKIP_UPDATE=true
+  echo "Restarting specific instance: Updates will be skipped to minimize downtime"
+  _restart_validate_specific_instance "$instance_arg" || return 1
+
+  if docker ps -q -f name=^/asa_${instance_arg}$ > /dev/null; then
+    _RESTART_INSTANCES_TO_PROCESS=("$instance_arg")
+    echo "Processing instance for restart: $instance_arg"
+    return 0
+  fi
+
+  echo "⚠️ Warning: Instance '$instance_arg' exists but is not currently running."
+  echo "Do you want to start it before performing the restart operation?"
+  read -p "Start the instance? (y/n): " start_choice
+  if [[ "$start_choice" =~ ^[Yy]$ ]]; then
+    echo "Starting instance $instance_arg..."
+    start_instance "$instance_arg"
+    sleep 5
+    _RESTART_INSTANCES_TO_PROCESS=("$instance_arg")
+    return 0
+  fi
+
+  echo "Operation canceled. The instance must be running to perform a restart."
+  return 1
+}
+
+_restart_classify_instances() {
+  local instance
+
+  _RESTART_API_INSTANCES=()
+  _RESTART_NON_API_INSTANCES=()
+
+  for instance in "${_RESTART_INSTANCES_TO_PROCESS[@]}"; do
+    if _rcon_instance_has_api_enabled "$instance"; then
+      _RESTART_API_INSTANCES+=("$instance")
       echo "Instance $instance has API=TRUE"
     else
-      non_api_instances+=("$instance")
+      _RESTART_NON_API_INSTANCES+=("$instance")
       echo "Instance $instance has API=FALSE"
     fi
   done
-  
-  # Set restart mode based on the mix of instances
-  local restart_mode="standard"
-  if [ ${#api_instances[@]} -gt 0 ] && [ ${#non_api_instances[@]} -gt 0 ]; then
-    restart_mode="mixed"
+}
+
+_restart_set_mode_and_announce() {
+  if [ ${#_RESTART_API_INSTANCES[@]} -gt 0 ] && [ ${#_RESTART_NON_API_INSTANCES[@]} -gt 0 ]; then
+    _RESTART_MODE="mixed"
     echo "⚠️ Mixed API modes detected. Using coordinated restart approach for all instances."
     echo ""
     echo "⚠️ IMPORTANT UPDATE INFORMATION: ⚠️"
@@ -7149,298 +8236,253 @@ enhanced_restart_command() {
     echo "This ensures all server files are updated correctly while minimizing downtime."
     echo "Continuing with restart in 5 seconds..."
     sleep 5
-  elif [ ${#api_instances[@]} -gt 0 ]; then
-    restart_mode="api-only"
+  elif [ ${#_RESTART_API_INSTANCES[@]} -gt 0 ]; then
+    _RESTART_MODE="api-only"
     echo "All instances have API=TRUE. Using container-level restart approach."
   else
-    restart_mode="standard"
+    _RESTART_MODE="standard"
     echo "All instances have API=FALSE. Using standard in-game restart approach."
   fi
-  
-  # First, notify all instances of the pending restart
-  echo "🔔 Notifying all servers of restart in $countdown_minutes minutes..."
-  
-  # Prepare a special message for mixed mode
-  local restart_message=""
-  if [ "$restart_mode" = "mixed" ]; then
-    restart_message="SERVER ANNOUNCEMENT: Prepare for restart in ${countdown_minutes} minutes. Please note: This restart will NOT include game updates."
-  else
-    restart_message="SERVER ANNOUNCEMENT: Prepare for restart in ${countdown_minutes} minutes. Please finish your current activities."
-  fi
-  
-  for instance in "${instances_to_process[@]}"; do
-    echo "  - Notifying ${instance}..."
-    # For both API and non-API instances, send a chat notification
-    run_in_container_background "$instance" "-chat" "$restart_message" >/dev/null 2>&1
-  done
-  
-  # Handle different restart modes
-  case "$restart_mode" in
-    "mixed"|"api-only"|"standard")
-      # Use the same countdown mechanism for all modes
-      # Start countdown
-      local total_seconds=$((countdown_minutes * 60))
-      local remaining_seconds=$total_seconds
-      # Generate notification points: 5-minute intervals + standard final countdown
-      local notification_points=()
-      
-      # Add 5-minute intervals (in seconds) from countdown_minutes down to 5 minutes
-      local current_minutes=$countdown_minutes
-      while [ $current_minutes -ge 5 ]; do
-        if [ $((current_minutes % 5)) -eq 0 ]; then
-          notification_points+=($((current_minutes * 60)))
-        fi
-        current_minutes=$((current_minutes - 1))
-      done
-      
-      # Add standard final countdown points (3min, 1min, 30sec, final 10 seconds)
-      notification_points+=(180 60 30 10 9 8 7 6 5 4 3 2 1)
-      
-      # Sort notification points in descending order (remove duplicates)
-      IFS=$'\n' notification_points=($(printf '%s\n' "${notification_points[@]}" | sort -nr | uniq))
-      unset IFS
-      local spinner_idx=0
-      
-      echo -e "${status_color}⏱️${reset_color} Beginning restart countdown: $countdown_minutes minutes"
-      
-      # Loop until countdown completes
-      while [ $remaining_seconds -gt 0 ]; do
-        # Update the spinner
-        local current_spinner=${spinner[$spinner_idx]}
-        spinner_idx=$(( (spinner_idx + 1) % ${#spinner[@]} ))
-        
-        # Format the remaining time
-        local minutes=$((remaining_seconds / 60))
-        local seconds=$((remaining_seconds % 60))
-        local eta_display="${minutes}m ${seconds}s"
-        
-        # Clear line and print the countdown with spinner (same style as shutdown)
-        printf "\r${status_color}%s${reset_color} ${action_color}Restarting:${reset_color} ${time_color}ETA: %-8s${reset_color}" "$current_spinner" "$eta_display"
-        
-        # Check for notification points
-        for point in "${notification_points[@]}"; do
-          if [ $remaining_seconds -eq $point ]; then
-            local display_time=""
-            if [ $point -ge 60 ]; then
-              display_time="$((point / 60)) minute(s)"
-            else
-              display_time="$point seconds"
-            fi
-            # Add a newline and print the notification without disrupting the countdown
-            echo ""
-            echo -e "${status_color}Server notification: ${time_color}${display_time} remaining${reset_color}"
-            
-            # Send notification to all instances
-            for instance in "${instances_to_process[@]}"; do
-              run_in_container_background "$instance" "-chat" "Server restart in $display_time!"
-            done
-            break
-          fi
-        done
-        
-        sleep 1
-        remaining_seconds=$((remaining_seconds - 1))
-      done
-      
-      # Show completion message
-      echo -e "\r${status_color}✓${reset_color} ${action_color}Restarting:${reset_color} ${time_color}Countdown complete!${reset_color}                 "
-      echo ""
-      
-      echo -e "${status_color}🔄${reset_color} Beginning coordinated restart process..."
-      
-      # 1. Save world for all instances
-      echo -e "${status_color}💾${reset_color} Saving world data for all instances..."
-      local save_error=false
-      for instance in "${instances_to_process[@]}"; do
-        echo "  - Saving world for ${instance}..."
-        # Check if the container exists before attempting to save
-        if docker ps -q -f name=^/asa_${instance}$ > /dev/null; then
-          run_in_container "$instance" "-saveworld"
-        else
-          echo "  ⚠️ Warning: Container for ${instance} is not running, skipping save operation"
-          save_error=true
-        fi
-      done
-      
-      # Give some time for saves to complete
-      if [ "$save_error" = true ]; then
-        echo -e "${status_color}⚠️${reset_color} Some instances couldn't be saved. Continuing with restart process..."
-      else
-        echo -e "${status_color}⏳${reset_color} Waiting for saves to complete (10 seconds)..."
-      fi
-      sleep 10
-      
-      # 2. Stop all instances
-      echo -e "${status_color}🛑${reset_color} Stopping all instances..."
-      local stop_error=false
-      for instance in "${instances_to_process[@]}"; do
-        echo "  - Stopping ${instance}..."
-        # Check if the container exists before attempting to stop
-        if docker ps -a -q -f name=^/asa_${instance}$ > /dev/null; then
-          stop_instance "$instance"
-        else
-          echo "  ⚠️ Warning: Container for ${instance} does not exist, skipping stop operation"
-          stop_error=true
-        fi
-      done
-      
-      # 3. Update server files if needed
-      echo -e "${status_color}🔍${reset_color} Checking for server file updates..."
-      if [ "$skip_update" = false ]; then
-        update_server_files_and_docker
-      else
-        echo "Skipping server updates as a specific instance was selected"
-      fi
-      
-      # 4. Start all instances
-      echo -e "${status_color}🚀${reset_color} Starting all instances..."
-      local start_error=false
-      for instance in "${instances_to_process[@]}"; do
-        echo "  - Starting ${instance}..."
-        # Verify the instance directory and docker-compose file exist before starting
-        local instance_dir="${BASE_DIR}/Instance_${instance}"
-        local docker_compose_file="${instance_dir}/docker-compose-${instance}.yaml"
-        
-        if [ ! -d "$instance_dir" ]; then
-          echo "  ❌ ERROR: Instance directory not found at $instance_dir"
-          start_error=true
-          continue
-        fi
-        
-        if [ ! -f "$docker_compose_file" ]; then
-          echo "  ❌ ERROR: Docker Compose file not found at $docker_compose_file"
-          start_error=true
-          continue
-        fi
-        
-        start_instance "$instance"
-      done
-      
-      # 5. Verify all instances restarted successfully
-      if [ "$start_error" = true ]; then
-        echo -e "${status_color}⚠️${reset_color} Some instances could not be started. Please check the errors above."
-      else
-        echo -e "${status_color}✅${reset_color} Verifying all instances are running..."
-      fi
-      ;;
-      
-    "standard")
-      # For non-API instances, use the in-game restart command
-      echo "📢 Sending restart command with countdown: $countdown_minutes minutes"
-      
-      for instance in "${non_api_instances[@]}"; do
-        echo "🔄 Sending restart command to instance: $instance"
-        run_in_container "$instance" "-restart" "$countdown_minutes"
-      done
-      
-      # Calculate how long to wait for restart
-      local total_wait_seconds=$((countdown_minutes * 60 + 120))  # Add 2 minutes for server restart process
-      local wait_interval=30  # Check every 30 seconds
-      local wait_attempts=$((total_wait_seconds / wait_interval))
-      
-      echo "⏳ Waiting for restart to complete (~$((total_wait_seconds / 60)) minutes)..."
-      
-      # Wait for restart to complete
-      local restart_verified=false
-      for ((i=1; i<=wait_attempts; i++)); do
-        local all_restarted=true
-        local failed_instances=()
-        
-        for instance in "${non_api_instances[@]}"; do
-          if ! validate_instance "$instance"; then
-            all_restarted=false
-            failed_instances+=("$instance")
-          fi
-        done
-        
-        if [ "$all_restarted" = true ]; then
-          echo "✅ All non-API instances have successfully restarted!"
-          restart_verified=true
-          break
-        else
-          echo "⏳ Waiting for instances to restart: ${failed_instances[*]} (Check $i/$wait_attempts)"
-          sleep $wait_interval
-        fi
-      done
-      
-      if [ "$restart_verified" = false ]; then
-        echo "⚠️ WARNING: Some instances may not have restarted properly: ${failed_instances[*]}"
-        echo "Please check these instances manually."
-        exit 1  # Exit with error status
-      fi
-      ;;
-    "api-only")
-      # For API=TRUE instances, use the container restart approach
-      # Use the same countdown loop as we just defined for "mixed" mode
-      # Start countdown
-      local total_seconds=$((countdown_minutes * 60))
-      local remaining_seconds=$total_seconds
-      # Generate notification points: 5-minute intervals + standard final countdown
-      local notification_points=()
-      
-      # Add 5-minute intervals (in seconds) from countdown_minutes down to 5 minutes
-      local current_minutes=$countdown_minutes
-      while [ $current_minutes -ge 5 ]; do
-        if [ $((current_minutes % 5)) -eq 0 ]; then
-          notification_points+=($((current_minutes * 60)))
-        fi
-        current_minutes=$((current_minutes - 1))
-      done
-      
-      # Add standard final countdown points (3min, 1min, 30sec, final 10 seconds)
-      notification_points+=(180 60 30 10 9 8 7 6 5 4 3 2 1)
-      
-      # Sort notification points in descending order (remove duplicates)
-      IFS=$'\n' notification_points=($(printf '%s\n' "${notification_points[@]}" | sort -nr | uniq))
-      unset IFS
-      local spinner_idx=0
-      
-      echo -e "${status_color}⏱️${reset_color} Beginning restart countdown: $countdown_minutes minutes"
-      
-      # Loop until countdown completes
-      while [ $remaining_seconds -gt 0 ]; do
-        # Update the spinner
-        local current_spinner=${spinner[$spinner_idx]}
-        spinner_idx=$(( (spinner_idx + 1) % ${#spinner[@]} ))
-        
-        # Format the remaining time
-        local minutes=$((remaining_seconds / 60))
-        local seconds=$((remaining_seconds % 60))
-        local eta_display="${minutes}m ${seconds}s"
-        
-        # Clear line and print the countdown with spinner (same style as shutdown)
-        printf "\r${status_color}%s${reset_color} ${action_color}Restarting:${reset_color} ${time_color}ETA: %-8s${reset_color}" "$current_spinner" "$eta_display"
-        
-        # Check for notification points
-        for point in "${notification_points[@]}"; do
-          if [ $remaining_seconds -eq $point ]; then
-            local display_time=""
-            if [ $point -ge 60 ]; then
-              display_time="$((point / 60)) minute(s)"
-            else
-              display_time="$point seconds"
-            fi
-            # Add a newline and print the notification without disrupting the countdown
-            echo ""
-            echo -e "${status_color}Server notification: ${time_color}${display_time} remaining${reset_color}"
-            break
-          fi
-        done
-        
-        sleep 1
-        remaining_seconds=$((remaining_seconds - 1))
-      done
-      ;;
-    "mixed")
-      # For mixed API mode, we need to handle both API and non-API instances
-      # Start countdown for API instances
-  esac
-  
-  echo "🎮 Server restart operation completed for all instances."
-  exit 0  # Add explicit exit with success status to ensure function terminates
 }
 
-# Function for enhanced shutdown command with better visuals (similar to restart)
+_restart_build_restart_message() {
+  local countdown_minutes="$1"
+
+  if [ "$_RESTART_MODE" = "mixed" ]; then
+    echo "SERVER ANNOUNCEMENT: Prepare for restart in ${countdown_minutes} minutes. Please note: This restart will NOT include game updates."
+  else
+    echo "SERVER ANNOUNCEMENT: Prepare for restart in ${countdown_minutes} minutes. Please finish your current activities."
+  fi
+}
+
+_restart_notify_initial_restart() {
+  local countdown_minutes="$1"
+  local restart_message
+  local instance
+
+  restart_message="$(_restart_build_restart_message "$countdown_minutes")"
+  echo "🔔 Notifying all servers of restart in $countdown_minutes minutes..."
+  for instance in "${_RESTART_INSTANCES_TO_PROCESS[@]}"; do
+    echo "  - Notifying ${instance}..."
+    run_in_container_background "$instance" "-chat" "$restart_message" >/dev/null 2>&1
+  done
+}
+
+_countdown_build_notification_points() {
+  local countdown_minutes="$1"
+  local current_minutes="$countdown_minutes"
+
+  _RESTART_NOTIFICATION_POINTS=()
+
+  while [ "$current_minutes" -ge 5 ]; do
+    if [ $((current_minutes % 5)) -eq 0 ]; then
+      _RESTART_NOTIFICATION_POINTS+=($((current_minutes * 60)))
+    fi
+    current_minutes=$((current_minutes - 1))
+  done
+
+  _RESTART_NOTIFICATION_POINTS+=(180 60 30 10 9 8 7 6 5 4 3 2 1)
+  IFS=$'\n' _RESTART_NOTIFICATION_POINTS=($(printf '%s\n' "${_RESTART_NOTIFICATION_POINTS[@]}" | sort -nr | uniq))
+  unset IFS
+}
+
+_restart_countdown_notify() {
+  local display_time="$1"
+  local instance
+
+  for instance in "${_COUNTDOWN_TARGET_INSTANCES[@]}"; do
+    run_in_container_background "$instance" "-chat" "Server restart in $display_time!"
+  done
+}
+
+_shutdown_countdown_notify() {
+  local display_time="$1"
+  local instance
+
+  for instance in "${_COUNTDOWN_TARGET_INSTANCES[@]}"; do
+    run_in_container_background "$instance" "-chat" "Server shutdown in $display_time!" >/dev/null 2>&1
+  done
+}
+
+_run_enhanced_countdown() {
+  local countdown_minutes="$1"
+  local action_label="$2"
+  local notify_callback="$3"
+  local begin_message="$4"
+  local status_color="\033[1;36m"
+  local time_color="\033[1;33m"
+  local reset_color="\033[0m"
+  local action_color="\033[1;35m"
+  local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+  local total_seconds=$((countdown_minutes * 60))
+  local remaining_seconds=$total_seconds
+  local spinner_idx=0
+  local current_spinner
+  local minutes
+  local seconds
+  local eta_display
+  local point
+  local display_time
+
+  _countdown_build_notification_points "$countdown_minutes"
+
+  echo -e "${status_color}⏱️${reset_color} Beginning ${action_label,,} countdown: $countdown_minutes minutes"
+  while [ $remaining_seconds -gt 0 ]; do
+    current_spinner=${spinner[$spinner_idx]}
+    spinner_idx=$(((spinner_idx + 1) % ${#spinner[@]}))
+    minutes=$((remaining_seconds / 60))
+    seconds=$((remaining_seconds % 60))
+    eta_display="${minutes}m ${seconds}s"
+    printf "\r${status_color}%s${reset_color} ${action_color}%s:${reset_color} ${time_color}ETA: %-8s${reset_color}" "$current_spinner" "$action_label" "$eta_display"
+
+    for point in "${_RESTART_NOTIFICATION_POINTS[@]}"; do
+      if [ $remaining_seconds -eq $point ]; then
+        if [ $point -ge 60 ]; then
+          display_time="$((point / 60)) minute(s)"
+        else
+          display_time="$point seconds"
+        fi
+        echo ""
+        echo -e "${status_color}Server notification: ${time_color}${display_time} remaining${reset_color}"
+        "$notify_callback" "$display_time"
+        break
+      fi
+    done
+
+    sleep 1
+    remaining_seconds=$((remaining_seconds - 1))
+  done
+
+  echo -e "\r${status_color}✓${reset_color} ${action_color}${action_label}:${reset_color} ${time_color}Countdown complete!${reset_color}                 "
+  echo ""
+  echo -e "${status_color}${begin_message}${reset_color}"
+}
+
+_restart_run_countdown() {
+  _COUNTDOWN_TARGET_INSTANCES=("${_RESTART_INSTANCES_TO_PROCESS[@]}")
+  _run_enhanced_countdown "$1" "Restarting" "_restart_countdown_notify" "🔄 Beginning coordinated restart process..."
+}
+
+_restart_save_instances() {
+  local status_color="\033[1;36m"
+  local reset_color="\033[0m"
+  local save_error=false
+  local instance
+
+  echo -e "${status_color}💾${reset_color} Saving world data for all instances..."
+  for instance in "${_RESTART_INSTANCES_TO_PROCESS[@]}"; do
+    echo "  - Saving world for ${instance}..."
+    if docker ps -q -f name=^/asa_${instance}$ > /dev/null; then
+      run_in_container "$instance" "-saveworld"
+    else
+      echo "  ⚠️ Warning: Container for ${instance} is not running, skipping save operation"
+      save_error=true
+    fi
+  done
+
+  if [ "$save_error" = "true" ]; then
+    echo -e "${status_color}⚠️${reset_color} Some instances couldn't be saved. Continuing with restart process..."
+  else
+    echo -e "${status_color}⏳${reset_color} Waiting for saves to complete (10 seconds)..."
+  fi
+  sleep 10
+}
+
+_restart_stop_instances() {
+  local status_color="\033[1;36m"
+  local reset_color="\033[0m"
+  local instance
+
+  echo -e "${status_color}🛑${reset_color} Stopping all instances..."
+  for instance in "${_RESTART_INSTANCES_TO_PROCESS[@]}"; do
+    echo "  - Stopping ${instance}..."
+    if docker ps -a -q -f name=^/asa_${instance}$ > /dev/null; then
+      stop_instance "$instance"
+    else
+      echo "  ⚠️ Warning: Container for ${instance} does not exist, skipping stop operation"
+    fi
+  done
+}
+
+_restart_maybe_update_server_files() {
+  local status_color="\033[1;36m"
+  local reset_color="\033[0m"
+  local skip_update="$1"
+
+  echo -e "${status_color}🔍${reset_color} Checking for server file updates..."
+  if [ "$skip_update" = "false" ]; then
+    update_server_files_and_docker
+  else
+    echo "Skipping server updates as a specific instance was selected"
+  fi
+}
+
+_restart_start_instances() {
+  local status_color="\033[1;36m"
+  local reset_color="\033[0m"
+  local start_error=false
+  local instance
+  local instance_dir
+  local docker_compose_file
+  local -a valid_instances=()
+
+  echo -e "${status_color}🚀${reset_color} Starting all instances..."
+  for instance in "${_RESTART_INSTANCES_TO_PROCESS[@]}"; do
+    echo "  - Starting ${instance}..."
+    instance_dir="${BASE_DIR}/Instance_${instance}"
+    docker_compose_file="${instance_dir}/docker-compose-${instance}.yaml"
+
+    if [ ! -d "$instance_dir" ]; then
+      echo "  ❌ ERROR: Instance directory not found at $instance_dir"
+      start_error=true
+      continue
+    fi
+
+    if [ ! -f "$docker_compose_file" ]; then
+      echo "  ❌ ERROR: Docker Compose file not found at $docker_compose_file"
+      start_error=true
+      continue
+    fi
+
+    valid_instances+=("$instance")
+  done
+
+  if [ ${#valid_instances[@]} -gt 0 ]; then
+    _coordination_start_instance_subset "coordinated_all" "coordinated_all" "${valid_instances[@]}" || start_error=true
+  fi
+
+  if [ "$start_error" = "true" ]; then
+    echo -e "${status_color}⚠️${reset_color} Some instances could not be started. Please check the errors above."
+  else
+    echo -e "${status_color}✅${reset_color} Verifying all instances are running..."
+  fi
+}
+
+_restart_run_coordinated_sequence() {
+  local skip_update="$1"
+
+  _restart_save_instances
+  _restart_stop_instances
+  _restart_maybe_update_server_files "$skip_update"
+  _restart_start_instances
+}
+
+# Add enhanced restart functionality with verification and mixed-mode support
+enhanced_restart_command() {
+  local minutes_arg="$1"
+  local instance_arg="$2"
+  local countdown_minutes="${minutes_arg:-5}"
+
+  _restart_collect_instances_to_process "$instance_arg" || return 1
+  _restart_classify_instances
+  _restart_set_mode_and_announce
+  _restart_notify_initial_restart "$countdown_minutes"
+  _restart_run_countdown "$countdown_minutes"
+  _restart_run_coordinated_sequence "$_RESTART_SKIP_UPDATE"
+  echo "🎮 Server restart operation completed for all instances."
+  return 0
+}
+
 enhanced_shutdown_command() {
   local minutes_arg="$1"
   local instance_arg="$2"
@@ -7453,16 +8495,6 @@ enhanced_shutdown_command() {
     echo "Invalid shutdown time: $countdown_minutes. Using default of 1 minute."
     countdown_minutes=1
   fi
-  
-  # Define colors for the countdown
-  local status_color="\033[1;36m" # Cyan for status
-  local time_color="\033[1;33m" # Yellow for time
-  local reset_color="\033[0m"
-  local success_color="\033[1;32m" # Green for success
-  local warning_color="\033[1;33m" # Yellow for warnings
-  local action_color="\033[1;35m" # Magenta for action status
-  local spinner=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
-  local spinner_idx=0
   
   # Determine which instances to process
   local instances_to_process=()
@@ -7493,87 +8525,22 @@ enhanced_shutdown_command() {
     run_in_container_background "$instance" "-chat" "Server shutdown in $countdown_minutes minute(s)!" >/dev/null 2>&1
   done
   
-  # Start the enhanced countdown
-  echo "⏱️ Beginning shutdown countdown: $countdown_minutes minutes"
-  
-  # Convert minutes to seconds for countdown
-  local total_seconds=$((countdown_minutes * 60))
-  local seconds_remaining=$total_seconds
-  
-  # List of notification points in seconds
-  local notification_points=(
-    $((60 * 5))  # 5 minutes
-    $((60 * 3))  # 3 minutes
-    $((60 * 1))  # 1 minute
-    30           # 30 seconds
-    10 9 8 7 6 5 4 3 2 1  # Final countdown
-  )
-  
-  # Countdown loop
-  while [ $seconds_remaining -gt 0 ]; do
-    local minutes=$((seconds_remaining / 60))
-    local seconds=$((seconds_remaining % 60))
-    
-    # Update spinner
-    local current_spinner=${spinner[$spinner_idx]}
-    spinner_idx=$(( (spinner_idx + 1) % ${#spinner[@]} ))
-    
-    # Display countdown
-    printf "\r${current_spinner} ${action_color}Shutting down:${reset_color} ${time_color}ETA: %dm %ds${reset_color}   " $minutes $seconds
-    
-    # Check if we need to send a notification
-    for point in "${notification_points[@]}"; do
-      if [ $seconds_remaining -eq $point ]; then
-        echo ""  # New line for notification
-        if [ $point -ge 60 ]; then
-          local min_val=$((point / 60))
-          echo "Server notification: $min_val minute(s) remaining"
-          # Send to all servers
-          for instance in "${instances_to_process[@]}"; do
-            run_in_container_background "$instance" "-chat" "Server shutdown in $min_val minute(s)!" >/dev/null 2>&1
-          done
-        else
-          echo "Server notification: $point seconds remaining"
-          # Send to all servers
-          for instance in "${instances_to_process[@]}"; do
-            run_in_container_background "$instance" "-chat" "Server shutdown in $point seconds!" >/dev/null 2>&1
-          done
-        fi
-        break
-      fi
-    done
-    
-    sleep 1
-    ((seconds_remaining--))
-  done
-  
-  # Countdown complete
-  echo -e "\r✓ Shutting down: Countdown complete!                 "
-  echo ""
+  _COUNTDOWN_TARGET_INSTANCES=("${instances_to_process[@]}")
+  _run_enhanced_countdown "$countdown_minutes" "Shutting down" "_shutdown_countdown_notify" "🛑 Beginning coordinated shutdown process..."
   
   # Final notification
   for instance in "${instances_to_process[@]}"; do
     run_in_container_background "$instance" "-chat" "Server is shutting down NOW!" >/dev/null 2>&1
   done
   
-  # Begin shutdown process
-  echo "🛑 Beginning coordinated shutdown process..."
   echo "💾 Saving world data for all instances..."
-  
-  for instance in "${instances_to_process[@]}"; do
-    echo "  - Saving world for $instance..."
-    run_in_container "$instance" "-saveworld" >/dev/null 2>&1 &
-  done
-  
-  # Wait for saves to complete
-  echo "⏳ Waiting for saves to complete (10 seconds)..."
-  sleep 10
+  _save_instances_then_wait "Attempting quick saves on all running instances..." "⏳ Waiting %s seconds for saves to complete..." "${instances_to_process[@]}"
   
   # Stop all instances
   echo "🛑 Stopping all instances..."
   for instance in "${instances_to_process[@]}"; do
     echo "  - Stopping $instance..."
-    stop_instance "$instance"
+    stop_instance "$instance" "skip_save"
   done
   
   echo "✅ All servers have been shut down successfully."
@@ -7638,5 +8605,6 @@ display_changelog() {
   echo "======================================================="
 }
 
-# Invoke the main function with all passed arguments
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "${0}" && "${POK_MANAGER_TEST_MODE:-}" != "1" ]]; then
+  main "$@"
+fi

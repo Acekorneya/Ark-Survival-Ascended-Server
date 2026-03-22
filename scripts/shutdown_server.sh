@@ -1,33 +1,15 @@
 #!/bin/bash
+#
+# Graceful shutdown helpers shared by monitor and restart workflows.
 
-# Source common variables, functions, and the rcon_commands.sh script
-source /home/pok/scripts/common.sh
-source /home/pok/scripts/rcon_commands.sh
+POK_SCRIPTS_DIR="${POK_SCRIPTS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/common.sh"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/rcon_commands.sh"
 
 # Define shutdown flag file location
 SHUTDOWN_COMPLETE_FLAG="/home/pok/shutdown_complete.flag"
-
-# Function to check if save is complete
-save_complete_check() {
-  local log_file="$ASA_DIR/ShooterGame/Saved/Logs/ShooterGame.log"
-  if tail -n 10 "$log_file" | grep -q "World Save Complete"; then
-    echo "Save operation completed."
-    return 0
-  else
-    return 1
-  fi
-}
-
-# Function to check if server has stopped properly
-server_stopped_check() {
-  local log_file="$ASA_DIR/ShooterGame/Saved/Logs/ShooterGame.log"
-  if tail -n 20 "$log_file" | grep -q "Server stopped"; then
-    echo "Server stopped properly."
-    return 0
-  else
-    return 1
-  fi
-}
 
 # Function for safe container shutdown - used by POK-manager.sh -stop -all
 # Ensures world is saved before container is stopped
@@ -517,6 +499,7 @@ initiate_shutdown() {
 
 # Check if this script is being run directly
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  prepare_runtime_env
   # Check for command line arguments
   if [[ "$1" == "restart" ]]; then
     shutdown_handler true

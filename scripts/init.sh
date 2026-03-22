@@ -1,6 +1,19 @@
 #!/bin/bash
+#
+# Main container entrypoint. Sets up runtime prerequisites, verifies shared
+# server files, launches the server, and starts background monitoring.
 
-source /home/pok/scripts/common.sh
+POK_SCRIPTS_DIR="${POK_SCRIPTS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/common.sh"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/update_coordination.sh"
+
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+  return 0
+fi
+
+prepare_runtime_env
 
 # Setup container timezone based on TZ environment variable
 setup_container_timezone() {
@@ -45,10 +58,36 @@ setup_container_timezone() {
   return 0
 }
 
+start_health_service() {
+  local health_server="/home/pok/scripts/health_server.py"
+
+  mkdir -p /home/pok/logs
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "⚠️ Health service not started: python3 is not available in the container."
+    return 0
+  fi
+
+  if [ ! -f "$health_server" ]; then
+    echo "⚠️ Health service not started: ${health_server} was not found."
+    return 0
+  fi
+
+  python3 "$health_server" >/home/pok/logs/health_server.log 2>&1 &
+  HEALTH_SERVER_PID=$!
+
+  if kill -0 "$HEALTH_SERVER_PID" 2>/dev/null; then
+    echo "💓 Health service listening on port ${HEALTHCHECK_PORT:-8080}"
+  else
+    echo "⚠️ Health service failed to start."
+  fi
+}
+
 # Setup timezone early in the initialization
 setup_container_timezone
+start_health_service
 
-if [ "${UPDATE_MODE}" = "TRUE" ]; then
+if env_value_is_truthy "${UPDATE_MODE:-FALSE}"; then
   echo "🔧 ==== RUNNING IN UPDATE-ONLY MODE ==== 🔧"
   echo "This container is for server file updates via SteamCMD only."
   echo "Server startup will be skipped. Container will stay alive for update operations."
@@ -63,38 +102,6 @@ if [ "${UPDATE_MODE}" = "TRUE" ]; then
   exec tail -f /dev/null
 fi
 
-verify_vcredist_runtime() {
-  if [ "${VERIFY_VC_RUNTIME_ON_BOOT:-FALSE}" != "TRUE" ]; then
-    return 0
-  fi
-
-  local checker="/home/pok/scripts/test_vcredist.sh"
-  if [ ! -x "$checker" ]; then
-    echo "⚠️ VC++ runtime checker not found at $checker"
-    return 0
-  fi
-
-  local prefix="${STEAM_COMPAT_DATA_PATH:-/home/pok/.steam/steam/steamapps/compatdata/2430930}/pfx"
-  if [ ! -f "$prefix/drive_c/windows/SysWOW64/msvcp140.dll" ] || \
-     [ ! -f "$prefix/drive_c/windows/SysWOW64/vcruntime140.dll" ] || \
-     [ ! -f "$prefix/drive_c/windows/system32/msvcp140.dll" ] || \
-     [ ! -f "$prefix/drive_c/windows/system32/vcruntime140.dll" ]; then
-    echo "🔧 VC++ runtime files missing; attempting winetricks vcrun2022 before verification..."
-    WINEPREFIX="$prefix" winetricks -q vcrun2022 >/dev/null 2>&1 || true
-  fi
-
-  echo "🔍 Verifying Visual C++ runtime (startup check enabled)..."
-  if output=$($checker 2>&1); then
-    echo "$output"
-    echo "✅ VC++ runtime verification succeeded"
-  else
-    echo "$output"
-    echo "❌ VC++ runtime verification failed (see above)"
-  fi
-}
-
-verify_vcredist_runtime
-
 # Clean up any legacy locks and dirty flags from previous system usage
 echo "🧹 Cleaning up legacy locks and dirty flags..."
 if declare -f cleanup_legacy_locks >/dev/null 2>&1; then
@@ -102,9 +109,10 @@ if declare -f cleanup_legacy_locks >/dev/null 2>&1; then
 else
   echo "[WARNING] cleanup_legacy_locks function not found in common.sh"
 fi
+update_coordination_cleanup || true
 
 # Add random startup delay if enabled
-if [ "${RANDOM_STARTUP_DELAY}" = "TRUE" ]; then
+if env_value_is_truthy "${RANDOM_STARTUP_DELAY:-FALSE}"; then
   DELAY=$((RANDOM % 10 + 1))
   echo "🕐 Random startup delay enabled. Waiting ${DELAY} seconds before proceeding..."
   sleep ${DELAY}
@@ -127,45 +135,15 @@ ensure_server_files_ready() {
 # Add disk space cleanup function to remove non-essential data
 cleanup_disk_space() {
   echo "🧹 Performing disk space cleanup..."
-  
-  # Clean up old logs (keep only the 5 most recent)
-  if [ -d "${ASA_DIR}/ShooterGame/Saved/Logs" ]; then
-    echo "  - Rotating server logs..."
-    find "${ASA_DIR}/ShooterGame/Saved/Logs" -name "*.log" -type f -not -name "ShooterGame.log" | sort -r | tail -n +6 | xargs rm -f 2>/dev/null || true
-  fi
-  
-  # Clean AsaApi logs (keep only the 5 most recent)
-  if [ -d "${ASA_DIR}/ShooterGame/Binaries/Win64/logs" ]; then
-    echo "  - Rotating AsaApi logs..."
-    find "${ASA_DIR}/ShooterGame/Binaries/Win64/logs" -name "*.log" -type f | sort -r | tail -n +6 | xargs rm -f 2>/dev/null || true
-  fi
-  
-  # Clean up any temp files in Wine prefix (these are recreated as needed)
-  if [ -d "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/users/steamuser/Temp" ]; then
-    echo "  - Cleaning Wine temporary files..."
-    rm -rf "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/users/steamuser/Temp"/* 2>/dev/null || true
-  fi
-  
-  # Clean up steamcmd temp files that might be left behind
-  if [ -d "/opt/steamcmd/Steam/logs" ]; then
-    echo "  - Cleaning SteamCMD logs..."
-    rm -rf /opt/steamcmd/Steam/logs/* 2>/dev/null || true
-  fi
-  
-  # Clean up container-specific temp files
-  echo "  - Cleaning temporary files..."
-  rm -f /tmp/*.log 2>/dev/null || true
-  rm -f /tmp/ark_* 2>/dev/null || true
-  rm -f /tmp/launch_output.log 2>/dev/null || true
-  rm -f /tmp/asaapi_logs_pipe_* 2>/dev/null || true
+
+  rotate_log_files 5 "${ASA_DIR}/ShooterGame/Saved/Logs" "*.log" "ShooterGame.log" || true
+  rotate_log_files 5 "${ASA_DIR}/ShooterGame/Binaries/Win64/logs" "*.log" || true
+  clean_temp_files
   
   # Remove old PID files if present
   if [ -f "$PID_FILE" ]; then
     rm -f "$PID_FILE" 2>/dev/null || true
   fi
-  
-  # Clean up any leftover Xvfb lock files
-  rm -f /tmp/.X[0-9]*-lock 2>/dev/null || true
   
   echo "✅ Disk space cleanup completed"
 }
@@ -591,42 +569,12 @@ verify_proton_environment() {
   echo "Proton environment verification completed."
 }
 
-# Helper function to create minimal registry if other methods fail
-create_minimal_registry() {
-  echo "Creating minimal Wine registry structure..."
-  
-  echo "WINE REGISTRY Version 2" > "${STEAM_COMPAT_DATA_PATH}/pfx/system.reg"
-  echo ";; All keys relative to \\\\Machine" >> "${STEAM_COMPAT_DATA_PATH}/pfx/system.reg"
-  echo "#arch=win64" >> "${STEAM_COMPAT_DATA_PATH}/pfx/system.reg"
-  echo "" >> "${STEAM_COMPAT_DATA_PATH}/pfx/system.reg"
-  
-  echo "WINE REGISTRY Version 2" > "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
-  echo ";; All keys relative to \\\\User\\\\S-1-5-21-0-0-0-1000" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
-  echo "#arch=win64" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
-  echo "[Software\\\\Wine\\\\DllOverrides]" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
-  echo "\"*version\"=\"native,builtin\"" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
-    echo "\"vcrun2022\"=\"native,builtin\"" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
-  echo "" >> "${STEAM_COMPAT_DATA_PATH}/pfx/user.reg"
-  
-  echo "WINE REGISTRY Version 2" > "${STEAM_COMPAT_DATA_PATH}/pfx/userdef.reg"
-  echo ";; All keys relative to \\\\User\\\\DefUser" >> "${STEAM_COMPAT_DATA_PATH}/pfx/userdef.reg"
-  echo "#arch=win64" >> "${STEAM_COMPAT_DATA_PATH}/pfx/userdef.reg"
-  echo "" >> "${STEAM_COMPAT_DATA_PATH}/pfx/userdef.reg"
-  
-  # Create Visual C++ directory structure to make AsaApiLoader believe it's installed
-  local vc_dir="${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files (x86)/Microsoft Visual Studio"
-  mkdir -p "$vc_dir"
-  
-  echo "Minimal registry and directory structure created."
-}
-
 # Set up virtual display
 setup_virtual_display
 
 echo ""
 echo "🔍 Running environment checks..."
 # Run comprehensive pre-launch environment check
-chmod +x /home/pok/scripts/prelaunch_check.sh
 /home/pok/scripts/prelaunch_check.sh
 PRELAUNCH_CHECK_RESULT=$?
 
@@ -640,7 +588,6 @@ if [ $PRELAUNCH_CHECK_RESULT -ne 0 ] || [ ! -f "/home/pok/arkserver/ShooterGame/
   echo "⏳ This may take some time depending on your internet connection speed (15-30+ minutes)"
   echo "☕ Feel free to grab a coffee while waiting - download progress will be displayed below"
   echo ""
-  chmod +x /home/pok/scripts/install_server.sh
   /home/pok/scripts/install_server.sh
   
   # Verify installation was successful
@@ -859,7 +806,7 @@ MONITOR_PID=$!
 RESTART_MONITOR_PID=$!
 
 # Launch the update monitor in background if API mode is not enabled
-if [ "${UPDATE_SERVER^^}" = "TRUE" ] && [ "${API}" != "TRUE" ]; then
+if env_value_is_truthy "${UPDATE_SERVER:-FALSE}" && [ "${API}" != "TRUE" ]; then
   echo "[INFO] Starting update monitor in background..."
   # Remove residual stop flag from previous container run before launching monitor
   rm -f /home/pok/stop_monitor.flag 2>/dev/null || true
@@ -874,7 +821,7 @@ if [ "${UPDATE_SERVER^^}" = "TRUE" ] && [ "${API}" != "TRUE" ]; then
   
   MONITOR_PID=$!
   echo "[INFO] Update monitor started with PID: $MONITOR_PID"
-elif [ "${API}" = "TRUE" ] && [ "${UPDATE_SERVER^^}" = "TRUE" ]; then
+elif [ "${API}" = "TRUE" ] && env_value_is_truthy "${UPDATE_SERVER:-FALSE}"; then
   echo "⚠️ [WARNING] Update monitor is disabled when API=TRUE"
   echo "⚠️ [WARNING] You must manually update the server using the POK-manager.sh script with:"
   echo "⚠️           ./POK-manager.sh -stop <instance_name>"

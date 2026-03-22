@@ -1,0 +1,10 @@
+* text=auto eol=lf
+*.sh text eol=lf
+*.bats text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.ini text eol=lf
+dockerfile text eol=lf
+require_files/*.dll binary

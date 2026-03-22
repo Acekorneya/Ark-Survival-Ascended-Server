@@ -1,5 +1,10 @@
 #!/bin/bash
-source /home/pok/scripts/common.sh
+#
+# Reusable RCON command helpers shared by monitor, restart, and CLI wrappers.
+
+POK_SCRIPTS_DIR="${POK_SCRIPTS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/common.sh"
 
 # Define RCON commands as functions
 saveWorld() {
@@ -92,17 +97,6 @@ interactive_mode() {
     main "$cmd" "$args"
   done
 }
-
-# Function to check PDB availability and download pdb-sym2addr-rs
-full_status_setup() {
-  echo "Full status setup no longer requires extracting credentials."
-  return 0
-}
-
-full_status_first_run() {
-  return 0
-}
-
 
 # Display full server status
 full_status_display() {

@@ -1,19 +1,18 @@
 #!/bin/bash
-source /home/pok/scripts/common.sh
-source /home/pok/scripts/rcon_commands.sh
-# Get the current build ID at the start to ensure it's defined for later use
-current_build_id=$(get_current_build_id)
+#
+# Update monitor worker. Coordinates player warnings, restart orchestration,
+# and the handoff into either legacy lock flow or master/follower coordination.
+
+POK_SCRIPTS_DIR="${POK_SCRIPTS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/common.sh"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/rcon_commands.sh"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/update_coordination.sh"
+
 LOCK_HELD=false
 TEMP_DOWNLOAD_DIR=""
-
-case "${UPDATE_SERVER^^}" in
-  TRUE|YES|1)
-    ;;
-  *)
-    echo "[INFO] UPDATE_SERVER disabled; skipping update workflow."
-    exit 0
-    ;;
-esac
 
 # Note: RESTART_NOTICE_MINUTES is set by the user in docker-compose.yaml
 # We'll use it directly in the script with appropriate defaults where needed
@@ -64,9 +63,6 @@ cleanup() {
   # Return the original exit code
   exit $exit_code
 }
-
-# Set up trap to call cleanup on exit (including normal exit, crashes, and signals)
-trap cleanup EXIT INT TERM
 
 # Function to check if the server needs to be updated - enhanced with dirty flag support
 server_needs_update() {
@@ -285,89 +281,135 @@ trigger_container_restart() {
   exit 1
 }
 
-# Main update logic
-echo "[INFO] Checking for ARK server updates..."
+main() {
+  prepare_runtime_env
+  current_build_id=$(get_current_build_id)
+  update_coordination_cleanup || true
 
-# First check for and remove any stale lock files
-remove_stale_lock
+  if ! env_value_is_truthy "${UPDATE_SERVER:-FALSE}"; then
+    echo "[INFO] UPDATE_SERVER disabled; skipping update workflow."
+    exit 0
+  fi
 
-# Check if update is needed using the enhanced function
-if server_needs_update; then
-  echo "[INFO] Server update/restart required: Current build ID: $current_build_id, Installed build ID: $(get_build_id_from_acf)"
-  
-  # Check if this is just a dirty flag restart (no actual update needed)
-  if has_dirty_flag; then
-    echo "[INFO] This instance needs restart due to server files updated by another instance"
-    echo "[INFO] No download required - just restarting to load updated files"
-    
-    # Clear the dirty flag since we're handling it
-    clear_dirty_flag
-    
-    # Notify players about the restart 
-    # Use user's configured restart notice time, default to 5 minutes if not set
-    dirty_restart_notice=${RESTART_NOTICE_MINUTES:-5}
-    echo "[INFO] Notifying players about restart (dirty flag) with $dirty_restart_notice minute notice"
-    notify_players_of_update $dirty_restart_notice
-    
-    echo "[INFO] Countdown completed. Preparing server for restart..."
-    shutdown_server_for_update
-    trigger_container_restart "DIRTY_RESTART" "$current_build_id"
-  else
-    # This is an actual update that we want to apply on next container startup
-    echo "[INFO] Actual server update required - will restart container and apply on startup"
-    
-    # Attempt to acquire the update lock using common.sh function
-    if ! acquire_update_lock; then
-      echo "[WARNING] Another instance is coordinating the update. Waiting for it to finish..."
-      
-      # Wait for the update to complete
-      if wait_for_update_lock; then
-        echo "[INFO] Peer released the update lock. Re-checking if restart is still required..."
-        
-        # Check if the server is now up to date
-        if ! server_needs_update; then
-          echo "[INFO] Server is now up to date. No restart needed."
+  trap cleanup EXIT INT TERM
+
+  echo "[INFO] Checking for ARK server updates..."
+  remove_stale_lock
+
+  if server_needs_update; then
+    echo "[INFO] Server update/restart required: Current build ID: $current_build_id, Installed build ID: $(get_build_id_from_acf)"
+
+    if has_dirty_flag; then
+      echo "[INFO] This instance needs restart due to server files updated by another instance"
+      echo "[INFO] No download required - just restarting to load updated files"
+
+      clear_dirty_flag
+
+      local dirty_restart_notice
+      dirty_restart_notice=${RESTART_NOTICE_MINUTES:-5}
+      echo "[INFO] Notifying players about restart (dirty flag) with $dirty_restart_notice minute notice"
+      notify_players_of_update $dirty_restart_notice
+
+      echo "[INFO] Countdown completed. Preparing server for restart..."
+      shutdown_server_for_update
+      trigger_container_restart "DIRTY_RESTART" "$current_build_id"
+    elif update_coordination_enabled; then
+      # Coordinated multi-instance path. The configured master is the only
+      # instance allowed to lead the shared update/startup cycle.
+      if update_coordination_is_master_role; then
+        if ! update_coordination_begin_cycle "$current_build_id"; then
+          echo "[WARNING] Unable to create a new coordination cycle right now. Another cycle may already be active."
           exit 0
-        else
+        fi
+
+        echo "[INFO] This instance is the configured coordination master and will lead the shared update cycle"
+
+        local update_notice_minutes
+        update_notice_minutes=${RESTART_NOTICE_MINUTES:-30}
+        echo "[INFO] Notifying players about update with $update_notice_minutes minute notice"
+        notify_players_of_update $update_notice_minutes
+
+        echo "[INFO] Countdown completed. Stopping server for update..."
+        shutdown_server_for_update
+        echo "[INFO] Server shutdown confirmed. Update will be applied during container startup."
+        trigger_container_restart "UPDATE_RESTART" "$current_build_id"
+      else
+        echo "[INFO] This instance is a coordination follower. Waiting briefly for the configured master to begin the cycle..."
+
+        if ! update_coordination_wait_for_master_cycle "$current_build_id"; then
+          echo "[WARNING] No active master-led cycle detected yet. Leaving this follower running and waiting for the next update check."
+          exit 0
+        fi
+
+        echo "[INFO] Master-led cycle detected. Preparing this follower to restart and wait for the leader-ready signal."
+
+        local follower_notice_minutes
+        follower_notice_minutes=${RESTART_NOTICE_MINUTES:-30}
+        echo "[INFO] Notifying players about update with $follower_notice_minutes minute notice"
+        notify_players_of_update $follower_notice_minutes
+
+        echo "[INFO] Countdown completed. Preparing follower for coordinated restart..."
+        shutdown_server_for_update
+        trigger_container_restart "FOLLOWER_COORDINATION_RESTART" "$current_build_id"
+      fi
+    else
+      # Legacy-compatible path for single-instance installs or setups that do
+      # not participate in master/follower coordination.
+      echo "[INFO] Actual server update required - will restart container and apply on startup"
+
+      if ! acquire_update_lock; then
+        echo "[WARNING] Another instance is coordinating the update. Waiting for it to finish..."
+
+        if wait_for_update_lock; then
+          echo "[INFO] Peer released the update lock. Re-checking if restart is still required..."
+
+          if ! server_needs_update; then
+            echo "[INFO] Server is now up to date. No restart needed."
+            exit 0
+          fi
+
           echo "[WARNING] Server still reports an outdated build. Attempting to coordinate update again."
           if ! acquire_update_lock; then
             echo "[ERROR] Unable to acquire update lock after peer completed update"
             exit 1
           fi
+        else
+          echo "[ERROR] Timed out waiting for update lock. Aborting update."
+          exit 1
         fi
-      else
-        echo "[ERROR] Timed out waiting for update lock. Aborting update."
-        exit 1
       fi
+
+      LOCK_HELD=true
+      echo "[INFO] Acquired update lock. Preparing graceful shutdown before container restart..."
+
+      local update_notice_minutes
+      update_notice_minutes=${RESTART_NOTICE_MINUTES:-30}
+      echo "[INFO] Notifying players about update with $update_notice_minutes minute notice"
+      notify_players_of_update $update_notice_minutes
+
+      echo "[INFO] Countdown completed. Stopping server for update..."
+      shutdown_server_for_update
+
+      echo "[INFO] Server shutdown confirmed. Update will be applied during container startup."
+
+      if [ "$LOCK_HELD" = true ]; then
+        release_update_lock
+        LOCK_HELD=false
+      fi
+
+      trigger_container_restart "UPDATE_RESTART" "$current_build_id"
     fi
-
-    # We now have the update lock and will hand off file download to startup sequence
-    LOCK_HELD=true
-    echo "[INFO] Acquired update lock. Preparing graceful shutdown before container restart..."
-
-    # Notify players about the upcoming update and initiate countdown
-    update_notice_minutes=${RESTART_NOTICE_MINUTES:-30}
-    echo "[INFO] Notifying players about update with $update_notice_minutes minute notice"
-    notify_players_of_update $update_notice_minutes
-
-    echo "[INFO] Countdown completed. Stopping server for update..."
-    shutdown_server_for_update
-
-    echo "[INFO] Server shutdown confirmed. Update will be applied during container startup."
+  else
+    echo "[INFO] Server is already running the latest build ID: $current_build_id; no update needed."
 
     if [ "$LOCK_HELD" = true ]; then
       release_update_lock
       LOCK_HELD=false
     fi
+  fi
+  echo "[INFO] Update check completed."
+}
 
-    trigger_container_restart "UPDATE_RESTART" "$current_build_id"
-  fi
-else
-  echo "[INFO] Server is already running the latest build ID: $current_build_id; no update needed."
-  
-  if [ "$LOCK_HELD" = true ]; then
-    release_update_lock
-    LOCK_HELD=false
-  fi
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
 fi
-echo "[INFO] Update check completed."

@@ -1,28 +1,51 @@
 #!/bin/bash
+#
+# Shared container runtime helpers.
+# This file is intended to be sourced by other scripts and must not perform
+# side effects during load.
 
-# Define ARK server and Proton environment variables
-USERNAME=anonymous
-APPID=2430930
-ASA_DIR="/home/pok/arkserver"
-PERSISTENT_ACF_FILE="$ASA_DIR/appmanifest_$APPID.acf"
-STEAM_COMPAT_DATA_PATH="/home/pok/.steam/steam/steamapps/compatdata/${APPID}"
-STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam"
-PID_FILE="/home/pok/${INSTANCE_NAME}_ark_server.pid"
-TEMP_DOWNLOAD_ROOT="${TEMP_DOWNLOAD_ROOT:-/tmp}"
-TEMP_DOWNLOAD_PREFIX="arkserver_download"
+env_value_is_truthy() {
+  local value="${1:-}"
 
-# RCON connection details
-RCON_HOST="localhost"
-RCON_PORT=${RCON_PORT} # Default RCON port if not set in docker-compose
-RCON_PASSWORD=${SERVER_ADMIN_PASSWORD} # Server admin password used as RCON password
-RCON_PATH="/usr/local/bin/rcon-cli" # Path to the RCON executable (installed in Dockerfile)
-EOS_CLIENT_ID="xyza7891muomRmynIIHaJB9COBKkwj6n"
-EOS_CLIENT_SECRET="PP5UGxysEieNfSrEicaD1N2Bb3TdXuD7xHYcsdUHZ7s"
-EOS_DEPLOYMENT_ID="ad9a8feffb3b4b2ca315546f038c3ae2"
-EOS_BASIC_AUTH="Basic eHl6YTc4OTFtdW9tUm15bklJSGFKQjlDT0JLa3dqNm46UFA1VUd4eXNFaWVOZlNyRWljYUQxTjJCYjNUZFh1RDd4SFljc2RVSFo3cw=="
-EOS_MATCHMAKING_BASE="https://api.epicgames.dev/wildcard/matchmaking/v1"
-export STEAM_COMPAT_DATA_PATH=${STEAM_COMPAT_DATA_PATH}
-export STEAM_COMPAT_CLIENT_INSTALL_PATH=${STEAM_COMPAT_CLIENT_INSTALL_PATH}
+  case "${value^^}" in
+    TRUE|YES|1)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+common_init() {
+  USERNAME=anonymous
+  APPID=2430930
+  ASA_DIR="/home/pok/arkserver"
+  PERSISTENT_ACF_FILE="$ASA_DIR/appmanifest_$APPID.acf"
+  STEAM_COMPAT_DATA_PATH="/home/pok/.steam/steam/steamapps/compatdata/${APPID}"
+  STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam"
+  PID_FILE="/home/pok/${INSTANCE_NAME}_ark_server.pid"
+  TEMP_DOWNLOAD_ROOT="${TEMP_DOWNLOAD_ROOT:-/tmp}"
+  TEMP_DOWNLOAD_PREFIX="arkserver_download"
+
+  RCON_HOST="localhost"
+  RCON_PORT=${RCON_PORT}
+  RCON_PASSWORD=${SERVER_ADMIN_PASSWORD}
+  RCON_PATH="/usr/local/bin/rcon-cli"
+  EOS_CLIENT_ID="xyza7891muomRmynIIHaJB9COBKkwj6n"
+  EOS_CLIENT_SECRET="PP5UGxysEieNfSrEicaD1N2Bb3TdXuD7xHYcsdUHZ7s"
+  EOS_DEPLOYMENT_ID="ad9a8feffb3b4b2ca315546f038c3ae2"
+  EOS_BASIC_AUTH="Basic eHl6YTc4OTFtdW9tUm15bklJSGFKQjlDT0JLa3dqNm46UFA1VUd4eXNFaWVOZlNyRWljYUQxTjJCYjNUZFh1RDd4SFljc2RVSFo3cw=="
+  EOS_MATCHMAKING_BASE="https://api.epicgames.dev/wildcard/matchmaking/v1"
+  export STEAM_COMPAT_DATA_PATH=${STEAM_COMPAT_DATA_PATH}
+  export STEAM_COMPAT_CLIENT_INSTALL_PATH=${STEAM_COMPAT_CLIENT_INSTALL_PATH}
+}
+
+prepare_runtime_env() {
+  common_init
+  clean_format_mod_ids
+  validate_server_password
+}
 
 # Function to initialize the Proton prefix
 initialize_proton_prefix() {
@@ -314,6 +337,24 @@ clear_update_flag() {
   fi
 }
 
+save_complete_check() {
+  local log_file="$ASA_DIR/ShooterGame/Saved/Logs/ShooterGame.log"
+  if tail -n 10 "$log_file" | grep -q "World Save Complete"; then
+    echo "Save operation completed."
+    return 0
+  fi
+  return 1
+}
+
+server_stopped_check() {
+  local log_file="$ASA_DIR/ShooterGame/Saved/Logs/ShooterGame.log"
+  if tail -n 20 "$log_file" | grep -q "Server stopped"; then
+    echo "Server stopped properly."
+    return 0
+  fi
+  return 1
+}
+
 # Function to clean and format MOD_IDS
 clean_format_mod_ids() {
   if [ -n "$MOD_IDS" ]; then
@@ -418,6 +459,9 @@ get_build_id_from_acf() {
   return 0
 }
 
+# Legacy lock/dirty-flag helpers retained for single-instance and backward-
+# compatible update paths. The master/follower shared-file flow lives in
+# update_coordination.sh.
 # Check the lock status with enhanced details about the lock holder
 check_lock_status() {
   local lock_file="$ASA_DIR/updating.flag"
@@ -1182,10 +1226,6 @@ cleanup_all_flags() {
   echo "[INFO] Performing aggressive cleanup of all flags..."
   cleanup_legacy_locks "aggressive"
 }
-
-# Execute initialization functions
-clean_format_mod_ids
-validate_server_password
 
 # Function to install ArkServerAPI
 install_ark_server_api() {

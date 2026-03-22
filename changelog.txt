@@ -1,4 +1,16 @@
-## Version 2.1.79 (Latest)
+## Version 2.1.80 (Latest)
+- Refactored the manager/runtime scripts for cleaner command handling, safer sourcing, and better maintainability while preserving existing behavior.
+- Expanded automated validation, fixed log handling, API log tailing, and startup readiness checks, and added an interactive `-delete` command for safe instance removal.
+- Added a built-in internal `/healthz` endpoint with image-level Docker health checks for Docker and Kubernetes probe support #122.
+- Added health-state-aware self-healing so the internal monitor restarts after consecutive hard failures, gives long-lived `degraded` RCON failures one delayed recovery restart, and then keeps the server running with clear warnings if local RCON is still broken.
+- Added manager-assigned `MASTER`/`FOLLOWER` update coordination for multi-instance auto-update setups so only one container updates shared server files, followers wait for leader readiness, and failed cycles stop after three total leader attempts with shared diagnostics.
+- Improved coordinated `-start -all` and `-restart -all` bring-up so the leader starts first, followers wait for leader readiness, restart subsets can promote a new leader when needed, and shutdown now reuses the same shared countdown visuals/timing as enhanced restart.
+- Documented the no-env fallback for Kubernetes/external orchestrators and added a clearer follower-start error when a compose file is started manually with `UPDATE_COORDINATION_ROLE=FOLLOWER`.
+- Added configurable `SAVE_WAIT_SECONDS` save timing for manager stop/shutdown flows, removed duplicate quick saves during `-stop -all`, and made older managed compose files pick up the default automatically on start #93.
+- Manager stop/shutdown now skips save dispatch when a container exists but the ASA server has not finished startup yet, avoiding pointless save waits before `ShooterGame.log` or the server process exists.
+- Manager stop/shutdown now uses the container health probe for save decisions: `ok` and `degraded` attempt `saveworld`, `starting`/`unhealthy` skip the save, RCON-disabled healthy servers warn and stop directly, and save confirmation looks for the exact `World Save Complete. Took:` log entry.
+
+## Version 2.1.79 (Previous)
 - **CRITICAL FIX**: Fixed major server startup delay (10-20 minutes on slow disks) by removing redundant recursive directory permission checks in `init.sh` and `common.sh`.
 - **CRITICAL FIX**: Fixed missing server audio dependency by automatically injecting `xaudio2_9redist.dll` (and renaming a copy to `xaudio2_9.dll`) into the `ShooterGame/Binaries/Win64/` directory during container startup, preventing server crashes.
 - Improved Dockerfile to copy `Require_Files` directly into the container during the build process.

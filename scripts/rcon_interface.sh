@@ -1,9 +1,14 @@
 #!/bin/bash
+#
+# CLI-style wrapper for issuing RCON commands inside the container.
 
-# Source RCON command definitions and common functions
-source /home/pok/scripts/rcon_commands.sh
-source /home/pok/scripts/common.sh
-source /home/pok/scripts/shutdown_server.sh
+POK_SCRIPTS_DIR="${POK_SCRIPTS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/rcon_commands.sh"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/common.sh"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/shutdown_server.sh"
 
 # Define shutdown flag file location
 SHUTDOWN_COMPLETE_FLAG="/home/pok/shutdown_complete.flag"
@@ -222,6 +227,7 @@ usage() {
 
 # Main function
 main() {
+  prepare_runtime_env
   local command="$1"
   shift # Remove the command from the arguments list
 

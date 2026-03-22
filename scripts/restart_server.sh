@@ -1,20 +1,33 @@
 #!/bin/bash
-source /home/pok/scripts/common.sh
-source /home/pok/scripts/shutdown_server.sh
+#
+# In-container coordinated restart flow with countdown handling.
 
-RESTART_MODE="$1" # Immediate or countdown
+POK_SCRIPTS_DIR="${POK_SCRIPTS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/common.sh"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/shutdown_server.sh"
+
+RESTART_MODE=""
 RESTART_NOTICE_MINUTES="${RESTART_NOTICE_MINUTES:-5}" # Default to 5 minutes for countdown
 EXIT_ON_API_RESTART="${EXIT_ON_API_RESTART:-TRUE}" # Default to TRUE - controls container exit behavior
 SHUTDOWN_COMPLETE_FLAG="/home/pok/shutdown_complete.flag"
 SHOW_ANIMATED_COUNTDOWN="${SHOW_ANIMATED_COUNTDOWN:-FALSE}" # Can be set to TRUE by POK-manager.sh
 UPDATE_RESTART="${UPDATE_RESTART:-FALSE}" # Set to TRUE when called after an update
 
-# Check if we're being called after an update
-if [ -f "/home/pok/restart_reason.flag" ] && [ "$(cat /home/pok/restart_reason.flag)" = "UPDATE_RESTART" ]; then
-  UPDATE_RESTART="TRUE"
-  rm -f "/home/pok/restart_reason.flag"
-  echo "🔄 Server restarting after update..."
-fi
+initialize_restart_context() {
+  RESTART_MODE="${1:-}"
+  RESTART_NOTICE_MINUTES="${RESTART_NOTICE_MINUTES:-5}"
+  EXIT_ON_API_RESTART="${EXIT_ON_API_RESTART:-TRUE}"
+  SHOW_ANIMATED_COUNTDOWN="${SHOW_ANIMATED_COUNTDOWN:-FALSE}"
+  UPDATE_RESTART="${UPDATE_RESTART:-FALSE}"
+
+  if [ -f "/home/pok/restart_reason.flag" ] && [ "$(cat /home/pok/restart_reason.flag)" = "UPDATE_RESTART" ]; then
+    UPDATE_RESTART="TRUE"
+    rm -f "/home/pok/restart_reason.flag"
+    echo "🔄 Server restarting after update..."
+  fi
+}
 
 # Function to display animated countdown - same as in rcon_interface.sh
 display_animated_countdown() {
@@ -364,125 +377,94 @@ wait_for_shutdown_completion() {
   fi
 }
 
-if [ "$RESTART_MODE" == "immediate" ]; then
-  echo "Attempting immediate restart..."
-  
-  # If server is running, shut it down first
-  if is_process_running; then
-    echo "Server is running. Initiating shutdown before restart..."
-    shutdown_handler false
-    
-    # Wait for server to fully shut down
-    echo "Waiting for server to fully shut down..."
-    local wait_time=0
-    while is_process_running && [ $wait_time -lt 60 ]; do
-      sleep 5
-      wait_time=$((wait_time + 5))
-      echo "Still waiting for shutdown... ($wait_time seconds elapsed)"
-    done
-    
-    # Force kill if still running after 60 seconds
-    if is_process_running; then
-      echo "Server still running after 60 seconds. Forcing shutdown..."
-      local pid=$(ps aux | grep -E "AsaApiLoader.exe|ArkAscendedServer.exe" | grep -v grep | awk '{print $2}' | head -1)
-      if [ -n "$pid" ]; then
-        kill -9 $pid
-        sleep 2
-      fi
-    fi
-  else
-    echo "Server is already down. Proceeding with restart..."
-  fi
-  
-  # Clean up environment thoroughly
-  cleanup_environment
-  
-  # Exit container to restart
-  echo "Triggering container restart for immediate server restart..."
-  exit_container_for_restart "IMMEDIATE_RESTART"
-else
-  echo "Scheduled restart with a countdown of $RESTART_NOTICE_MINUTES minutes..."
+main() {
+  prepare_runtime_env
+  initialize_restart_context "$1"
 
-  # For update restarts, use a special handling approach
-  if [ "$UPDATE_RESTART" = "TRUE" ]; then
-    echo "🔄 Restart requested after update - handling with update-specific protocol"
-    
-    # For update restarts, we don't need to notify again as update_server.sh already did countdown
-    echo "Server is restarting after update..."
-    
-    # Clean up environment thoroughly
-    cleanup_environment
-    
-    # Exit container to trigger restart for a clean update
-    exit_container_for_restart "UPDATE_RESTART_COMPLETED"
-  # For API mode with EXIT_ON_API_RESTART=TRUE, handle shutdown and container restart differently
-  elif [ "${API}" = "TRUE" ] && [ "${EXIT_ON_API_RESTART}" = "TRUE" ]; then
-    echo "API mode with container restart strategy detected"
-    echo "Will fully complete shutdown sequence before container restart"
-    
-    # Use the API restart flag to change behavior of shutdown sequence
-    # This ensures all RCON commands complete before container restart
-    export API_CONTAINER_RESTART="TRUE"
-    
-    # Start the shutdown process in background if we're showing the animated countdown
-    if [ "$SHOW_ANIMATED_COUNTDOWN" = "TRUE" ]; then
-      initiate_shutdown "$RESTART_NOTICE_MINUTES" &
-      SHUTDOWN_PID=$!
-      
-      # Show animated countdown
-      display_animated_countdown "$RESTART_NOTICE_MINUTES"
-      
-      # Wait for the background process to finish
-      wait $SHUTDOWN_PID 2>/dev/null || true
+  if [ "$RESTART_MODE" == "immediate" ]; then
+    echo "Attempting immediate restart..."
+
+    if is_process_running; then
+      echo "Server is running. Initiating shutdown before restart..."
+      shutdown_handler false
+
+      echo "Waiting for server to fully shut down..."
+      local wait_time=0
+      while is_process_running && [ $wait_time -lt 60 ]; do
+        sleep 5
+        wait_time=$((wait_time + 5))
+        echo "Still waiting for shutdown... ($wait_time seconds elapsed)"
+      done
+
+      if is_process_running; then
+        echo "Server still running after 60 seconds. Forcing shutdown..."
+        local pid
+        pid=$(ps aux | grep -E "AsaApiLoader.exe|ArkAscendedServer.exe" | grep -v grep | awk '{print $2}' | head -1)
+        if [ -n "$pid" ]; then
+          kill -9 $pid
+          sleep 2
+        fi
+      fi
     else
-      # Otherwise, just run the shutdown directly
-      initiate_shutdown "$RESTART_NOTICE_MINUTES"
+      echo "Server is already down. Proceeding with restart..."
     fi
-    
-    # Wait for shutdown flag to confirm completion
-    if wait_for_shutdown_completion; then
-      # After shutdown completes, clean up and exit to trigger container restart
+
+    cleanup_environment
+    echo "Triggering container restart for immediate server restart..."
+    exit_container_for_restart "IMMEDIATE_RESTART"
+  else
+    echo "Scheduled restart with a countdown of $RESTART_NOTICE_MINUTES minutes..."
+
+    if [ "$UPDATE_RESTART" = "TRUE" ]; then
+      echo "🔄 Restart requested after update - handling with update-specific protocol"
+      echo "Server is restarting after update..."
       cleanup_environment
       exit_container_for_restart "UPDATE_RESTART_COMPLETED"
-    else
-      echo "WARNING: Shutdown did not complete properly. Forcing container restart anyway."
-      cleanup_environment
-      exit_container_for_restart "UPDATE_RESTART_FAILED"
-    fi
-  else
-    # For non-API mode or if EXIT_ON_API_RESTART=FALSE, use standard restart
-    # Start the shutdown process in background if we're showing the animated countdown
-    if [ "$SHOW_ANIMATED_COUNTDOWN" = "TRUE" ]; then
-      # Set restart context for proper messages
+    elif [ "${API}" = "TRUE" ] && [ "${EXIT_ON_API_RESTART}" = "TRUE" ]; then
+      echo "API mode with container restart strategy detected"
+      echo "Will fully complete shutdown sequence before container restart"
       export API_CONTAINER_RESTART="TRUE"
-      
-      # Run shutdown in background
-      initiate_shutdown "$RESTART_NOTICE_MINUTES" &
-      SHUTDOWN_PID=$!
-      
-      # Show animated countdown
-      display_animated_countdown "$RESTART_NOTICE_MINUTES"
-      
-      # Wait for background process to finish
-      wait $SHUTDOWN_PID 2>/dev/null || true
-    else
-      # Otherwise, set the context and run shutdown directly
-      export API_CONTAINER_RESTART="TRUE"
-      initiate_shutdown "$RESTART_NOTICE_MINUTES"
-    fi
-    
-    # Wait for shutdown flag to confirm completion
-    wait_for_shutdown_completion
-    
-    # Clean up environment thoroughly
-    cleanup_environment
-    
-    # Restart server
-    restart_server_direct
-  fi
-fi
 
-# First send a notification about the restart
-if [ "${SKIP_INITIAL_NOTIFICATION}" != "TRUE" ]; then
-  send_rcon_command "ServerChat Server restarting in $RESTART_NOTICE_MINUTES minute(s)"
+      if [ "$SHOW_ANIMATED_COUNTDOWN" = "TRUE" ]; then
+        initiate_shutdown "$RESTART_NOTICE_MINUTES" &
+        SHUTDOWN_PID=$!
+        display_animated_countdown "$RESTART_NOTICE_MINUTES"
+        wait $SHUTDOWN_PID 2>/dev/null || true
+      else
+        initiate_shutdown "$RESTART_NOTICE_MINUTES"
+      fi
+
+      if wait_for_shutdown_completion; then
+        cleanup_environment
+        exit_container_for_restart "UPDATE_RESTART_COMPLETED"
+      else
+        echo "WARNING: Shutdown did not complete properly. Forcing container restart anyway."
+        cleanup_environment
+        exit_container_for_restart "UPDATE_RESTART_FAILED"
+      fi
+    else
+      if [ "$SHOW_ANIMATED_COUNTDOWN" = "TRUE" ]; then
+        export API_CONTAINER_RESTART="TRUE"
+        initiate_shutdown "$RESTART_NOTICE_MINUTES" &
+        SHUTDOWN_PID=$!
+        display_animated_countdown "$RESTART_NOTICE_MINUTES"
+        wait $SHUTDOWN_PID 2>/dev/null || true
+      else
+        export API_CONTAINER_RESTART="TRUE"
+        initiate_shutdown "$RESTART_NOTICE_MINUTES"
+      fi
+
+      wait_for_shutdown_completion
+      cleanup_environment
+      restart_server_direct
+    fi
+  fi
+
+  if [ "${SKIP_INITIAL_NOTIFICATION}" != "TRUE" ]; then
+    send_rcon_command "ServerChat Server restarting in $RESTART_NOTICE_MINUTES minute(s)"
+  fi
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
 fi

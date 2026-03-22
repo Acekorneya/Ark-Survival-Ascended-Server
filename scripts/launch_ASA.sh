@@ -1,10 +1,40 @@
 #!/bin/bash
-source /home/pok/scripts/common.sh
-source /home/pok/scripts/rcon_commands.sh
-source /home/pok/scripts/shutdown_server.sh
+#
+# ARK server launcher and startup verifier. This is the authoritative path for
+# first-process startup, log monitoring, and leader-ready signaling.
 
-# Trap SIGTERM and call shutdown_handler when received
-trap shutdown_handler SIGTERM
+POK_SCRIPTS_DIR="${POK_SCRIPTS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/common.sh"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/rcon_commands.sh"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/shutdown_server.sh"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/update_coordination.sh"
+
+LAUNCH_ASA_ADVERTISING_MARKER="Server has completed startup and is now advertising for join"
+LAUNCH_ASA_FULL_STARTUP_MARKER="Full Startup:"
+LAUNCH_ASA_READY_MARKER_TYPE=""
+
+launch_asa_detect_ready_marker() {
+  local log_file="$1"
+
+  LAUNCH_ASA_READY_MARKER_TYPE=""
+  [ -f "$log_file" ] || return 1
+
+  if grep -qF "$LAUNCH_ASA_FULL_STARTUP_MARKER" "$log_file"; then
+    LAUNCH_ASA_READY_MARKER_TYPE="full_startup"
+    return 0
+  fi
+
+  if grep -qF "$LAUNCH_ASA_ADVERTISING_MARKER" "$log_file"; then
+    LAUNCH_ASA_READY_MARKER_TYPE="advertising"
+    return 0
+  fi
+
+  return 1
+}
 
 update_game_user_settings() {
   local ini_file="$ASA_DIR/ShooterGame/Saved/Config/WindowsServer/GameUserSettings.ini"
@@ -815,277 +845,97 @@ start_server() {
   echo "This may take a few minutes. Please be patient..."
   echo ""
   
-  # Modified display_server_logs function to avoid duplication
   display_server_logs() {
+    local game_log="${ASA_DIR}/ShooterGame/Saved/Logs/ShooterGame.log"
+    local api_log_dir="${ASA_DIR}/ShooterGame/Binaries/Win64/logs"
+    local api_log=""
+    local max_wait=120
+    local check_interval=3
+    local elapsed=0
+    local api_elapsed=0
+
     echo "📊 MONITORING SERVER LOGS"
     echo "---------------------------------------------"
-    
-    # Define log paths
-    local game_log="${ASA_DIR}/ShooterGame/Saved/Logs/ShooterGame.log"
-    local max_wait=60  # Maximum seconds to wait for logs
-    local check_interval=2
-    local elapsed=0
-    
-    # Clear variables to prevent any accidental reuse
+
     unset API_TAIL_PID
     unset GAME_TAIL_PID
-    
-    # Run all log display operations in the background to ensure script continues
-    (
-    # Branch logic based on API setting
+    unset LOGS_DISPLAY_PID
+    unset TAIL_PID
+
     if [ "${API}" = "TRUE" ]; then
-      # Define API log paths only when API is enabled
-      local api_log="${ASA_DIR}/ShooterGame/Binaries/Win64/logs/AsaApi.log"
-      local api_folder="${ASA_DIR}/ShooterGame/Binaries/Win64/logs"
-      local found_api_log=""
-      
-      # First, check and display AsaApi logs (priority)
       echo "🔍 Looking for AsaApi logs (API is enabled)..."
-      
-      # Define spinner characters - spinning dots animation
-      local spinner=('.' '..' '...' '.' '..' '...')
-      local spinner_idx=0
-      local spinner_check_count=0
-      
-      while [ $elapsed -lt $max_wait ]; do
-        # Update spinner
-        local current_spinner=${spinner[$spinner_idx]}
-        spinner_idx=$(( (spinner_idx + 1) % ${#spinner[@]} ))
-      
-        if [ -f "$api_log" ]; then
-          # Clear the spinner line before displaying completion message
-          printf "\r                                                               \r"
-          found_api_log="$api_log"
-          echo "✅ Found AsaApi logs: $api_log"
-          break
-        elif [ -d "$api_folder" ] && [ "$(ls -A $api_folder 2>/dev/null | grep -i .log)" ]; then
-          # If AsaApi.log doesn't exist but other logs exist in the folder
-          local other_api_log=$(ls -t $api_folder/*.log 2>/dev/null | head -1)
-          if [ -n "$other_api_log" ]; then
-            # Clear the spinner line before displaying completion message
-            printf "\r                                                               \r"
-            found_api_log="$other_api_log"
-            echo "✅ Found alternative API log: $(basename $other_api_log)"
-            break
-          fi
-        fi
-        
-        # Display status with spinner (on a single line)
-        printf "\r%s Looking for AsaApi logs... (%s seconds elapsed)      " "${current_spinner}" "$elapsed"
-        
-        sleep 0.2  # Medium speed for spinner animation
-        
-        # Increment elapsed time every 10 spinner updates (2 seconds)
-        spinner_check_count=$((spinner_check_count + 1))
-        if [ $spinner_check_count -ge 10 ]; then
-          elapsed=$((elapsed + check_interval))
-          spinner_check_count=0
-        fi
-      done
-      
-      # If API log is found, display it and wait for SERVER ID message
-      if [ -n "$found_api_log" ]; then
-        echo "---------------------------------------------"
-        echo "📋 ASAAPI LOG OUTPUT:"
-        echo "---------------------------------------------"
-        
-        # Use a named pipe for the API logs to enable monitoring for SERVER ID
-        local api_pipe="/tmp/asaapi_logs_pipe_$$"
-        mkfifo "$api_pipe"
-        
-        # Start tailing in the background and direct to both output and named pipe
-        tail -f "$found_api_log" | tee "$api_pipe" &
-        API_TAIL_PID=$!
-        
-        # Monitor the pipe for SERVER ID
-        (
-          local server_id_wait=180  # Wait up to 3 minutes for server ID
-          local server_id_detected=false
-          
-          while IFS= read -r line; do
-            if echo "$line" | grep -q "SERVER ID:"; then
-              server_id_detected=true
-              # Extract and save SERVER ID to a file for later use
-              echo "$line" | grep -o "SERVER ID: [0-9]*" | cut -d' ' -f3 > /tmp/ark_server_id
-              # Wait a bit more for subsequent logs after SERVER ID
-              sleep 2
-              # Kill the API log tail
-              kill $API_TAIL_PID 2>/dev/null || true
-              break
-            fi
-          done < "$api_pipe"
-          
-          # Clean up pipe
-          rm -f "$api_pipe"
-          
-          # Switch to game logs after finding SERVER ID or timeout
+      while [ $api_elapsed -lt $max_wait ]; do
+        api_log="$(find "$api_log_dir" \( -name "ArkApi_*.log" -o -name "AsaApi.log" \) -type f -printf "%T@ %p\n" 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2-)"
+        if [ -n "$api_log" ] && [ -f "$api_log" ]; then
           echo ""
-          if [ "$server_id_detected" = "true" ]; then
-            echo "✅ AsaApi SERVER ID detected, switching to ShooterGame logs..."
-          else
-            echo "⚠️ SERVER ID not detected in AsaApi logs, switching to ShooterGame logs anyway..."
+          echo "✅ Found AsaApi logs: $(basename "$api_log")"
+          echo "---------------------------------------------"
+          echo "📋 ASAAPI LOG OUTPUT:"
+          echo "---------------------------------------------"
+          if [ -s "$api_log" ]; then
+            cat "$api_log"
           fi
-          
-          # Wait for ShooterGame log file to appear
-          local shooter_wait=60
-          local shooter_elapsed=0
-          
-          # Define spinner characters - spinning dots animation
-          local spinner=('.' '..' '...' '.' '..' '...')
-          local spinner_idx=0
-          local spinner_check_count=0
-          
-          while [ $shooter_elapsed -lt $shooter_wait ]; do
-            # Update spinner
-            local current_spinner=${spinner[$spinner_idx]}
-            spinner_idx=$(( (spinner_idx + 1) % ${#spinner[@]} ))
-            
-            if [ -f "$game_log" ]; then
-              # Clear the spinner line before displaying completion message
-              printf "\r                                                               \r"
-              echo ""
-              echo "✅ Found ShooterGame logs: $game_log"
-              echo "---------------------------------------------"
-              echo "📋 ARK SERVER LOG OUTPUT (FULL LOG):"
-              echo "---------------------------------------------"
-              
-              # Display entire log once
-              if [ -s "$game_log" ]; then
-                cat "$game_log"
-                echo "---------------------------------------------"
-                echo "📋 CONTINUING LIVE LOGS:"
-                echo "---------------------------------------------"
-              fi
-              
-              # Then tail for new entries
-              tail -f "$game_log" &
-              GAME_TAIL_PID=$!
-              # Store PID for cleanup later
-              export TAIL_PID=$GAME_TAIL_PID
-              break
-            fi
-            
-            # Display status with spinner (on a single line)
-            printf "\r%s Looking for ShooterGame logs... (%s seconds elapsed)      " "${current_spinner}" "$shooter_elapsed"
-            
-            sleep 0.2  # Medium speed for spinner animation
-            
-            # Increment elapsed time every 10 spinner updates (2 seconds)
-            spinner_check_count=$((spinner_check_count + 1))
-            if [ $spinner_check_count -ge 10 ]; then
-              shooter_elapsed=$((shooter_elapsed + check_interval))
-              spinner_check_count=0
-            fi
-          done
-          
-          if [ $shooter_elapsed -ge $shooter_wait ] && [ ! -f "$game_log" ]; then
-            # Clear the spinner line before showing message
-            printf "\r                                                               \r"
-            echo "⚠️ No ShooterGame logs found after waiting. Server might still be starting up."
-          fi
-        ) &
-        
-      else
-        # If no API logs found, just wait for game logs
-        echo "⚠️ No AsaApi logs found after $max_wait seconds despite API being enabled"
-        fallback_to_game_logs
+          tail -n 0 -f "$api_log" &
+          API_TAIL_PID=$!
+          export API_TAIL_PID
+          break
+        fi
+        printf "\r🔍 Waiting for AsaApi logs... (%ds elapsed)      " "$api_elapsed"
+        sleep $check_interval
+        api_elapsed=$((api_elapsed + check_interval))
+      done
+
+      if [ $api_elapsed -ge $max_wait ] && [ ! -f "$api_log" ]; then
+        echo ""
+        echo "⚠️ No AsaApi logs found after ${max_wait}s."
       fi
-    else
-      # When API is disabled, just display game logs
-      echo "ℹ️ AsaApi is disabled (API=FALSE) - Only displaying ShooterGame logs"
-      fallback_to_game_logs
     fi
-    ) &
-    LOGS_DISPLAY_PID=$!
-    # Important: Add brief pause to allow log processes to start
-    sleep 2
-  }
-  
-  # Helper function to fall back to game logs when API logs aren't available
-  fallback_to_game_logs() {
-    local game_log="${ASA_DIR}/ShooterGame/Saved/Logs/ShooterGame.log"
-    local max_wait=60
-    local check_interval=2
-    local elapsed=0
-    
+
     echo "🔍 Looking for ShooterGame logs..."
-    
-    # Define spinner characters - spinning dots animation
-    local spinner=('.' '..' '...' '.' '..' '...')
-    local spinner_idx=0
-    local spinner_check_count=0
-    
     while [ $elapsed -lt $max_wait ]; do
-      # Update spinner
-      local current_spinner=${spinner[$spinner_idx]}
-      spinner_idx=$(( (spinner_idx + 1) % ${#spinner[@]} ))
-      
       if [ -f "$game_log" ]; then
-        # Clear the spinner line before displaying completion message
-        printf "\r                                                               \r"
-        echo "✅ Found ShooterGame logs: $game_log"
+        echo ""
+        echo "✅ Found ShooterGame.log"
         echo "---------------------------------------------"
-        echo "📋 ARK SERVER LOG OUTPUT (FULL LOG):"
+        echo "📋 ARK SERVER LOG OUTPUT:"
         echo "---------------------------------------------"
-        
-        # Display entire log once
         if [ -s "$game_log" ]; then
           cat "$game_log"
           echo "---------------------------------------------"
           echo "📋 CONTINUING LIVE LOGS:"
           echo "---------------------------------------------"
         fi
-        
-        # Then tail for new entries - RUN IN BACKGROUND
-        tail -f "$game_log" &
+        tail -n 0 -f "$game_log" &
         GAME_TAIL_PID=$!
-        # Store PID for cleanup later
+        export GAME_TAIL_PID
         export TAIL_PID=$GAME_TAIL_PID
-        break
+        return 0
       fi
-      
-      # Display status with spinner (on a single line)
-      printf "\r%s Looking for ShooterGame logs... (%s seconds elapsed)      " "${current_spinner}" "$elapsed"
-      
-      sleep 0.2  # Medium speed for spinner animation
-      
-      # Increment elapsed time every 10 spinner updates (2 seconds)
-      spinner_check_count=$((spinner_check_count + 1))
-      if [ $spinner_check_count -ge 10 ]; then
-        elapsed=$((elapsed + check_interval))
-        spinner_check_count=0
-      fi
+      printf "\r🔍 Waiting for ShooterGame.log... (%ds elapsed)      " "$elapsed"
+      sleep $check_interval
+      elapsed=$((elapsed + check_interval))
     done
-    
-    if [ $elapsed -ge $max_wait ] && [ ! -f "$game_log" ]; then
-      # Clear the spinner line before showing message
-      printf "\r                                                               \r"
-      echo "⚠️ No ShooterGame logs found after $max_wait seconds. Server might still be starting up."
-      echo "  → Once available, logs will be located at: $game_log"
-    fi
+
+    echo ""
+    echo "⚠️ ShooterGame.log not found after ${max_wait}s."
+    echo "  → Once available, logs will be located at: $game_log"
+    return 1
   }
-  
-  # Replace existing log tailing code with improved function
-  if [ "${API}" = "TRUE" ]; then
-    if [ -f "${ASA_DIR}/ShooterGame/Binaries/Win64/AsaApiLoader.exe" ]; then
-      # Launch with AsaApiLoader.exe
-      echo "🔌 Starting server with AsaApi enabled"
-      display_server_logs
-    else
-      # Launch with regular executable  
-      echo "⚠️ AsaApiLoader.exe not found, launching without AsaApi"
-      display_server_logs
-    fi
+
+  if [ "${API}" = "TRUE" ] && [ -f "${ASA_DIR}/ShooterGame/Binaries/Win64/AsaApiLoader.exe" ]; then
+    echo "🔌 Starting server with AsaApi enabled"
+  elif [ "${API}" = "TRUE" ]; then
+    echo "⚠️ AsaApiLoader.exe not found, launching without AsaApi"
   else
-    # Launch with regular executable if API is disabled
     echo "ℹ️ AsaApi is disabled, launching normal server"
-    display_server_logs
   fi
+  display_server_logs
 
   # Wait for the server to fully start, monitoring the log file
   echo ""
   echo "====== VERIFYING SERVER STARTUP ======"
   echo "[INFO] Waiting for server to become fully operational..."
+  update_coordination_cleanup || true
   local LOG_FILE="$ASA_DIR/ShooterGame/Saved/Logs/ShooterGame.log"
   local max_wait_time=600  # 10 minutes maximum wait time (increased from 300 to ensure we catch the log message)
   local wait_time=0
@@ -1134,6 +984,10 @@ start_server() {
   
   # Retry loop for server verification - with cleaner status updates
   while [ $wait_time -lt $max_wait_time ]; do
+    if update_coordination_enabled && update_coordination_is_active_leader; then
+      update_coordination_touch_heartbeat >/dev/null 2>&1 || true
+    fi
+
     # Check if server process is running
     if ! ps -p $SERVER_PID > /dev/null; then
       echo "[ERROR] Server process ($SERVER_PID) is no longer running!"
@@ -1155,15 +1009,23 @@ start_server() {
     
     # Check for successful server startup in logs
     if [ -f "$LOG_FILE" ]; then
-      if grep -q "Server has completed startup and is now advertising for join" "$LOG_FILE"; then
+      if launch_asa_detect_ready_marker "$LOG_FILE"; then
         if [ "$startup_message_displayed" = "false" ]; then
           # Use a clear message format that works well in all monitoring tools
           echo "=========================================================="
-          echo "[SUCCESS] Server has completed startup and is now advertising for join!"
+          if [ "$LAUNCH_ASA_READY_MARKER_TYPE" = "full_startup" ]; then
+            echo "[SUCCESS] Full Startup marker detected in ShooterGame.log!"
+          else
+            echo "[SUCCESS] ${LAUNCH_ASA_ADVERTISING_MARKER}!"
+          fi
           echo ""
           echo "🎮 ====== SERVER FULLY STARTED ====== 🎮"
           echo "[INFO] Server started successfully. PID: $SERVER_PID"
-          echo "[INFO] Server is now advertising for join and ready to accept connections!"
+          if [ "$LAUNCH_ASA_READY_MARKER_TYPE" = "full_startup" ]; then
+            echo "[INFO] Server completed the first full startup pass and is ready to release waiting followers."
+          else
+            echo "[INFO] Server is now advertising for join and ready to accept connections!"
+          fi
           
           # Display SERVER ID if available
           if [ "${API}" = "TRUE" ]; then
@@ -1210,6 +1072,10 @@ start_server() {
         # Update PID file with proper value
         echo "[INFO] Ensuring PID file is up-to-date with server PID: $SERVER_PID"
         echo "$SERVER_PID" > "$PID_FILE"
+
+        if update_coordination_enabled && update_coordination_is_active_leader; then
+          update_coordination_mark_ready || true
+        fi
         
         echo "[INFO] Server monitoring is now active."
         break
@@ -1218,10 +1084,12 @@ start_server() {
           # Server still starting up, only show log content at regular intervals using a monitoring-friendly format
           if [ $((wait_time % logs_display_interval)) -eq 0 ] && [ $wait_time -gt 0 ] && [ $wait_time -ne $logs_shown_timestamp ]; then
             echo "[INFO] Server initialization in progress (${wait_time}s elapsed)"
-            echo "[INFO] Waiting for: 'Server has completed startup and is now advertising for join'"
-            echo "[INFO] Recent log entries:"
-            tail -n 5 "$LOG_FILE"
-            echo ""
+            echo "[INFO] Waiting for startup completion markers: '${LAUNCH_ASA_FULL_STARTUP_MARKER}' or '${LAUNCH_ASA_ADVERTISING_MARKER}'"
+            if [ -z "${GAME_TAIL_PID:-}" ]; then
+              echo "[INFO] Recent log entries:"
+              tail -n 5 "$LOG_FILE"
+              echo ""
+            fi
             logs_shown_timestamp=$wait_time
           fi
         fi
@@ -1285,10 +1153,13 @@ start_server() {
 
 # Main function
 main() {
+  prepare_runtime_env
+  trap shutdown_handler SIGTERM
   determine_map_path
   update_game_user_settings
   start_server
 }
 
-# Start the main execution
-main
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

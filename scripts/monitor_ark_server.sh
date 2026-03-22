@@ -1,34 +1,19 @@
 #!/bin/bash
-source /home/pok/scripts/rcon_commands.sh
-source /home/pok/scripts/common.sh
-source /home/pok/scripts/shutdown_server.sh
+#
+# Long-running in-container monitor responsible for update polling, health-based
+# recovery, and restart orchestration after the server has launched.
 
-NO_RESTART_FLAG="/home/pok/shutdown.flag"
-RESTART_FLAG="/home/pok/restart.flag"
-SHUTDOWN_COMPLETE_FLAG="/home/pok/shutdown_complete.flag"
-INITIAL_STARTUP_DELAY=120  # Delay in seconds before starting the monitoring
-lock_file="$ASA_DIR/updating.flag"
-RECOVERY_LOG="/home/pok/server_recovery.log"
-EXIT_ON_API_RESTART="${EXIT_ON_API_RESTART:-TRUE}" # Default to TRUE - controls container exit behavior
-RESTART_TIMESTAMP_FILE="/tmp/restart_timestamp"
-
-case "${UPDATE_SERVER^^}" in
-  TRUE|YES|1)
-    ;;
-  *)
-    echo "[INFO] UPDATE_SERVER disabled; skipping update monitor."
-    exit 0
-    ;;
-esac
-
-# Clear stale stop flag so the monitor stays active after restarts
-if [ -f "/home/pok/stop_monitor.flag" ]; then
-  rm -f "/home/pok/stop_monitor.flag"
-fi
-
-# Note: RESTART_NOTICE_MINUTES is configured by user in docker-compose.yaml
-UPDATE_WINDOW_MINIMUM_TIME=${UPDATE_WINDOW_MINIMUM_TIME:-12:00 AM} # Default to "12:00 AM" if not set
-UPDATE_WINDOW_MAXIMUM_TIME=${UPDATE_WINDOW_MAXIMUM_TIME:-11:59 PM} # Default to "11:59 PM" if not set
+POK_SCRIPTS_DIR="${POK_SCRIPTS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/rcon_commands.sh"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/common.sh"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/shutdown_server.sh"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/monitor_health.sh"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/update_coordination.sh"
 
 # Check for restart timeout (nuclear option)
 check_restart_timeout() {
@@ -191,6 +176,93 @@ display_interval_info() {
   
   # Safely display
   display_monitor_status "🕒 Check interval: $description" "INFO"
+}
+
+format_monitor_elapsed() {
+  local total_seconds="${1:-0}"
+  local days=0
+  local hours=0
+  local minutes=0
+
+  if [ "$total_seconds" -lt 60 ]; then
+    echo "${total_seconds}s"
+    return 0
+  fi
+
+  days=$((total_seconds / 86400))
+  hours=$(((total_seconds % 86400) / 3600))
+  minutes=$(((total_seconds % 3600) / 60))
+
+  if [ "$days" -gt 0 ]; then
+    echo "${days}d ${hours}h ${minutes}m"
+  elif [ "$hours" -gt 0 ]; then
+    echo "${hours}h ${minutes}m"
+  else
+    echo "${minutes}m"
+  fi
+}
+
+handle_monitor_health_state() {
+  local monitor_health_state="$1"
+  local monitor_health_message="$2"
+  local degraded_started_now=0
+  local degraded_elapsed=0
+  local degraded_elapsed_display=""
+
+  if monitor_health_track_state "$monitor_health_state"; then
+    display_monitor_status "⚠️ ${monitor_health_message} - restarting after ${MONITOR_HEALTH_FAILURE_COUNT} consecutive hard failures" "WARNING" "true"
+    recover_server
+    return 0
+  fi
+
+  case "$monitor_health_state" in
+  degraded)
+    if monitor_health_note_degraded; then
+      degraded_started_now=1
+      MONITOR_LAST_HEALTH_STATE="$monitor_health_state"
+      MONITOR_LAST_HEALTH_MESSAGE="$monitor_health_message"
+      display_monitor_status "⚠️ ${monitor_health_message} - degraded state started; monitoring for up to $(format_monitor_elapsed "${MONITOR_DEGRADED_RECOVERY_GRACE_SECONDS}") before one automatic recovery restart" "WARNING"
+    fi
+
+    if monitor_health_should_trigger_degraded_recovery; then
+      monitor_health_mark_degraded_recovery_attempted
+      MONITOR_LAST_HEALTH_STATE="$monitor_health_state"
+      MONITOR_LAST_HEALTH_MESSAGE="$monitor_health_message"
+      display_monitor_status "⚠️ ${monitor_health_message} - degraded for $(format_monitor_elapsed "$(monitor_health_degraded_elapsed_seconds)") and restarting once to restore local RCON" "WARNING" "true"
+      recover_server
+    elif monitor_health_should_log_post_recovery_degraded; then
+      monitor_health_mark_post_recovery_degraded_logged
+      MONITOR_LAST_HEALTH_STATE="$monitor_health_state"
+      MONITOR_LAST_HEALTH_MESSAGE="$monitor_health_message"
+      display_monitor_status "⚠️ ${monitor_health_message} - server is still degraded after the automatic recovery restart. Keeping the server running, but local RCON needs manual investigation." "WARNING" "true"
+    elif [ "$degraded_started_now" -ne 1 ] && monitor_health_should_log_state "$monitor_health_state" "$monitor_health_message"; then
+      degraded_elapsed="$(monitor_health_degraded_elapsed_seconds)"
+      degraded_elapsed_display="$(format_monitor_elapsed "$degraded_elapsed")"
+      display_monitor_status "⚠️ ${monitor_health_message} - degraded for ${degraded_elapsed_display}; server remains running while waiting for the delayed recovery threshold" "WARNING"
+    fi
+    ;;
+  ok)
+    if [ "${MONITOR_DEGRADED_EPISODE_ACTIVE:-0}" -eq 1 ]; then
+      monitor_health_clear_degraded_state
+    fi
+
+    if monitor_health_should_log_state "$monitor_health_state" "$monitor_health_message"; then
+      if [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
+        display_monitor_status "✅ ${monitor_health_message}" "SUCCESS"
+      fi
+    fi
+    ;;
+  starting)
+    if monitor_health_should_log_state "$monitor_health_state" "$monitor_health_message"; then
+      display_monitor_status "ℹ️ ${monitor_health_message}" "INFO"
+    fi
+    ;;
+  unhealthy)
+    if monitor_health_should_log_state "$monitor_health_state" "$monitor_health_message"; then
+      display_monitor_status "⚠️ ${monitor_health_message} (${MONITOR_HEALTH_FAILURE_COUNT}/${MONITOR_HEALTH_FAILURE_THRESHOLD})" "WARNING"
+    fi
+    ;;
+  esac
 }
 
 # Function to restart container for API mode
@@ -579,6 +651,36 @@ format_interval_text() {
   echo "$interval_text"
 }
 
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+  return 0
+fi
+
+prepare_runtime_env
+monitor_health_load_state
+
+NO_RESTART_FLAG="/home/pok/shutdown.flag"
+RESTART_FLAG="/home/pok/restart.flag"
+SHUTDOWN_COMPLETE_FLAG="/home/pok/shutdown_complete.flag"
+INITIAL_STARTUP_DELAY=120  # Delay in seconds before starting the monitoring
+lock_file="$ASA_DIR/updating.flag"
+RECOVERY_LOG="/home/pok/server_recovery.log"
+EXIT_ON_API_RESTART="${EXIT_ON_API_RESTART:-TRUE}" # Default to TRUE - controls container exit behavior
+RESTART_TIMESTAMP_FILE="/tmp/restart_timestamp"
+
+if ! env_value_is_truthy "${UPDATE_SERVER:-FALSE}"; then
+  echo "[INFO] UPDATE_SERVER disabled; skipping update monitor."
+  exit 0
+fi
+
+# Clear stale stop flag so the monitor stays active after restarts
+if [ -f "/home/pok/stop_monitor.flag" ]; then
+  rm -f "/home/pok/stop_monitor.flag"
+fi
+
+# Note: RESTART_NOTICE_MINUTES is configured by user in docker-compose.yaml
+UPDATE_WINDOW_MINIMUM_TIME=${UPDATE_WINDOW_MINIMUM_TIME:-12:00 AM} # Default to "12:00 AM" if not set
+UPDATE_WINDOW_MAXIMUM_TIME=${UPDATE_WINDOW_MAXIMUM_TIME:-11:59 PM} # Default to "11:59 PM" if not set
+
 # Wait for the initial startup before monitoring
 sleep $INITIAL_STARTUP_DELAY
 
@@ -588,6 +690,7 @@ if declare -f cleanup_legacy_locks >/dev/null 2>&1; then
 else
   echo "[WARNING] cleanup_legacy_locks function not found in common.sh"
 fi
+update_coordination_cleanup || true
 
 # Show monitor startup message
 if [ "${DISPLAY_POK_MONITOR_MESSAGE}" = "TRUE" ]; then
@@ -893,6 +996,12 @@ while true; do
     # But just in case, sleep to avoid rapid restart attempts
     sleep 60
   else
+    monitor_health_result="$(monitor_health_read_state)"
+    monitor_health_state="$(printf '%s\n' "$monitor_health_result" | sed -n '1p')"
+    monitor_health_message="$(printf '%s\n' "$monitor_health_result" | sed -n '2p')"
+
+    handle_monitor_health_state "$monitor_health_state" "$monitor_health_message"
+
     # Server is running normally, just do regular short sleep
     sleep 30 # Short sleep to prevent high CPU usage
   fi

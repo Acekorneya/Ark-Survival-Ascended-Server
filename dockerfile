@@ -7,6 +7,7 @@ FROM ubuntu:22.04
 # Host file ownership MUST match these values to avoid permission issues
 ARG PUID=7777
 ARG PGID=7777
+ARG PROTON_VERSION=GE-Proton10-32
 
 # Set a default timezone, can be overridden at runtime
 ENV TZ=UTC
@@ -18,6 +19,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV WINEDLLOVERRIDES="version=n,b;vcrun2022=n,b"
 ENV WINEPREFIX="/home/pok/.steam/steam/steamapps/compatdata/2430930/pfx"
 ENV DISPLAY=:0.0
+ENV HEALTHCHECK_PORT=8080
 
 # Install necessary packages and setup for WineHQ repository
 RUN set -ex; \
@@ -25,6 +27,7 @@ RUN set -ex; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
     jq curl wget tar unzip nano gzip iproute2 procps software-properties-common dbus \
+    python3-minimal \
     tzdata \
     # tzdata package provides timezone database for TZ environment variable support \
     lib32gcc-s1 libglib2.0-0 libglib2.0-0:i386 libvulkan1 libvulkan1:i386 \
@@ -76,23 +79,21 @@ RUN set -ex; \
 # Setup the Proton GE with proper version handling
 WORKDIR /usr/local/bin
 RUN set -ex; \
-    curl -sLOJ "$(curl -s https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases/latest | grep browser_download_url | cut -d\" -f4 | grep .tar.gz)"; \
-    # Extract the version from filename
-    PROTON_VERSION=$(ls GE-Proton*.tar.gz | sed 's/\.tar\.gz//'); \
-    # Extract to temp directory
+    if [ "$PROTON_VERSION" = "latest" ]; then \
+    DOWNLOAD_URL=$(curl -s https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases/latest | grep browser_download_url | grep '.tar.gz"' | cut -d\" -f4 | head -n 1); \
+    else \
+    DOWNLOAD_URL="https://github.com/GloriousEggroll/proton-ge-custom/releases/download/${PROTON_VERSION}/${PROTON_VERSION}.tar.gz"; \
+    fi; \
+    curl -sL "$DOWNLOAD_URL" -o /tmp/proton.tar.gz; \
     mkdir -p /tmp/proton-extract; \
-    tar -xzf GE-Proton*.tar.gz -C /tmp/proton-extract; \
-    # Create official proton directories
     mkdir -p /home/pok/.steam/steam/compatibilitytools.d; \
-    # Move to final location
+    tar -xzf /tmp/proton.tar.gz -C /tmp/proton-extract; \
+    ACTUAL_VERSION=$(basename "$(find /tmp/proton-extract -maxdepth 1 -mindepth 1 -type d | head -n 1)"); \
     mv /tmp/proton-extract/* /home/pok/.steam/steam/compatibilitytools.d/; \
-    # Create a known path for compatibility
-    ln -sf /home/pok/.steam/steam/compatibilitytools.d/$PROTON_VERSION /home/pok/.steam/steam/compatibilitytools.d/GE-Proton-Current; \
-    # Also create compatibility symlinks for both common version numbers
-    ln -sf /home/pok/.steam/steam/compatibilitytools.d/$PROTON_VERSION /home/pok/.steam/steam/compatibilitytools.d/GE-Proton8-21; \
-    ln -sf /home/pok/.steam/steam/compatibilitytools.d/$PROTON_VERSION /home/pok/.steam/steam/compatibilitytools.d/GE-Proton9-25; \
-    # Cleanup
-    rm -rf /tmp/proton-extract GE-Proton*.*
+    ln -sf /home/pok/.steam/steam/compatibilitytools.d/$ACTUAL_VERSION /home/pok/.steam/steam/compatibilitytools.d/GE-Proton-Current; \
+    ln -sf /home/pok/.steam/steam/compatibilitytools.d/$ACTUAL_VERSION /home/pok/.steam/steam/compatibilitytools.d/GE-Proton8-21; \
+    ln -sf /home/pok/.steam/steam/compatibilitytools.d/$ACTUAL_VERSION /home/pok/.steam/steam/compatibilitytools.d/GE-Proton9-25; \
+    rm -rf /tmp/proton-extract /tmp/proton.tar.gz
 
 # Setup machine-id for Proton
 RUN set -ex; \
@@ -104,9 +105,12 @@ RUN set -ex; \
 WORKDIR /tmp/
 # Setup rcon-cli
 RUN set -ex; \
-    wget -qO- https://github.com/gorcon/rcon-cli/releases/download/v0.10.3/rcon-0.10.3-amd64_linux.tar.gz | tar xvz && \
-    mv rcon-0.10.3-amd64_linux/rcon /usr/local/bin/rcon-cli && \
-    chmod +x /usr/local/bin/rcon-cli
+    wget -qO /tmp/rcon.tar.gz https://github.com/gorcon/rcon-cli/releases/download/v0.10.3/rcon-0.10.3-amd64_linux.tar.gz; \
+    echo "6962a641ebf9a5957bd0cda1b8acf3e34a23686ae709f6c6a14ac3898521a5cc  /tmp/rcon.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/rcon.tar.gz -C /tmp; \
+    mv /tmp/rcon-0.10.3-amd64_linux/rcon /usr/local/bin/rcon-cli; \
+    chmod +x /usr/local/bin/rcon-cli; \
+    rm -rf /tmp/rcon.tar.gz /tmp/rcon-0.10.3-amd64_linux
 
 # Install tini
 ARG TINI_VERSION=v0.19.0
@@ -164,8 +168,8 @@ RUN set -ex; \
     # Ensure all critical directories have proper permissions
     find /home/pok/arkserver -type d -exec chmod 755 {} \;; \
     # Make logs directory world-writable to avoid permission issues
-    chmod -R 777 /home/pok/arkserver/ShooterGame/Binaries/Win64/logs; \
-    chmod -R 777 /home/pok/arkserver/ShooterGame/Saved/Logs; \
+    chmod -R 775 /home/pok/arkserver/ShooterGame/Binaries/Win64/logs; \
+    chmod -R 775 /home/pok/arkserver/ShooterGame/Saved/Logs; \
     # Ensure Wine prefix has correct permissions
     chown -R pok:pok /home/pok/.steam/steam/steamapps/compatdata/2430930; \
     chmod -R 755 /home/pok/.steam/steam/steamapps/compatdata/2430930; \
@@ -201,7 +205,7 @@ USER root
 COPY --chown=pok:pok scripts/ /home/pok/scripts/
 COPY --chown=pok:pok defaults/ /home/pok/defaults/
 COPY --chown=pok:pok require_files/ /home/pok/require_files/
-RUN chmod +x /home/pok/scripts/*.sh
+RUN find /home/pok/scripts -maxdepth 1 -type f \( -name "*.sh" -o -name "*.py" \) -exec chmod +x {} +
 
 # Create essential runtime directories with proper permissions
 RUN set -ex; \
@@ -220,11 +224,14 @@ RUN set -ex; \
     # Final permission check
     chown -R pok:pok /home/pok; \
     chown -R pok:pok /home/pok/arkserver/ShooterGame/Binaries/Win64/logs; \
-    chmod -R 777 /home/pok/arkserver/ShooterGame/Binaries/Win64/logs
+    chmod -R 775 /home/pok/arkserver/ShooterGame/Binaries/Win64/logs
 
 # Switch back to pok to run the entrypoint script
 USER pok
 WORKDIR /home/pok
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30m --retries=3 \
+  CMD curl -fsS "http://127.0.0.1:${HEALTHCHECK_PORT}/healthz" >/dev/null || exit 1
 
 # Use tini as the entrypoint  
 ENTRYPOINT ["/tini", "--", "/home/pok/scripts/init.sh"]

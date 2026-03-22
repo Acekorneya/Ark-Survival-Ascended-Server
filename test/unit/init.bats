@@ -1,0 +1,31 @@
+#!/usr/bin/env bats
+
+load '../test_helper/bats-support/load.bash'
+load '../test_helper/bats-assert/load.bash'
+load '../test_helper/project.bash'
+
+@test "init.sh no longer references the removed VC runtime test hook" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    if grep -q "test_vcredist.sh" "$REPO_ROOT/scripts/init.sh"; then
+      echo "found=legacy-hook"
+      exit 1
+    fi
+    echo "found=none"
+  '
+
+  assert_success
+  assert_output --partial "found=none"
+}
+
+@test "init.sh cleanup_disk_space uses shared cleanup helpers" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    grep -q "rotate_log_files 5" "$REPO_ROOT/scripts/init.sh"
+    grep -q "clean_temp_files" "$REPO_ROOT/scripts/init.sh"
+    echo "helpers=shared"
+  '
+
+  assert_success
+  assert_output --partial "helpers=shared"
+}

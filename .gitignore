@@ -3,12 +3,22 @@
 
 # Except the following files and directories
 !.gitignore
+!.gitattributes
+!.editorconfig
 !/defaults/
 !/scripts/
+!/scripts/health_probe.sh
+!/scripts/health_server.py
+!/scripts/monitor_health.sh
+!/scripts/update_coordination.sh
 !/require_files/
 !/require_files/*
+!/test/
+!/test/**
+!/.github/
+!/.github/**
 !/changelog.txt
-!/Dockerfile
+!/dockerfile
 !/docker-compose.yaml
 !/LICENSE.txt
 !/POK-manager.sh

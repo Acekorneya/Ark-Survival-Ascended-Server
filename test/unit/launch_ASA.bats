@@ -1,0 +1,104 @@
+#!/usr/bin/env bats
+
+load '../test_helper/bats-support/load.bash'
+load '../test_helper/bats-assert/load.bash'
+load '../test_helper/project.bash'
+
+@test "launch_ASA.sh can be sourced without starting the server" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/launch_ASA.sh"
+    printf "main=%s\n" "$(type -t main)"
+  '
+
+  assert_success
+  assert_output --partial "main=function"
+}
+
+@test "determine_map_path maps official and custom map names" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/launch_ASA.sh"
+    MAP_NAME=TheCenter
+    determine_map_path
+    printf "official=%s\n" "$MAP_PATH"
+    MAP_NAME=CustomAdventure
+    determine_map_path
+    printf "custom=%s\n" "$MAP_PATH"
+  '
+
+  assert_success
+  assert_output --partial "official=TheCenter_WP"
+  assert_output --partial "custom=CustomAdventure_WP"
+}
+
+@test "get_server_process_id prefers the AsaApi loader when API mode is enabled" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/launch_ASA.sh"
+    API=TRUE
+    SERVER_PID=""
+    ps() {
+      if [ "$1" = "-p" ]; then
+        return 1
+      fi
+      cat <<EOF
+root 123 0.0 0.0 ? ? AsaApiLoader.exe
+root 456 0.0 0.0 ? ? ArkAscendedServer.exe
+EOF
+    }
+    get_server_process_id
+    printf "pid=%s\n" "$SERVER_PID"
+  '
+
+  assert_success
+  assert_output --partial "pid=123"
+}
+
+@test "launch_asa_detect_ready_marker accepts Full Startup and advertising markers" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/launch_ASA.sh"
+    log_file="$BATS_TEST_TMPDIR/ShooterGame.log"
+    printf "%s\n" "Full Startup: 59.50 seconds" > "$log_file"
+    launch_asa_detect_ready_marker "$log_file"
+    printf "first=%s\n" "$LAUNCH_ASA_READY_MARKER_TYPE"
+    printf "%s\n" "Server has completed startup and is now advertising for join" > "$log_file"
+    launch_asa_detect_ready_marker "$log_file"
+    printf "second=%s\n" "$LAUNCH_ASA_READY_MARKER_TYPE"
+  '
+
+  assert_success
+  assert_output --partial "first=full_startup"
+  assert_output --partial "second=advertising"
+}
+
+@test "update_game_user_settings updates the password and MOTD in GameUserSettings.ini" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/launch_ASA.sh"
+    ASA_DIR="$BATS_TEST_TMPDIR/asa"
+    ini_file="$ASA_DIR/ShooterGame/Saved/Config/WindowsServer/GameUserSettings.ini"
+    mkdir -p "$(dirname "$ini_file")"
+    cat > "$ini_file" <<EOF
+[ServerSettings]
+ServerPassword=oldpass
+
+[MessageOfTheDay]
+Message=old
+Duration=20
+EOF
+    SERVER_PASSWORD=newpass
+    ENABLE_MOTD=TRUE
+    MOTD="Welcome survivors"
+    MOTD_DURATION=45
+    update_game_user_settings
+    cat "$ini_file"
+  '
+
+  assert_success
+  assert_output --partial "ServerPassword=newpass"
+  assert_output --partial "[MessageOfTheDay]"
+  assert_output --partial "Message=Welcome survivors"
+  assert_output --partial "Duration=45"
+}
