@@ -222,3 +222,69 @@ load '../test_helper/project.bash'
   assert_output --partial "status=1"
   assert_output --partial "token=EOS_EXCHANGE_FAILED"
 }
+
+@test "get_or_refresh_eos_token retries EOS exchange to allow Steam mobile approval" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/rcon_commands.sh"
+    EOS_TOKEN_CACHE="$BATS_TEST_TMPDIR/eos-token-mobile-approval.json"
+    EOS_EXCHANGE_MAX_ATTEMPTS=3
+    EOS_EXCHANGE_RETRY_DELAY_SECONDS=1
+    attempts_file="$BATS_TEST_TMPDIR/exchange-attempts"
+    STEAM_USERNAME="steam_user"
+    STEAM_PASSWORD="steam_pass"
+    node() { echo "ticket-hex"; }
+    python3() {
+      local count=0
+      if [ -f "$attempts_file" ]; then
+        count=$(cat "$attempts_file")
+      fi
+      count=$((count + 1))
+      echo "$count" > "$attempts_file"
+      if [ "$count" -lt 3 ]; then
+        echo "EOS exchange failed (HTTP 400): approval pending" >&2
+        return 1
+      fi
+      printf "%s" "{\"token\":\"fresh-token\",\"expires_at\":1700}"
+    }
+    sleep() { :; }
+    set +e
+    token=$(get_or_refresh_eos_token)
+    status=$?
+    set -e
+    printf "status=%s\n" "$status"
+    printf "token=%s\n" "$token"
+    printf "attempts=%s\n" "$(cat "$attempts_file")"
+  '
+
+  assert_success
+  assert_output --partial "Steam login may still be awaiting mobile approval. Waiting 1s before retrying EOS token exchange (1/3)..."
+  assert_output --partial "Steam login may still be awaiting mobile approval. Waiting 1s before retrying EOS token exchange (2/3)..."
+  assert_output --partial "status=0"
+  assert_output --partial "token=fresh-token"
+  assert_output --partial "attempts=3"
+}
+
+@test "full_status_display shows detailed EOS exchange errors" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/rcon_commands.sh"
+    EOS_DEPLOYMENT_ID="deployment"
+    curl() { echo "127.0.0.1"; }
+    get_or_refresh_eos_token() {
+      echo "EOS_EXCHANGE_FAILED"
+      echo "EOS exchange failed (HTTP 400): approval pending" >&2
+      return 1
+    }
+    set +e
+    full_status_display
+    status=$?
+    set -e
+    printf "status=%s\n" "$status"
+  '
+
+  assert_success
+  assert_output --partial "Error: Failed to exchange Steam ticket for EOS token."
+  assert_output --partial "EOS exchange failed (HTTP 400): approval pending"
+  assert_output --partial "status=1"
+}

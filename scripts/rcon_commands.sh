@@ -10,6 +10,15 @@ EOS_TOKEN_CACHE="/home/pok/arkserver/ShooterGame/Binaries/Win64/.eos_token.json"
 HELPERS_DIR="/home/pok/scripts/helpers"
 
 get_or_refresh_eos_token() {
+  local ticket_err_file=""
+  local exchange_err_file=""
+  local ticket_status=0
+  local exchange_status=0
+  local exchange_error=""
+  local exchange_attempt=1
+  local max_attempts="${EOS_EXCHANGE_MAX_ATTEMPTS:-12}"
+  local retry_delay="${EOS_EXCHANGE_RETRY_DELAY_SECONDS:-5}"
+
   if [ -f "$EOS_TOKEN_CACHE" ]; then
     local token expires_at now buffer=300
     token=$(jq -r '.token' "$EOS_TOKEN_CACHE" 2>/dev/null)
@@ -31,16 +40,48 @@ get_or_refresh_eos_token() {
 
   local ticket_hex
   # The container path uses steam-user for ticket generation
-  ticket_hex=$(node "${HELPERS_DIR}/steam_ticket.js" 2>/dev/null)
-  if [ -z "$ticket_hex" ]; then
+  ticket_err_file=$(mktemp)
+  ticket_hex=$(node "${HELPERS_DIR}/steam_ticket.js" 2>"$ticket_err_file")
+  ticket_status=$?
+  if [ $ticket_status -ne 0 ] || [ -z "$ticket_hex" ]; then
+    if [ -s "$ticket_err_file" ]; then
+      cat "$ticket_err_file" >&2
+    else
+      echo "Steam ticket helper returned no ticket." >&2
+    fi
+    rm -f "$ticket_err_file"
     echo "STEAM_TICKET_FAILED"
     return 1
   fi
+  rm -f "$ticket_err_file"
   ticket_hex="${ticket_hex^^}"
 
   local token_json
-  token_json=$(python3 "${HELPERS_DIR}/eos_token.py" "$ticket_hex" 2>/dev/null)
-  if [ -z "$token_json" ]; then
+  while [ "$exchange_attempt" -le "$max_attempts" ]; do
+    exchange_err_file=$(mktemp)
+    token_json=$(python3 "${HELPERS_DIR}/eos_token.py" "$ticket_hex" 2>"$exchange_err_file")
+    exchange_status=$?
+    exchange_error="$(cat "$exchange_err_file" 2>/dev/null)"
+    rm -f "$exchange_err_file"
+
+    if [ $exchange_status -eq 0 ] && [ -n "$token_json" ]; then
+      break
+    fi
+
+    if [ "$exchange_attempt" -lt "$max_attempts" ]; then
+      echo "Steam login may still be awaiting mobile approval. Waiting ${retry_delay}s before retrying EOS token exchange (${exchange_attempt}/${max_attempts})..." >&2
+      sleep "$retry_delay"
+    fi
+
+    exchange_attempt=$((exchange_attempt + 1))
+  done
+
+  if [ $exchange_status -ne 0 ] || [ -z "$token_json" ]; then
+    if [ -n "$exchange_error" ]; then
+      printf '%s\n' "$exchange_error" >&2
+    else
+      echo "EOS token helper returned no token." >&2
+    fi
     echo "EOS_EXCHANGE_FAILED"
     return 1
   fi
@@ -148,6 +189,11 @@ interactive_mode() {
 
 # Display full server status
 full_status_display() {
+  local token=""
+  local token_status=0
+  local auth_error_file=""
+  local auth_error=""
+
   # Recover current ip
   ip=$(curl -s https://ifconfig.me/ip)
 
@@ -158,8 +204,11 @@ full_status_display() {
     return 1
   fi
 
-  token=$(get_or_refresh_eos_token)
-  local token_status=$?
+  auth_error_file=$(mktemp)
+  token=$(get_or_refresh_eos_token 2>"$auth_error_file")
+  token_status=$?
+  auth_error="$(cat "$auth_error_file" 2>/dev/null)"
+  rm -f "$auth_error_file"
 
   if [ $token_status -ne 0 ] || [ -z "$token" ]; then
     case "$token" in
@@ -171,9 +220,15 @@ full_status_display() {
     "STEAM_TICKET_FAILED")
       echo "Error: Failed to get Steam session ticket."
       echo "Check your STEAM_USERNAME, STEAM_PASSWORD, and STEAM_SHARED_SECRET."
+      if [ -n "$auth_error" ]; then
+        printf '%s\n' "$auth_error"
+      fi
       ;;
     "EOS_EXCHANGE_FAILED")
       echo "Error: Failed to exchange Steam ticket for EOS token."
+      if [ -n "$auth_error" ]; then
+        printf '%s\n' "$auth_error"
+      fi
       ;;
     *)
       echo "Error: Could not get EOS authentication token."
