@@ -85,6 +85,7 @@ After these steps, you'll have a working Ark Survival Ascended server setup. See
 - [Installation](#installation)
 - [Usage](#usage)
   - [Commands](#commands)
+  - [Status Authentication](#status-authentication)
   - [Examples](#examples)
     - [Creating an Instance](#creating-an-instance)
     - [Starting and Stopping Instances](#starting-and-stopping-instances)
@@ -398,7 +399,7 @@ This approach provides better security while ensuring permissions are automatica
 - `-update`: Checks for server files & Docker image updates (doesn't modify the script itself).
 - `-upgrade`: Upgrades POK-manager.sh script to the latest version (requires confirmation).
 - `-force-restore`: Forces restoration of POK-manager.sh from backup in case of update failure.
-- `-status <instance_name|-all>`: Shows the status of a specific server instance or all instances.
+- `-status <instance_name|-all>`: Shows the status of a specific server instance or all instances. The first successful run now needs Steam credentials so the container can obtain an EOS user token for the matchmaking query.
 - `-restart [minutes] <instance_name|-all>`: Restarts a specific server instance or all instances with an optional countdown in minutes.
 - `-saveworld <instance_name|-all>`: Saves the world of a specific server instance or all instances.
 - `-chat "<message>" <instance_name|-all>`: Sends a chat message to a specific server instance or all instances.
@@ -416,6 +417,24 @@ This approach provides better security while ensuring permissions are automatica
 - `-api-recovery`: Checks and recovers API instances with container restart.
 - `-changelog`: Displays the changelog.
 - `-rename <instance_name|-all>`: Renames a single instance or all instances.
+
+### Status Authentication
+
+Wildcard's current matchmaking status endpoint now requires a real EOS user token instead of the older app-only client credential flow. Because of that, `-status` can no longer work with only the built-in server settings.
+
+POK-manager now handles this automatically:
+
+1. On the first `-status` run, the manager prompts for `STEAM_USERNAME`, `STEAM_PASSWORD`, and optionally `STEAM_SHARED_SECRET`.
+2. Those values are saved in the instance Docker Compose file so future `-status` runs do not prompt again.
+3. Inside the container, the helper generates a Steam session ticket, exchanges it for an EOS bearer token, and then uses that token to query the ASA matchmaking API.
+4. The EOS token is cached and reused until it is close to expiring, so repeated `-status` checks do not need to re-authenticate every time.
+
+Important notes:
+
+- These Steam credentials are only needed for the `-status` command path.
+- `STEAM_SHARED_SECRET` is optional, but you should set it if the Steam account uses Steam Guard mobile authenticator codes.
+- `-status -all` resolves the Steam credentials once and reuses them for every running instance.
+- The Steam values are preserved in the compose file, but they are not shown in the interactive config review screen to avoid echoing secrets back to the terminal.
 
 ### Examples
 
@@ -661,6 +680,9 @@ When creating a new server instance using POK-manager.sh, a Docker Compose confi
 | `MAP_NAME`                    | `TheIsland`       | The map name (`TheIsland') Or Custom Map Name Can Be Enter aswell                         |
 | `SESSION_NAME`                | `Server_name`     | The session name for the server                                                           |
 | `SERVER_ADMIN_PASSWORD`       | `MyPassword`      | The admin password for the server                                                         |
+| `STEAM_USERNAME`              |                   | Optional: Steam account name used only by `-status` to obtain an EOS user token           |
+| `STEAM_PASSWORD`              |                   | Optional: Steam password used only by `-status` to obtain an EOS user token               |
+| `STEAM_SHARED_SECRET`         |                   | Optional: Steam Guard shared secret for accounts that require mobile 2FA during `-status` |
 | `SERVER_PASSWORD`             |                   | Set a server password or leave it blank (ONLY NUMBERS AND CHARACTERS ARE ALLOWED BY DEVS) |
 | `ASA_PORT`                    | `7777`            | The game port for the server                                                              |
 | `RCON_PORT`                   | `27020`           | Rcon Port Use for Most Server Operations                                                  |
@@ -686,6 +708,11 @@ When creating a new server instance using POK-manager.sh, a Docker Compose confi
 - 2_1_latest images use PUID:GID 7777:7777
 
 Host file ownership must match these values to prevent permission issues.
+
+**`-status` authentication note**
+
+- `STEAM_USERNAME`, `STEAM_PASSWORD`, and `STEAM_SHARED_SECRET` are only used for the `-status` matchmaking query flow.
+- Most users do not need to add them manually because POK-manager can prompt for them and save them automatically on the first `-status` run.
 
 ---
 
@@ -722,6 +749,9 @@ services:
       - MAP_NAME=TheIsland                   # TheIsland, ScorchedEarth, TheCenter, Aberration / TheIsland_WP, ScorchedEarth_WP, TheCenter_WP, Aberration_WP / Are the current official maps available
       - SESSION_NAME=Server_name             # The name of the server session
       - SERVER_ADMIN_PASSWORD=MyPassword     # The admin password for the server 
+      - STEAM_USERNAME=                      # Optional: used only by -status to obtain an EOS user token
+      - STEAM_PASSWORD=                      # Optional: used only by -status to obtain an EOS user token
+      - STEAM_SHARED_SECRET=                 # Optional: set this if the Steam account uses Steam Guard mobile 2FA
       - SERVER_PASSWORD=                     # Set a server password or leave it blank (ONLY NUMBERS AND CHARACTERS ARE ALLOWED BY DEVS)
       - ASA_PORT=7777                        # The port for the server
       - RCON_PORT=27020                      # The port for the RCON

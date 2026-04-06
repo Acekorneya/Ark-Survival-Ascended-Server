@@ -9,6 +9,8 @@
 - Added configurable `SAVE_WAIT_SECONDS` save timing for manager stop/shutdown flows, removed duplicate quick saves during `-stop -all`, and made older managed compose files pick up the default automatically on start #93.
 - Manager stop/shutdown now skips save dispatch when a container exists but the ASA server has not finished startup yet, avoiding pointless save waits before `ShooterGame.log` or the server process exists.
 - Manager stop/shutdown now uses the container health probe for save decisions: `ok` and `degraded` attempt `saveworld`, `starting`/`unhealthy` skip the save, RCON-disabled healthy servers warn and stop directly, and save confirmation looks for the exact `World Save Complete. Took:` log entry.
+- Fixed `-status` for the new EOS user-token requirement by generating a Steam session ticket inside the container, exchanging it for an EOS bearer token, and caching the token for reuse across status checks.
+- POK-manager now stores and preserves `STEAM_USERNAME`, `STEAM_PASSWORD`, and optional `STEAM_SHARED_SECRET` in instance compose files without exposing them through the interactive config review, and `-status -all` resolves the Steam credentials once and reuses them for every running instance.
 
 ## Version 2.1.79 (Previous)
 - **CRITICAL FIX**: Fixed major server startup delay (10-20 minutes on slow disks) by removing redundant recursive directory permission checks in `init.sh` and `common.sh`.
