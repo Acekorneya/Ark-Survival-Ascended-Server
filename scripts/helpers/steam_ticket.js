@@ -5,36 +5,49 @@ const SteamTotp = require("steam-totp");
 
 const client = new SteamUser();
 const appId = parseInt(process.env.STEAM_APP_ID || "2399830", 10);
+const minTicketBytes = parseInt(process.env.STEAM_SESSION_TICKET_MIN_BYTES || "32", 10);
+
+function extractSessionTicket(sessionTicket) {
+  if (Buffer.isBuffer(sessionTicket)) {
+    return sessionTicket;
+  }
+
+  if (sessionTicket && Buffer.isBuffer(sessionTicket.sessionTicket)) {
+    return sessionTicket.sessionTicket;
+  }
+
+  if (sessionTicket && Buffer.isBuffer(sessionTicket.ticket)) {
+    return sessionTicket.ticket;
+  }
+
+  return null;
+}
 
 function getTicket(callback) {
-  if (typeof client.getAuthSessionTicket === "function") {
-    client.getAuthSessionTicket(appId, callback);
+  if (typeof client.createAuthSessionTicket !== "function") {
+    callback(new Error("Steam createAuthSessionTicket API is not available in this steam-user build"));
     return;
   }
 
-  if (typeof client.createAuthSessionTicket === "function") {
-    client.createAuthSessionTicket(appId, (err, sessionTicket) => {
-      if (err) {
-        callback(err);
-        return;
-      }
+  client.createAuthSessionTicket(appId, (err, sessionTicket) => {
+    if (err) {
+      callback(err);
+      return;
+    }
 
-      if (Buffer.isBuffer(sessionTicket)) {
-        callback(null, sessionTicket);
-        return;
-      }
+    const ticket = extractSessionTicket(sessionTicket);
+    if (!ticket) {
+      callback(new Error("Steam session ticket was returned in an unexpected format"));
+      return;
+    }
 
-      if (sessionTicket && Buffer.isBuffer(sessionTicket.ticket)) {
-        callback(null, sessionTicket.ticket);
-        return;
-      }
+    if (ticket.length < minTicketBytes) {
+      callback(new Error(`Steam session ticket is unexpectedly short (${ticket.length} bytes)`));
+      return;
+    }
 
-      callback(new Error("Steam auth ticket was returned in an unexpected format"));
-    });
-    return;
-  }
-
-  callback(new Error("Steam auth ticket API is not available in this steam-user build"));
+    callback(null, ticket);
+  });
 }
 
 async function buildTwoFactorCode() {
