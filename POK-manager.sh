@@ -1705,12 +1705,6 @@ ensure_steam_credentials() {
   read -rp "Steam Username: " STEAM_USERNAME
   read -rsp "Steam Password: " STEAM_PASSWORD
   echo ""
-  echo ""
-  echo "If you have Steam Mobile Authenticator, enter your shared_secret"
-  echo "for automatic 2FA. Leave blank if no 2FA."
-  echo "(Extract shared_secret from Steam Desktop Authenticator or maFiles)"
-  read -rp "Steam Shared Secret (optional): " STEAM_SHARED_SECRET
-  echo ""
 
   if [ -z "$STEAM_USERNAME" ] || [ -z "$STEAM_PASSWORD" ]; then
     echo "Error: Steam username and password are required for -status."
@@ -4181,19 +4175,119 @@ _rcon_status_ready() {
   return 1
 }
 
+_status_output_requires_steam_guard() {
+  local status_output="$1"
+  [[ "$status_output" == *"STEAM_GUARD_REQUIRED:"* ]]
+}
+
+_sanitize_status_output() {
+  local status_output="$1"
+  printf '%s\n' "$status_output" | grep -v '^STEAM_GUARD_REQUIRED:' || true
+}
+
+_prompt_steam_guard_code() {
+  local instance_name="${1:-}"
+
+  if [ -n "${STEAM_GUARD_CODE:-}" ]; then
+    return 0
+  fi
+
+  if [ ! -t 0 ]; then
+    echo "Error: Steam Guard approval is required for -status, but no interactive terminal is available." >&2
+    echo "Re-run -status interactively and enter the current 5-digit code from your Steam mobile app." >&2
+    return 1
+  fi
+
+  echo "" >&2
+  if [ -n "$instance_name" ]; then
+    echo "Steam Guard code required for instance ${instance_name}." >&2
+  else
+    echo "Steam Guard code required for -status." >&2
+  fi
+  echo "Enter the current 5-digit code from your Steam mobile app:" >&2
+  read -rp "> " STEAM_GUARD_CODE
+  echo "" >&2
+
+  if [ -z "${STEAM_GUARD_CODE:-}" ]; then
+    echo "Error: A Steam Guard code is required to continue." >&2
+    return 1
+  fi
+
+  return 0
+}
+
 _run_status_in_container() {
   local instance_name="$1"
   local container_name="asa_${instance_name}"
+  local docker_exec_args=(
+    -e "STEAM_USERNAME=${STEAM_USERNAME}"
+    -e "STEAM_PASSWORD=${STEAM_PASSWORD}"
+    -e "STEAM_SHARED_SECRET=${STEAM_SHARED_SECRET:-}"
+  )
+  if [ -n "${STEAM_GUARD_CODE:-}" ]; then
+    docker_exec_args+=(-e "STEAM_GUARD_CODE=${STEAM_GUARD_CODE}")
+  fi
 
   if docker ps -q -f name=^/${container_name}$ > /dev/null; then
-    docker exec \
-      -e "STEAM_USERNAME=${STEAM_USERNAME}" \
-      -e "STEAM_PASSWORD=${STEAM_PASSWORD}" \
-      -e "STEAM_SHARED_SECRET=${STEAM_SHARED_SECRET:-}" \
-      "$container_name" /bin/bash -c "/home/pok/scripts/rcon_interface.sh -status"
+    docker exec "${docker_exec_args[@]}" "$container_name" /bin/bash -c "/home/pok/scripts/rcon_interface.sh -status"
   else
     echo "Instance ${instance_name} is not running or does not exist."
   fi
+}
+
+_run_status_with_guard_retry() {
+  local instance_name="$1"
+  local status_output=""
+  local status_code=0
+  local prompt_attempts=0
+  local max_prompt_attempts=3
+  local accumulated_output=""
+
+  RUN_STATUS_OUTPUT=""
+
+  while true; do
+    if status_output="$(_run_status_in_container "$instance_name" 2>&1)"; then
+      status_code=0
+    else
+      status_code=$?
+    fi
+
+    if ! _status_output_requires_steam_guard "$status_output"; then
+      status_output="$(_sanitize_status_output "$status_output")"
+      if [ -n "$status_output" ]; then
+        if [ -n "$accumulated_output" ]; then
+          accumulated_output+=$'\n'
+        fi
+        accumulated_output+="$status_output"
+      fi
+      RUN_STATUS_OUTPUT="$accumulated_output"
+      return $status_code
+    fi
+
+    status_output="$(_sanitize_status_output "$status_output")"
+    if [ -n "$status_output" ]; then
+      if [ -n "$accumulated_output" ]; then
+        accumulated_output+=$'\n'
+      fi
+      accumulated_output+="$status_output"
+    fi
+
+    prompt_attempts=$((prompt_attempts + 1))
+    if [ "$prompt_attempts" -gt "$max_prompt_attempts" ]; then
+      if [ -n "$accumulated_output" ]; then
+        accumulated_output+=$'\n'
+      fi
+      accumulated_output+="Error: Steam Guard authentication failed after ${max_prompt_attempts} attempts."
+      RUN_STATUS_OUTPUT="$accumulated_output"
+      return 1
+    fi
+
+    STEAM_GUARD_CODE=""
+    if ! _prompt_steam_guard_code "$instance_name"; then
+      RUN_STATUS_OUTPUT="$accumulated_output"
+      return 1
+    fi
+  done
 }
 
 _rcon_process_all_running_instances() {
@@ -4220,7 +4314,11 @@ _rcon_process_all_running_instances() {
     fi
 
     if [[ "$action" == "-status" ]]; then
-      instance_outputs["$instance"]="$(_run_status_in_container "$instance")"
+      if _run_status_with_guard_retry "$instance"; then
+        instance_outputs["$instance"]="$RUN_STATUS_OUTPUT"
+      else
+        instance_outputs["$instance"]="$RUN_STATUS_OUTPUT"
+      fi
     else
       instance_outputs["$instance"]="$(run_in_container "$instance" "$action" "$message")"
     fi
@@ -4271,8 +4369,12 @@ _rcon_run_single_instance_command() {
 
   if [[ "$action" == "-status" ]]; then
     ensure_steam_credentials "$instance_name" || return 1
-    _run_status_in_container "$instance_name"
-    return
+    if _run_status_with_guard_retry "$instance_name"; then
+      printf '%s\n' "$RUN_STATUS_OUTPUT"
+      return 0
+    fi
+    printf '%s\n' "$RUN_STATUS_OUTPUT"
+    return 1
   fi
 
   if [[ "$run_in_background" == "true" ]]; then

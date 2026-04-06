@@ -9,6 +9,9 @@
 !/scripts/
 !/scripts/helpers/
 !/scripts/helpers/**
+/scripts/helpers/node_modules/
+/scripts/helpers/__pycache__/
+/scripts/helpers/package-lock.json
 !/scripts/health_probe.sh
 !/scripts/health_server.py
 !/scripts/monitor_health.sh
@@ -25,3 +28,4 @@
 !/LICENSE.txt
 !/POK-manager.sh
 !/README.md
+.gstack/

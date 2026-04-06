@@ -14,10 +14,13 @@ get_or_refresh_eos_token() {
   local exchange_err_file=""
   local ticket_status=0
   local exchange_status=0
+  local ticket_error=""
   local exchange_error=""
   local exchange_attempt=1
   local max_attempts="${EOS_EXCHANGE_MAX_ATTEMPTS:-12}"
   local retry_delay="${EOS_EXCHANGE_RETRY_DELAY_SECONDS:-5}"
+  local ticket_hex=""
+  local token_json=""
 
   if [ -f "$EOS_TOKEN_CACHE" ]; then
     local token expires_at now buffer=300
@@ -38,26 +41,34 @@ get_or_refresh_eos_token() {
     return 1
   fi
 
-  local ticket_hex
-  # The container path uses steam-user for ticket generation
-  ticket_err_file=$(mktemp)
-  ticket_hex=$(node "${HELPERS_DIR}/steam_ticket.js" 2>"$ticket_err_file")
-  ticket_status=$?
-  if [ $ticket_status -ne 0 ] || [ -z "$ticket_hex" ]; then
-    if [ -s "$ticket_err_file" ]; then
-      cat "$ticket_err_file" >&2
-    else
-      echo "Steam ticket helper returned no ticket." >&2
-    fi
-    rm -f "$ticket_err_file"
-    echo "STEAM_TICKET_FAILED"
-    return 1
-  fi
-  rm -f "$ticket_err_file"
-  ticket_hex="${ticket_hex^^}"
-
-  local token_json
   while [ "$exchange_attempt" -le "$max_attempts" ]; do
+    # The container path uses steam-user for ticket generation. Request a
+    # fresh Steam ticket on every retry so we don't keep reusing a ticket that
+    # was created before mobile approval or app session readiness completed.
+    ticket_err_file=$(mktemp)
+    ticket_hex=$(node "${HELPERS_DIR}/steam_ticket.js" 2>"$ticket_err_file")
+    ticket_status=$?
+    ticket_error="$(cat "$ticket_err_file" 2>/dev/null)"
+    rm -f "$ticket_err_file"
+
+    if [ $ticket_status -ne 0 ] || [ -z "$ticket_hex" ]; then
+      if [ "$exchange_attempt" -lt "$max_attempts" ]; then
+        echo "Steam ticket is not ready yet. Waiting ${retry_delay}s before retrying (${exchange_attempt}/${max_attempts})..." >&2
+        sleep "$retry_delay"
+        exchange_attempt=$((exchange_attempt + 1))
+        continue
+      fi
+
+      if [ -n "$ticket_error" ]; then
+        printf '%s\n' "$ticket_error" >&2
+      else
+        echo "Steam ticket helper returned no ticket." >&2
+      fi
+      echo "STEAM_TICKET_FAILED"
+      return 1
+    fi
+    ticket_hex="${ticket_hex^^}"
+
     exchange_err_file=$(mktemp)
     token_json=$(python3 "${HELPERS_DIR}/eos_token.py" "$ticket_hex" 2>"$exchange_err_file")
     exchange_status=$?
@@ -69,7 +80,7 @@ get_or_refresh_eos_token() {
     fi
 
     if [ "$exchange_attempt" -lt "$max_attempts" ]; then
-      echo "Steam login may still be awaiting mobile approval. Waiting ${retry_delay}s before retrying EOS token exchange (${exchange_attempt}/${max_attempts})..." >&2
+      echo "Steam login may still be awaiting mobile approval or the session ticket may not be ready yet. Waiting ${retry_delay}s before requesting a fresh Steam ticket and retrying EOS token exchange (${exchange_attempt}/${max_attempts})..." >&2
       sleep "$retry_delay"
     fi
 

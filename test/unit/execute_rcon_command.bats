@@ -101,18 +101,20 @@ EOF
     ensure_steam_credentials() {
       STEAM_USERNAME="steam_user"
       STEAM_PASSWORD="steam_pass"
-      STEAM_SHARED_SECRET="steam_secret"
+      STEAM_SHARED_SECRET=""
     }
     _run_status_in_container() {
       printf "status:%s:%s:%s:%s\n" "$1" "$STEAM_USERNAME" "$STEAM_PASSWORD" "$STEAM_SHARED_SECRET"
     }
+    _prompt_steam_guard_code() { echo "unexpected-guard-prompt"; return 1; }
     run_in_container() { echo "unexpected-run"; }
     execute_rcon_command -status demo
   '
 
   assert_success
   assert_output --partial "Processing -status command on demo..."
-  assert_output --partial "status:demo:steam_user:steam_pass:steam_secret"
+  assert_output --partial "status:demo:steam_user:steam_pass:"
+  refute_output --partial "unexpected-guard-prompt"
   refute_output --partial "unexpected-run"
 }
 
@@ -147,6 +149,79 @@ EOF
   assert_output --partial "status:alpha:steam_user"
   assert_output --partial "status:beta:steam_user"
   assert_output --partial "ensure_calls=1"
+}
+
+@test "execute_rcon_command prompts for Steam Guard only after status requires it" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/rcon-status-guard" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    source "$REPO_ROOT/POK-manager.sh"
+    validate_instance() { return 0; }
+    _rcon_status_ready() { return 0; }
+    ensure_steam_credentials() {
+      STEAM_USERNAME="steam_user"
+      STEAM_PASSWORD="steam_pass"
+      STEAM_SHARED_SECRET=""
+    }
+    _run_status_in_container() {
+      if [ -z "${STEAM_GUARD_CODE:-}" ]; then
+        printf "Displaying server status...\nSTEAM_GUARD_REQUIRED:mobile authenticator\nError: Failed to get Steam session ticket.\n"
+        return 1
+      fi
+      printf "status:%s:%s\n" "$1" "$STEAM_GUARD_CODE"
+    }
+    _prompt_steam_guard_code() {
+      printf "prompted:%s\n" "$1"
+      STEAM_GUARD_CODE="54321"
+    }
+    execute_rcon_command -status demo
+  '
+
+  assert_success
+  assert_output --partial "Processing -status command on demo..."
+  assert_output --partial "Displaying server status..."
+  assert_output --partial "Error: Failed to get Steam session ticket."
+  assert_output --partial "prompted:demo"
+  assert_output --partial "status:demo:54321"
+}
+
+@test "execute_rcon_command reuses prompted Steam Guard code for status -all" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/rcon-status-all-guard" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    source "$REPO_ROOT/POK-manager.sh"
+    prompt_calls_file="$BATS_TEST_TMPDIR/prompt_calls"
+    : > "$prompt_calls_file"
+    list_running_instances() { echo "alpha beta"; }
+    validate_instance() { return 0; }
+    _rcon_status_ready() { return 0; }
+    ensure_steam_credentials() {
+      STEAM_USERNAME="steam_user"
+      STEAM_PASSWORD="steam_pass"
+      STEAM_SHARED_SECRET=""
+    }
+    _run_status_in_container() {
+      if [ "$1" = "alpha" ] && [ -z "${STEAM_GUARD_CODE:-}" ]; then
+        printf "STEAM_GUARD_REQUIRED:mobile authenticator\n"
+        return 1
+      fi
+      printf "status:%s:%s\n" "$1" "${STEAM_GUARD_CODE:-none}"
+    }
+    _prompt_steam_guard_code() {
+      local count=0
+      if [ -s "$prompt_calls_file" ]; then
+        count=$(cat "$prompt_calls_file")
+      fi
+      count=$((count + 1))
+      echo "$count" > "$prompt_calls_file"
+      STEAM_GUARD_CODE="54321"
+    }
+    execute_rcon_command -status -all
+    printf "prompt_calls=%s\n" "$(cat "$prompt_calls_file")"
+  '
+
+  assert_success
+  assert_output --partial "status:alpha:54321"
+  assert_output --partial "status:beta:54321"
+  assert_output --partial "prompt_calls=1"
 }
 
 @test "execute_rcon_command skips Steam credential resolution when status target is not ready" {

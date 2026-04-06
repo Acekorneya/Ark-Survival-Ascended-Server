@@ -6,6 +6,14 @@ const SteamTotp = require("steam-totp");
 const client = new SteamUser();
 const appId = parseInt(process.env.STEAM_APP_ID || "2399830", 10);
 const minTicketBytes = parseInt(process.env.STEAM_SESSION_TICKET_MIN_BYTES || "32", 10);
+const ticketRequestDelayMs = Math.max(parseInt(process.env.STEAM_TICKET_REQUEST_DELAY_MS || "3000", 10), 0);
+const debugEnabled = process.env.STEAM_TICKET_DEBUG === "1";
+
+function debug(message) {
+  if (debugEnabled) {
+    console.error(message);
+  }
+}
 
 function extractSessionTicket(sessionTicket) {
   if (Buffer.isBuffer(sessionTicket)) {
@@ -75,18 +83,48 @@ async function main() {
 
   client.logOn(logOnOptions);
 
-  client.on("loggedOn", () => {
-    client.gamesPlayed(appId, true);
-    getTicket((err, ticket) => {
-      if (err) {
-        console.error("Failed to get auth ticket:", err.message);
-        process.exit(1);
-      }
+  client.on("steamGuard", (domain, callback) => {
+    const guardCode = process.env.STEAM_GUARD_CODE;
+    if (guardCode) {
+      debug(`Steam Guard: using STEAM_GUARD_CODE for ${domain || "mobile authenticator"}`);
+      callback(guardCode);
+      return;
+    }
+    console.error(`STEAM_GUARD_REQUIRED:${domain || "mobile authenticator"}`);
+    console.error(
+      `Steam Guard required (${domain || "mobile authenticator"}). ` +
+      `Re-run -status and enter the current code from your Steam app when prompted.`
+    );
+    process.exit(1);
+  });
 
-      process.stdout.write(ticket.toString("hex").toUpperCase());
-      client.logOff();
-      setTimeout(() => process.exit(0), 2000);
-    });
+  client.on("loggedOn", () => {
+    debug(`Steam logged on for app ${appId}`);
+    client.gamesPlayed(appId, true);
+    setTimeout(() => {
+      getTicket((err, ticket) => {
+        if (err) {
+          console.error("Failed to get auth ticket:", err.message);
+          process.exit(1);
+        }
+
+        debug(`Steam session ticket length: ${ticket.length} bytes`);
+        if (typeof SteamUser.parseAppTicket === "function") {
+          try {
+            const parsedTicket = SteamUser.parseAppTicket(ticket);
+            if (parsedTicket && parsedTicket.authTicket) {
+              debug(`Parsed auth ticket length: ${parsedTicket.authTicket.length} bytes`);
+            }
+          } catch (err) {
+            debug(`Steam ticket parse failed: ${err.message}`);
+          }
+        }
+
+        process.stdout.write(ticket.toString("hex").toUpperCase());
+        client.logOff();
+        setTimeout(() => process.exit(0), 2000);
+      });
+    }, ticketRequestDelayMs);
   });
 
   client.on("error", (err) => {

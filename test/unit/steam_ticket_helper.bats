@@ -8,7 +8,9 @@ load '../test_helper/project.bash'
   run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
     set -e
     modules_dir="$BATS_TEST_TMPDIR/modules"
+    helper_copy="$BATS_TEST_TMPDIR/steam_ticket.js"
     mkdir -p "$modules_dir/steam-user" "$modules_dir/steam-totp"
+    cp "$REPO_ROOT/scripts/helpers/steam_ticket.js" "$helper_copy"
 
     cat > "$modules_dir/steam-user/index.js" <<'"'"'EOF'"'"'
 const fs = require("fs");
@@ -44,7 +46,7 @@ EOF
 
     TEST_MARKER="$BATS_TEST_TMPDIR/steam-ticket-marker"
     set +e
-    output=$(NODE_PATH="$modules_dir" TEST_MARKER="$TEST_MARKER" STEAM_USERNAME="user" STEAM_PASSWORD="pass" timeout 5 node "$REPO_ROOT/scripts/helpers/steam_ticket.js")
+    output=$(NODE_PATH="$modules_dir" TEST_MARKER="$TEST_MARKER" STEAM_USERNAME="user" STEAM_PASSWORD="pass" STEAM_TICKET_REQUEST_DELAY_MS=0 timeout 5 node "$helper_copy")
     status=$?
     set -e
     printf "status=%s\n" "$status"
@@ -62,7 +64,9 @@ EOF
   run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
     set -e
     modules_dir="$BATS_TEST_TMPDIR/modules"
+    helper_copy="$BATS_TEST_TMPDIR/steam_ticket.js"
     mkdir -p "$modules_dir/steam-user" "$modules_dir/steam-totp"
+    cp "$REPO_ROOT/scripts/helpers/steam_ticket.js" "$helper_copy"
 
     cat > "$modules_dir/steam-user/index.js" <<'"'"'EOF'"'"'
 const {EventEmitter} = require("events");
@@ -90,7 +94,7 @@ module.exports = {
 EOF
 
     set +e
-    NODE_PATH="$modules_dir" STEAM_USERNAME="user" STEAM_PASSWORD="pass" timeout 5 node "$REPO_ROOT/scripts/helpers/steam_ticket.js"
+    NODE_PATH="$modules_dir" STEAM_USERNAME="user" STEAM_PASSWORD="pass" STEAM_TICKET_REQUEST_DELAY_MS=0 timeout 5 node "$helper_copy"
     status=$?
     set -e
     printf "status=%s\n" "$status"

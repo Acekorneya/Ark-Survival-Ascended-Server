@@ -185,6 +185,7 @@ load '../test_helper/project.bash'
     set -e
     source "$REPO_ROOT/scripts/rcon_commands.sh"
     EOS_TOKEN_CACHE="$BATS_TEST_TMPDIR/eos-token-ticket-fail.json"
+    EOS_EXCHANGE_MAX_ATTEMPTS=1
     STEAM_USERNAME="steam_user"
     STEAM_PASSWORD="steam_pass"
     node() { return 1; }
@@ -206,6 +207,7 @@ load '../test_helper/project.bash'
     set -e
     source "$REPO_ROOT/scripts/rcon_commands.sh"
     EOS_TOKEN_CACHE="$BATS_TEST_TMPDIR/eos-token-exchange-fail.json"
+    EOS_EXCHANGE_MAX_ATTEMPTS=1
     STEAM_USERNAME="steam_user"
     STEAM_PASSWORD="steam_pass"
     node() { echo "ticket-hex"; }
@@ -231,9 +233,18 @@ load '../test_helper/project.bash'
     EOS_EXCHANGE_MAX_ATTEMPTS=3
     EOS_EXCHANGE_RETRY_DELAY_SECONDS=1
     attempts_file="$BATS_TEST_TMPDIR/exchange-attempts"
+    ticket_file="$BATS_TEST_TMPDIR/ticket-attempts"
     STEAM_USERNAME="steam_user"
     STEAM_PASSWORD="steam_pass"
-    node() { echo "ticket-hex"; }
+    node() {
+      local count=0
+      if [ -f "$ticket_file" ]; then
+        count=$(cat "$ticket_file")
+      fi
+      count=$((count + 1))
+      echo "$count" > "$ticket_file"
+      echo "ticket-hex-${count}"
+    }
     python3() {
       local count=0
       if [ -f "$attempts_file" ]; then
@@ -255,14 +266,16 @@ load '../test_helper/project.bash'
     printf "status=%s\n" "$status"
     printf "token=%s\n" "$token"
     printf "attempts=%s\n" "$(cat "$attempts_file")"
+    printf "ticket_attempts=%s\n" "$(cat "$ticket_file")"
   '
 
   assert_success
-  assert_output --partial "Steam login may still be awaiting mobile approval. Waiting 1s before retrying EOS token exchange (1/3)..."
-  assert_output --partial "Steam login may still be awaiting mobile approval. Waiting 1s before retrying EOS token exchange (2/3)..."
+  assert_output --partial "Steam login may still be awaiting mobile approval or the session ticket may not be ready yet. Waiting 1s before requesting a fresh Steam ticket and retrying EOS token exchange (1/3)..."
+  assert_output --partial "Steam login may still be awaiting mobile approval or the session ticket may not be ready yet. Waiting 1s before requesting a fresh Steam ticket and retrying EOS token exchange (2/3)..."
   assert_output --partial "status=0"
   assert_output --partial "token=fresh-token"
   assert_output --partial "attempts=3"
+  assert_output --partial "ticket_attempts=3"
 }
 
 @test "full_status_display shows detailed EOS exchange errors" {
