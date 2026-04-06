@@ -92,6 +92,88 @@ EOF
   refute_output --partial "unexpected-run"
 }
 
+@test "execute_rcon_command routes single-instance status through the Steam-aware helper" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/rcon-status-helper" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    source "$REPO_ROOT/POK-manager.sh"
+    validate_instance() { return 0; }
+    _rcon_status_ready() { return 0; }
+    ensure_steam_credentials() {
+      STEAM_USERNAME="steam_user"
+      STEAM_PASSWORD="steam_pass"
+      STEAM_SHARED_SECRET="steam_secret"
+    }
+    _run_status_in_container() {
+      printf "status:%s:%s:%s:%s\n" "$1" "$STEAM_USERNAME" "$STEAM_PASSWORD" "$STEAM_SHARED_SECRET"
+    }
+    run_in_container() { echo "unexpected-run"; }
+    execute_rcon_command -status demo
+  '
+
+  assert_success
+  assert_output --partial "Processing -status command on demo..."
+  assert_output --partial "status:demo:steam_user:steam_pass:steam_secret"
+  refute_output --partial "unexpected-run"
+}
+
+@test "execute_rcon_command resolves Steam credentials once for status -all" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/rcon-status-all" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    source "$REPO_ROOT/POK-manager.sh"
+    calls_file="$BATS_TEST_TMPDIR/ensure_calls"
+    : > "$calls_file"
+    list_running_instances() { echo "alpha beta"; }
+    validate_instance() { return 0; }
+    _rcon_status_ready() { return 0; }
+    ensure_steam_credentials() {
+      local count=0
+      if [ -s "$calls_file" ]; then
+        count=$(cat "$calls_file")
+      fi
+      count=$((count + 1))
+      echo "$count" > "$calls_file"
+      STEAM_USERNAME="steam_user"
+      STEAM_PASSWORD="steam_pass"
+      STEAM_SHARED_SECRET="steam_secret"
+    }
+    _run_status_in_container() {
+      printf "status:%s:%s\n" "$1" "$STEAM_USERNAME"
+    }
+    execute_rcon_command -status -all
+    printf "ensure_calls=%s\n" "$(cat "$calls_file")"
+  '
+
+  assert_success
+  assert_output --partial "status:alpha:steam_user"
+  assert_output --partial "status:beta:steam_user"
+  assert_output --partial "ensure_calls=1"
+}
+
+@test "execute_rcon_command skips Steam credential resolution when status target is not ready" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/rcon-status-no-creds" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    source "$REPO_ROOT/POK-manager.sh"
+    validate_instance() { return 0; }
+    docker() {
+      if [[ "$*" == *"/home/pok/arkserver/ShooterGame/Binaries/Win64/ArkAscendedServer.pdb"* ]]; then
+        return 1
+      fi
+      if [[ "$*" == *"/home/pok/update.flag"* ]]; then
+        return 1
+      fi
+      return 0
+    }
+    ensure_steam_credentials() { echo "unexpected-creds"; }
+    _run_status_in_container() { echo "unexpected-status"; }
+    execute_rcon_command -status demo
+  '
+
+  assert_success
+  assert_output --partial "Instance demo has not fully started yet. Please wait a few minutes before checking the status."
+  refute_output --partial "unexpected-creds"
+  refute_output --partial "unexpected-status"
+}
+
 @test "execute_rcon_command rejects custom commands that start with a dash" {
   run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/rcon-custom" POK_MANAGER_TEST_MODE=1 bash -lc '
     set -e

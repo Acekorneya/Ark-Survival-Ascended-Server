@@ -36,6 +36,27 @@ load '../test_helper/project.bash'
   assert_output --partial "pid_file=/home/pok/alpha_ark_server.pid"
 }
 
+@test "prepare_runtime_env keeps only the EOS settings still used at runtime" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    INSTANCE_NAME="alpha"
+    source "$REPO_ROOT/scripts/common.sh"
+    prepare_runtime_env
+    printf "deployment=%s\n" "$EOS_DEPLOYMENT_ID"
+    printf "matchmaking=%s\n" "$EOS_MATCHMAKING_BASE"
+    printf "client_id=%s\n" "${EOS_CLIENT_ID:-unset}"
+    printf "client_secret=%s\n" "${EOS_CLIENT_SECRET:-unset}"
+    printf "basic_auth=%s\n" "${EOS_BASIC_AUTH:-unset}"
+  '
+
+  assert_success
+  assert_output --partial "deployment=ad9a8feffb3b4b2ca315546f038c3ae2"
+  assert_output --partial "matchmaking=https://api.epicgames.dev/wildcard/matchmaking/v1"
+  assert_output --partial "client_id=unset"
+  assert_output --partial "client_secret=unset"
+  assert_output --partial "basic_auth=unset"
+}
+
 @test "env_value_is_truthy recognizes supported true values" {
   run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
     set -e

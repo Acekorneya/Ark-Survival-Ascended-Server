@@ -47,6 +47,53 @@ EOF
   assert_output --partial "memory=12G"
 }
 
+@test "read_docker_compose_config loads quoted Steam credentials without exposing them in config_order" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/compose-steam-read" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    mkdir -p "$BASE_DIR/Instance_demo"
+    cat > "$BASE_DIR/Instance_demo/docker-compose-demo.yaml" <<'"'"'EOF'"'"'
+version: "2.4"
+services:
+  asaserver:
+    environment:
+      - INSTANCE_NAME=demo
+      - '\''STEAM_USERNAME=steam_user'\''
+      - '\''STEAM_PASSWORD=p@ss:wo#rd&x'\''
+      - '\''STEAM_SHARED_SECRET=secret==value'\''
+    mem_limit: 16G
+EOF
+    yq() {
+      local expr="$2"
+      local file="$3"
+      case "$expr" in
+        ".services.asaserver.environment[]")
+          grep "^      - " "$file" | sed "s/^      - //"
+          ;;
+        ".services.asaserver.mem_limit")
+          awk "/mem_limit:/ { print \$2 }" "$file"
+          ;;
+      esac
+    }
+    source "$REPO_ROOT/POK-manager.sh"
+    declare -A config_values=()
+    read_docker_compose_config demo
+    printf "steam_user=%s\n" "${config_values["STEAM_USERNAME"]}"
+    printf "steam_pass=%s\n" "${config_values["STEAM_PASSWORD"]}"
+    printf "steam_secret=%s\n" "${config_values["STEAM_SHARED_SECRET"]}"
+    if printf "%s\n" "${config_order[@]}" | grep -qx "STEAM_PASSWORD"; then
+      echo "steam_in_order=yes"
+    else
+      echo "steam_in_order=no"
+    fi
+  '
+
+  assert_success
+  assert_output --partial "steam_user=steam_user"
+  assert_output --partial "steam_pass=p@ss:wo#rd&x"
+  assert_output --partial "steam_secret=secret==value"
+  assert_output --partial "steam_in_order=no"
+}
+
 @test "prompt_for_input validates API and CPU Optimization as booleans" {
   run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/prompt-bool" POK_MANAGER_TEST_MODE=1 bash -lc '
     set -e
@@ -151,6 +198,199 @@ EOF
 
   assert_success
   assert_output --partial "SAVE_WAIT_SECONDS=11"
+}
+
+@test "add_steam_creds_to_compose writes YAML-safe quoted Steam credential lines" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/steam-compose-write" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    mkdir -p "$BASE_DIR/Instance_demo"
+    cat > "$BASE_DIR/Instance_demo/docker-compose-demo.yaml" <<'"'"'EOF'"'"'
+version: "2.4"
+services:
+  asaserver:
+    environment:
+      - INSTANCE_NAME=demo
+      - CUSTOM_SERVER_ARGS=
+    ports:
+      - "7777:7777/tcp"
+EOF
+    source "$REPO_ROOT/POK-manager.sh"
+    add_steam_creds_to_compose \
+      "$BASE_DIR/Instance_demo/docker-compose-demo.yaml" \
+      "steam user" \
+      "p@ss:wo#rd&x" \
+      "it'\''s-secret=="
+    cat "$BASE_DIR/Instance_demo/docker-compose-demo.yaml"
+  '
+
+  assert_success
+  assert_output --partial "'STEAM_USERNAME=steam user'"
+  assert_output --partial "'STEAM_PASSWORD=p@ss:wo#rd&x'"
+  assert_output --partial "'STEAM_SHARED_SECRET=it''s-secret=='"
+}
+
+@test "write_docker_compose_file preserves Steam credentials from config_values" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/steam-compose-preserve" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    source "$REPO_ROOT/POK-manager.sh"
+    TZ="UTC"
+    PUID=7777
+    PGID=7777
+    chmod() { :; }
+    chown() { :; }
+    get_docker_image_tag() { echo "2_1_beta"; }
+    declare -A config_values=(
+      ["Memory Limit"]="16G"
+      ["BattleEye"]="FALSE"
+      ["API"]="FALSE"
+      ["RCON Enabled"]="TRUE"
+      ["POK Monitor Message"]="FALSE"
+      ["Random Startup Delay"]="TRUE"
+      ["CPU Optimization"]="FALSE"
+      ["Update Server"]="TRUE"
+      ["Update Interval"]="24"
+      ["Update Window Start"]="12:00 AM"
+      ["Update Window End"]="11:59 PM"
+      ["Restart Notice"]="30"
+      ["Save Wait Seconds"]="5"
+      ["MOTD Enabled"]="FALSE"
+      ["MOTD"]=""
+      ["MOTD Duration"]="30"
+      ["Map Name"]="TheIsland"
+      ["Session Name"]="Demo"
+      ["Admin Password"]="secret"
+      ["Server Password"]=""
+      ["ASA Port"]="7777"
+      ["RCON Port"]="27020"
+      ["Max Players"]="70"
+      ["Show Admin Commands In Chat"]="FALSE"
+      ["Cluster ID"]="cluster"
+      ["Mod IDs"]=""
+      ["Passive Mods"]=""
+      ["Custom Server Args"]=""
+      ["STEAM_USERNAME"]="steam_user"
+      ["STEAM_PASSWORD"]="secret#pass"
+      ["STEAM_SHARED_SECRET"]="shared==secret"
+    )
+    write_docker_compose_file demo
+    cat "$BASE_DIR/Instance_demo/docker-compose-demo.yaml"
+  '
+
+  assert_success
+  assert_output --partial "'STEAM_USERNAME=steam_user'"
+  assert_output --partial "'STEAM_PASSWORD=secret#pass'"
+  assert_output --partial "'STEAM_SHARED_SECRET=shared==secret'"
+}
+
+@test "write_docker_compose_file copies Steam credentials from existing instances for new configs" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/steam-compose-copy" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    source "$REPO_ROOT/POK-manager.sh"
+    TZ="UTC"
+    PUID=7777
+    PGID=7777
+    chmod() { :; }
+    chown() { :; }
+    get_docker_image_tag() { echo "2_1_beta"; }
+    find_existing_steam_creds() {
+      local -n _user="$1"
+      local -n _pass="$2"
+      local -n _secret="$3"
+      _user="copied_user"
+      _pass="copied pass"
+      _secret="copied==secret"
+    }
+    declare -A config_values=(
+      ["Memory Limit"]="16G"
+      ["BattleEye"]="FALSE"
+      ["API"]="FALSE"
+      ["RCON Enabled"]="TRUE"
+      ["POK Monitor Message"]="FALSE"
+      ["Random Startup Delay"]="TRUE"
+      ["CPU Optimization"]="FALSE"
+      ["Update Server"]="TRUE"
+      ["Update Interval"]="24"
+      ["Update Window Start"]="12:00 AM"
+      ["Update Window End"]="11:59 PM"
+      ["Restart Notice"]="30"
+      ["Save Wait Seconds"]="5"
+      ["MOTD Enabled"]="FALSE"
+      ["MOTD"]=""
+      ["MOTD Duration"]="30"
+      ["Map Name"]="TheIsland"
+      ["Session Name"]="Demo"
+      ["Admin Password"]="secret"
+      ["Server Password"]=""
+      ["ASA Port"]="7777"
+      ["RCON Port"]="27020"
+      ["Max Players"]="70"
+      ["Show Admin Commands In Chat"]="FALSE"
+      ["Cluster ID"]="cluster"
+      ["Mod IDs"]=""
+      ["Passive Mods"]=""
+      ["Custom Server Args"]=""
+    )
+    write_docker_compose_file demo
+    cat "$BASE_DIR/Instance_demo/docker-compose-demo.yaml"
+  '
+
+  assert_success
+  assert_output --partial "'STEAM_USERNAME=copied_user'"
+  assert_output --partial "'STEAM_PASSWORD=copied pass'"
+  assert_output --partial "'STEAM_SHARED_SECRET=copied==secret'"
+}
+
+@test "write_docker_compose_file skips Steam credentials when none are available" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/steam-compose-skip" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    source "$REPO_ROOT/POK-manager.sh"
+    TZ="UTC"
+    PUID=7777
+    PGID=7777
+    chmod() { :; }
+    chown() { :; }
+    get_docker_image_tag() { echo "2_1_beta"; }
+    find_existing_steam_creds() { return 1; }
+    declare -A config_values=(
+      ["Memory Limit"]="16G"
+      ["BattleEye"]="FALSE"
+      ["API"]="FALSE"
+      ["RCON Enabled"]="TRUE"
+      ["POK Monitor Message"]="FALSE"
+      ["Random Startup Delay"]="TRUE"
+      ["CPU Optimization"]="FALSE"
+      ["Update Server"]="TRUE"
+      ["Update Interval"]="24"
+      ["Update Window Start"]="12:00 AM"
+      ["Update Window End"]="11:59 PM"
+      ["Restart Notice"]="30"
+      ["Save Wait Seconds"]="5"
+      ["MOTD Enabled"]="FALSE"
+      ["MOTD"]=""
+      ["MOTD Duration"]="30"
+      ["Map Name"]="TheIsland"
+      ["Session Name"]="Demo"
+      ["Admin Password"]="secret"
+      ["Server Password"]=""
+      ["ASA Port"]="7777"
+      ["RCON Port"]="27020"
+      ["Max Players"]="70"
+      ["Show Admin Commands In Chat"]="FALSE"
+      ["Cluster ID"]="cluster"
+      ["Mod IDs"]=""
+      ["Passive Mods"]=""
+      ["Custom Server Args"]=""
+    )
+    write_docker_compose_file demo
+    if grep -q "STEAM_USERNAME" "$BASE_DIR/Instance_demo/docker-compose-demo.yaml"; then
+      echo "steam_present=yes"
+    else
+      echo "steam_present=no"
+    fi
+  '
+
+  assert_success
+  assert_output --partial "steam_present=no"
 }
 
 @test "generate_docker_compose loads existing compose values before review" {

@@ -6,6 +6,54 @@ POK_SCRIPTS_DIR="${POK_SCRIPTS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
 # shellcheck source=/dev/null
 source "${POK_SCRIPTS_DIR}/common.sh"
 
+EOS_TOKEN_CACHE="/home/pok/arkserver/ShooterGame/Binaries/Win64/.eos_token.json"
+HELPERS_DIR="/home/pok/scripts/helpers"
+
+get_or_refresh_eos_token() {
+  if [ -f "$EOS_TOKEN_CACHE" ]; then
+    local token expires_at now buffer=300
+    token=$(jq -r '.token' "$EOS_TOKEN_CACHE" 2>/dev/null)
+    expires_at=$(jq -r '.expires_at' "$EOS_TOKEN_CACHE" 2>/dev/null)
+    now=$(date +%s)
+
+    if [ -n "$token" ] && [ "$token" != "null" ] && \
+       [ -n "$expires_at" ] && [ "$expires_at" != "null" ] && \
+       [ "$now" -lt "$((expires_at - buffer))" ] 2>/dev/null; then
+      echo "$token"
+      return 0
+    fi
+  fi
+
+  if [ -z "$STEAM_USERNAME" ] || [ -z "$STEAM_PASSWORD" ]; then
+    echo "MISSING_CREDENTIALS"
+    return 1
+  fi
+
+  local ticket_hex
+  # The container path uses steam-user for ticket generation
+  ticket_hex=$(node "${HELPERS_DIR}/steam_ticket.js" 2>/dev/null)
+  if [ -z "$ticket_hex" ]; then
+    echo "STEAM_TICKET_FAILED"
+    return 1
+  fi
+  ticket_hex="${ticket_hex^^}"
+
+  local token_json
+  token_json=$(python3 "${HELPERS_DIR}/eos_token.py" "$ticket_hex" 2>/dev/null)
+  if [ -z "$token_json" ]; then
+    echo "EOS_EXCHANGE_FAILED"
+    return 1
+  fi
+
+  mkdir -p "$(dirname "$EOS_TOKEN_CACHE")"
+  local tmp_cache="${EOS_TOKEN_CACHE}.tmp.$$"
+  printf '%s' "$token_json" > "$tmp_cache"
+  mv "$tmp_cache" "$EOS_TOKEN_CACHE"
+
+  echo "$token_json" | jq -r '.token'
+  return 0
+}
+
 # Define RCON commands as functions
 saveWorld() {
   send_rcon_command "saveworld"
@@ -100,32 +148,39 @@ interactive_mode() {
 
 # Display full server status
 full_status_display() {
-  # Check if the EOS credentials file exists
   # Recover current ip
   ip=$(curl -s https://ifconfig.me/ip)
 
   deployment_id="$EOS_DEPLOYMENT_ID"
 
-  if [ -z "$deployment_id" ] || [ -z "$EOS_BASIC_AUTH" ]; then
-    echo "Error: EOS credential constants are not set"
+  if [ -z "$deployment_id" ]; then
+    echo "Error: EOS deployment constant is not set"
     return 1
   fi
 
-  # Requesting OAuth token from EOS
-  oauthResponse=$(
-    curl -s -H 'Content-Type: application/x-www-form-urlencoded' \
-      -H 'Accept: application/json' \
-      -H "Authorization: ${EOS_BASIC_AUTH}" \
-      -X POST https://api.epicgames.dev/auth/v1/oauth/token \
-      -d "grant_type=client_credentials&deployment_id=${deployment_id}"
-  )
+  token=$(get_or_refresh_eos_token)
+  local token_status=$?
 
-  if echo "$oauthResponse" | jq -e '.error' >/dev/null; then
-    echo "Error: OAuth request failed with error: $(echo "$oauthResponse" | jq -r '.error_description')"
+  if [ $token_status -ne 0 ] || [ -z "$token" ]; then
+    case "$token" in
+    "MISSING_CREDENTIALS")
+      echo "Error: Steam credentials not configured."
+      echo "Add STEAM_USERNAME and STEAM_PASSWORD to your docker-compose environment section."
+      echo "Or run -status again - the manager will prompt you to set them up."
+      ;;
+    "STEAM_TICKET_FAILED")
+      echo "Error: Failed to get Steam session ticket."
+      echo "Check your STEAM_USERNAME, STEAM_PASSWORD, and STEAM_SHARED_SECRET."
+      ;;
+    "EOS_EXCHANGE_FAILED")
+      echo "Error: Failed to exchange Steam ticket for EOS token."
+      ;;
+    *)
+      echo "Error: Could not get EOS authentication token."
+      ;;
+    esac
     return 1
   fi
-
-  token=$(echo "$oauthResponse" | jq -r '.access_token')
 
   # Server query request
   res=$(

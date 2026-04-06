@@ -1522,6 +1522,217 @@ pull_docker_image() {
   fi
 }
 
+_read_compose_environment_lines() {
+  local compose_file="$1"
+  local env_line=""
+
+  while IFS= read -r env_line; do
+    if [[ "$env_line" == \'*\' ]]; then
+      env_line="${env_line#\'}"
+      env_line="${env_line%\'}"
+    fi
+    printf '%s\n' "$env_line"
+  done < <(yq e '.services.asaserver.environment[]' "$compose_file")
+}
+
+_parse_steam_creds_from_compose() {
+  local compose_file="$1"
+  local -n _steam_user_ref="$2"
+  local -n _steam_pass_ref="$3"
+  local -n _steam_secret_ref="$4"
+  local env_vars=()
+  local env_var=""
+  local key=""
+  local value=""
+
+  _steam_user_ref=""
+  _steam_pass_ref=""
+  _steam_secret_ref=""
+
+  if [ ! -f "$compose_file" ]; then
+    return 1
+  fi
+
+  mapfile -t env_vars < <(_read_compose_environment_lines "$compose_file" 2>/dev/null || true)
+  for env_var in "${env_vars[@]}"; do
+    IFS='=' read -r key value <<< "${env_var}"
+    case "$key" in
+    "STEAM_USERNAME") _steam_user_ref="$value" ;;
+    "STEAM_PASSWORD") _steam_pass_ref="$value" ;;
+    "STEAM_SHARED_SECRET") _steam_secret_ref="$value" ;;
+    esac
+  done
+}
+
+read_steam_creds_from_compose() {
+  local compose_file="$1"
+  _parse_steam_creds_from_compose "$compose_file" STEAM_USERNAME STEAM_PASSWORD STEAM_SHARED_SECRET
+}
+
+_compose_escape_single_quoted_value() {
+  local value="${1-}"
+  value="${value//\'/\'\'}"
+  printf '%s' "$value"
+}
+
+_compose_format_steam_env_line() {
+  local key="$1"
+  local value="${2-}"
+  local escaped_value=""
+
+  escaped_value=$(_compose_escape_single_quoted_value "$value")
+  printf "      - '%s=%s'" "$key" "$escaped_value"
+}
+
+_compose_write_steam_env_lines() {
+  local target_file="$1"
+  local username="$2"
+  local password="$3"
+  local secret="$4"
+
+  printf '%s\n' "$(_compose_format_steam_env_line "STEAM_USERNAME" "$username")" >> "$target_file"
+  printf '%s\n' "$(_compose_format_steam_env_line "STEAM_PASSWORD" "$password")" >> "$target_file"
+  printf '%s\n' "$(_compose_format_steam_env_line "STEAM_SHARED_SECRET" "$secret")" >> "$target_file"
+}
+
+add_steam_creds_to_compose() {
+  local compose_file="$1"
+  local username="$2"
+  local password="$3"
+  local secret="$4"
+  local tmp_file="${compose_file}.tmp"
+  local line=""
+  local inserted=false
+
+  if [ ! -f "$compose_file" ]; then
+    return 1
+  fi
+
+  : > "$tmp_file"
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+    *STEAM_USERNAME=* | *STEAM_PASSWORD=* | *STEAM_SHARED_SECRET=*)
+      continue
+      ;;
+    esac
+
+    if [ "$inserted" = false ] && [[ "$line" =~ ^[[:space:]]*ports: ]]; then
+      _compose_write_steam_env_lines "$tmp_file" "$username" "$password" "$secret"
+      inserted=true
+    fi
+
+    printf '%s\n' "$line" >> "$tmp_file"
+
+    if [ "$inserted" = false ] && [[ "$line" =~ ^[[:space:]]*-[[:space:]]*CUSTOM_SERVER_ARGS= ]]; then
+      _compose_write_steam_env_lines "$tmp_file" "$username" "$password" "$secret"
+      inserted=true
+    fi
+  done < "$compose_file"
+
+  if [ "$inserted" = false ]; then
+    _compose_write_steam_env_lines "$tmp_file" "$username" "$password" "$secret"
+  fi
+
+  mv -f "$tmp_file" "$compose_file"
+}
+
+find_existing_steam_creds() {
+  local -n _fesc_user="$1"
+  local -n _fesc_pass="$2"
+  local -n _fesc_secret="$3"
+  local compose_file=""
+  local _u=""
+  local _p=""
+  local _s=""
+
+  _fesc_user=""
+  _fesc_pass=""
+  _fesc_secret=""
+
+  while IFS= read -r compose_file; do
+    [ -z "$compose_file" ] && continue
+    _parse_steam_creds_from_compose "$compose_file" _u _p _s
+    if [ -n "$_u" ] && [ -n "$_p" ]; then
+      _fesc_user="$_u"
+      _fesc_pass="$_p"
+      _fesc_secret="$_s"
+      return 0
+    fi
+  done < <(_coordination_get_compose_files)
+
+  return 1
+}
+
+ensure_steam_credentials() {
+  local instance_name="$1"
+  local docker_compose_file="${BASE_DIR}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
+  local found_user=""
+  local found_pass=""
+  local found_secret=""
+  local all_compose_file=""
+  local saved_current=false
+
+  if [ ! -f "$docker_compose_file" ]; then
+    echo "Error: Docker compose file not found for instance ${instance_name}."
+    return 1
+  fi
+
+  read_steam_creds_from_compose "$docker_compose_file"
+  if [ -n "$STEAM_USERNAME" ] && [ -n "$STEAM_PASSWORD" ]; then
+    return 0
+  fi
+
+  if find_existing_steam_creds found_user found_pass found_secret; then
+    STEAM_USERNAME="$found_user"
+    STEAM_PASSWORD="$found_pass"
+    STEAM_SHARED_SECRET="$found_secret"
+    add_steam_creds_to_compose "$docker_compose_file" "$STEAM_USERNAME" "$STEAM_PASSWORD" "${STEAM_SHARED_SECRET:-}"
+    return 0
+  fi
+
+  echo ""
+  echo "═══════════════════════════════════════════════════════════"
+  echo "  Steam Credentials Required for Server Status"
+  echo "═══════════════════════════════════════════════════════════"
+  echo ""
+  echo "The -status command now requires a Steam account that owns"
+  echo "ARK: Survival Ascended to authenticate with Epic Online Services."
+  echo ""
+  echo "This is a one-time setup. Credentials are saved to your"
+  echo "docker-compose configuration files."
+  echo ""
+
+  read -rp "Steam Username: " STEAM_USERNAME
+  read -rsp "Steam Password: " STEAM_PASSWORD
+  echo ""
+  echo ""
+  echo "If you have Steam Mobile Authenticator, enter your shared_secret"
+  echo "for automatic 2FA. Leave blank if no 2FA."
+  echo "(Extract shared_secret from Steam Desktop Authenticator or maFiles)"
+  read -rp "Steam Shared Secret (optional): " STEAM_SHARED_SECRET
+  echo ""
+
+  if [ -z "$STEAM_USERNAME" ] || [ -z "$STEAM_PASSWORD" ]; then
+    echo "Error: Steam username and password are required for -status."
+    return 1
+  fi
+
+  while IFS= read -r all_compose_file; do
+    [ -z "$all_compose_file" ] && continue
+    add_steam_creds_to_compose "$all_compose_file" "$STEAM_USERNAME" "$STEAM_PASSWORD" "${STEAM_SHARED_SECRET:-}"
+    if [ "$all_compose_file" = "$docker_compose_file" ]; then
+      saved_current=true
+    fi
+  done < <(_coordination_get_compose_files)
+
+  if [ "$saved_current" = false ]; then
+    add_steam_creds_to_compose "$docker_compose_file" "$STEAM_USERNAME" "$STEAM_PASSWORD" "${STEAM_SHARED_SECRET:-}"
+  fi
+
+  echo "Steam credentials saved to all instance configurations."
+  return 0
+}
+
 read_docker_compose_config() {
   local instance_name="$1"
   local base_dir="${BASE_DIR}"
@@ -1533,7 +1744,7 @@ read_docker_compose_config() {
 
   # Parse the environment section
   local env_vars
-  mapfile -t env_vars < <(yq e '.services.asaserver.environment[]' "$docker_compose_file")
+  mapfile -t env_vars < <(_read_compose_environment_lines "$docker_compose_file")
 
   for env_var in "${env_vars[@]}"; do
     # Splitting each line into key and value
@@ -1571,6 +1782,9 @@ read_docker_compose_config() {
     "MOD_IDS") config_key="Mod IDs" ;;
     "PASSIVE_MODS") config_key="Passive Mods" ;;
     "CUSTOM_SERVER_ARGS") config_key="Custom Server Args" ;;
+    "STEAM_USERNAME") config_key="STEAM_USERNAME" ;;
+    "STEAM_PASSWORD") config_key="STEAM_PASSWORD" ;;
+    "STEAM_SHARED_SECRET") config_key="STEAM_SHARED_SECRET" ;;
     *) config_key="$key" ;; # For any not explicitly mapped
     esac
     
@@ -1669,6 +1883,19 @@ EOF
       echo "      - $env_key=${config_values[$key]}" >> "$docker_compose_file"
     fi
   done
+
+  # Append Steam credentials separately so they stay out of config_order-driven review screens.
+  local _wdcf_steam_user="${config_values[STEAM_USERNAME]:-}"
+  local _wdcf_steam_pass="${config_values[STEAM_PASSWORD]:-}"
+  local _wdcf_steam_secret="${config_values[STEAM_SHARED_SECRET]:-}"
+
+  if [ -z "$_wdcf_steam_user" ] || [ -z "$_wdcf_steam_pass" ]; then
+    find_existing_steam_creds _wdcf_steam_user _wdcf_steam_pass _wdcf_steam_secret || true
+  fi
+
+  if [ -n "$_wdcf_steam_user" ] && [ -n "$_wdcf_steam_pass" ]; then
+    _compose_write_steam_env_lines "$docker_compose_file" "$_wdcf_steam_user" "$_wdcf_steam_pass" "${_wdcf_steam_secret:-}"
+  fi
 
   # Continue writing the rest of the Docker Compose configuration
 cat >> "$docker_compose_file" <<-EOF
@@ -3954,6 +4181,21 @@ _rcon_status_ready() {
   return 1
 }
 
+_run_status_in_container() {
+  local instance_name="$1"
+  local container_name="asa_${instance_name}"
+
+  if docker ps -q -f name=^/${container_name}$ > /dev/null; then
+    docker exec \
+      -e "STEAM_USERNAME=${STEAM_USERNAME}" \
+      -e "STEAM_PASSWORD=${STEAM_PASSWORD}" \
+      -e "STEAM_SHARED_SECRET=${STEAM_SHARED_SECRET:-}" \
+      "$container_name" /bin/bash -c "/home/pok/scripts/rcon_interface.sh -status"
+  else
+    echo "Instance ${instance_name} is not running or does not exist."
+  fi
+}
+
 _rcon_process_all_running_instances() {
   local action="$1"
   local message="$2"
@@ -3961,6 +4203,10 @@ _rcon_process_all_running_instances() {
   local running_instances=("$@")
   local instance
   declare -A instance_outputs
+
+  if [[ "$action" == "-status" ]] && [ ${#running_instances[@]} -gt 0 ]; then
+    ensure_steam_credentials "${running_instances[0]}" || return 1
+  fi
 
   echo "----- Processing $action command for all running instances. Please wait... -----"
   for instance in "${running_instances[@]}"; do
@@ -3973,7 +4219,11 @@ _rcon_process_all_running_instances() {
       continue
     fi
 
-    instance_outputs["$instance"]="$(run_in_container "$instance" "$action" "$message")"
+    if [[ "$action" == "-status" ]]; then
+      instance_outputs["$instance"]="$(_run_status_in_container "$instance")"
+    else
+      instance_outputs["$instance"]="$(run_in_container "$instance" "$action" "$message")"
+    fi
   done
 
   for instance in "${!instance_outputs[@]}"; do
@@ -4017,6 +4267,12 @@ _rcon_run_single_instance_command() {
 
   if [[ "$action" == "-status" ]] && ! _rcon_status_ready "$instance_name"; then
     return 0
+  fi
+
+  if [[ "$action" == "-status" ]]; then
+    ensure_steam_credentials "$instance_name" || return 1
+    _run_status_in_container "$instance_name"
+    return
   fi
 
   if [[ "$run_in_background" == "true" ]]; then

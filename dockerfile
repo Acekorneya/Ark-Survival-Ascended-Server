@@ -201,11 +201,18 @@ RUN set -ex; \
     rm -rf /tmp/vcredist
 
 USER root
+# Install Node.js 20 LTS for EOS token helpers
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
 # Copy scripts, defaults, and Require_Files folders into the container, ensure they are executable
 COPY --chown=pok:pok scripts/ /home/pok/scripts/
 COPY --chown=pok:pok defaults/ /home/pok/defaults/
 COPY --chown=pok:pok require_files/ /home/pok/require_files/
 RUN find /home/pok/scripts -maxdepth 1 -type f \( -name "*.sh" -o -name "*.py" \) -exec chmod +x {} +
+RUN cd /home/pok/scripts/helpers && npm install --production
+RUN find /home/pok/scripts/helpers -type f \( -name "*.py" -o -name "*.js" \) -exec chmod +x {} +
 
 # Create essential runtime directories with proper permissions
 RUN set -ex; \

@@ -87,3 +87,138 @@ load '../test_helper/project.bash'
   assert_success
   assert_output --partial "Command received by server, but no response was provided."
 }
+
+@test "get_or_refresh_eos_token returns a cached token when it is still valid" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/rcon_commands.sh"
+    EOS_TOKEN_CACHE="$BATS_TEST_TMPDIR/eos-token-cache.json"
+    printf "%s" "{\"token\":\"cached-token\",\"expires_at\":1600}" > "$EOS_TOKEN_CACHE"
+    date() { echo 1000; }
+    set +e
+    token=$(get_or_refresh_eos_token)
+    status=$?
+    set -e
+    printf "status=%s\n" "$status"
+    printf "token=%s\n" "$token"
+  '
+
+  assert_success
+  assert_output --partial "status=0"
+  assert_output --partial "token=cached-token"
+}
+
+@test "get_or_refresh_eos_token refreshes the cache when the token is missing or expired" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/rcon_commands.sh"
+    EOS_TOKEN_CACHE="$BATS_TEST_TMPDIR/eos-token-refresh.json"
+    STEAM_USERNAME="steam_user"
+    STEAM_PASSWORD="steam_pass"
+    STEAM_SHARED_SECRET=""
+    node() { echo "ticket-hex"; }
+    python3() { printf "%s" "{\"token\":\"fresh-token\",\"expires_at\":1700}"; }
+    set +e
+    token=$(get_or_refresh_eos_token)
+    status=$?
+    set -e
+    printf "status=%s\n" "$status"
+    printf "token=%s\n" "$token"
+    printf "cache=%s\n" "$(cat "$EOS_TOKEN_CACHE")"
+  '
+
+  assert_success
+  assert_output --partial "status=0"
+  assert_output --partial "token=fresh-token"
+  assert_output --partial "\"token\":\"fresh-token\""
+}
+
+@test "get_or_refresh_eos_token normalizes Steam ticket hex before EOS exchange" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/rcon_commands.sh"
+    EOS_TOKEN_CACHE="$BATS_TEST_TMPDIR/eos-token-uppercase.json"
+    STEAM_USERNAME="steam_user"
+    STEAM_PASSWORD="steam_pass"
+    node() { echo "deadbeef"; }
+    python3() {
+      printf "ticket_arg=%s\n" "$2" > "$BATS_TEST_TMPDIR/python-args"
+      printf "%s" "{\"token\":\"fresh-token\",\"expires_at\":1700}"
+    }
+    set +e
+    token=$(get_or_refresh_eos_token)
+    status=$?
+    set -e
+    printf "status=%s\n" "$status"
+    printf "token=%s\n" "$token"
+    cat "$BATS_TEST_TMPDIR/python-args"
+  '
+
+  assert_success
+  assert_output --partial "status=0"
+  assert_output --partial "token=fresh-token"
+  assert_output --partial "ticket_arg=DEADBEEF"
+}
+
+@test "get_or_refresh_eos_token fails cleanly when Steam credentials are missing" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/rcon_commands.sh"
+    EOS_TOKEN_CACHE="$BATS_TEST_TMPDIR/eos-token-missing.json"
+    STEAM_USERNAME=""
+    STEAM_PASSWORD=""
+    set +e
+    token=$(get_or_refresh_eos_token)
+    status=$?
+    set -e
+    printf "status=%s\n" "$status"
+    printf "token=%s\n" "$token"
+  '
+
+  assert_success
+  assert_output --partial "status=1"
+  assert_output --partial "token=MISSING_CREDENTIALS"
+}
+
+@test "get_or_refresh_eos_token reports Steam ticket acquisition failures" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/rcon_commands.sh"
+    EOS_TOKEN_CACHE="$BATS_TEST_TMPDIR/eos-token-ticket-fail.json"
+    STEAM_USERNAME="steam_user"
+    STEAM_PASSWORD="steam_pass"
+    node() { return 1; }
+    set +e
+    token=$(get_or_refresh_eos_token)
+    status=$?
+    set -e
+    printf "status=%s\n" "$status"
+    printf "token=%s\n" "$token"
+  '
+
+  assert_success
+  assert_output --partial "status=1"
+  assert_output --partial "token=STEAM_TICKET_FAILED"
+}
+
+@test "get_or_refresh_eos_token reports EOS exchange failures" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/rcon_commands.sh"
+    EOS_TOKEN_CACHE="$BATS_TEST_TMPDIR/eos-token-exchange-fail.json"
+    STEAM_USERNAME="steam_user"
+    STEAM_PASSWORD="steam_pass"
+    node() { echo "ticket-hex"; }
+    python3() { return 1; }
+    set +e
+    token=$(get_or_refresh_eos_token)
+    status=$?
+    set -e
+    printf "status=%s\n" "$status"
+    printf "token=%s\n" "$token"
+  '
+
+  assert_success
+  assert_output --partial "status=1"
+  assert_output --partial "token=EOS_EXCHANGE_FAILED"
+}
