@@ -4,24 +4,16 @@ load '../test_helper/bats-support/load.bash'
 load '../test_helper/bats-assert/load.bash'
 load '../test_helper/project.bash'
 
-@test "eos_token helper matches asa_server_list exchange semantics" {
+@test "eos_token helper uses the verified Steam session ticket exchange semantics" {
   run env REPO_ROOT="$PROJECT_ROOT" python3 - <<'PY'
 import importlib.util
 import os
 import pathlib
-import re
 import urllib.parse
 
 repo = pathlib.Path(os.environ["REPO_ROOT"])
-asa_source = (repo / "asa_server_list.py").read_text(encoding="utf-8")
-
-def extract_constant(name: str) -> str:
-    match = re.search(rf"^{name}\s*=\s*\"([^\"]+)\"", asa_source, re.MULTILINE)
-    assert match, f"missing {name}"
-    return match.group(1)
-
-asa_basic_auth = extract_constant("EOS_BASIC_AUTH")
-asa_deployment_id = extract_constant("EOS_DEPLOYMENT_ID")
+expected_basic_auth = "Basic eHl6YTc4OTFxQzVyTXhmMGU3NkI0bEdlNXFlUFFYTnk6MTRCaVpxTFJja1ZKNDlkOWZaWTAvblVveW8rZFEyWjdrOHVySW51Z3ZINA=="
+expected_deployment_id = "ad9a8feffb3b4b2ca315546f038c3ae2"
 
 helper_path = repo / "scripts" / "helpers" / "eos_token.py"
 spec = importlib.util.spec_from_file_location("eos_token_helper", helper_path)
@@ -49,16 +41,16 @@ def fake_urlopen(req, timeout=0):
 module.urllib.request.urlopen = fake_urlopen
 exit_code = module.exchange("deadbeef")
 assert exit_code == 0, exit_code
-assert module.EOS_BASIC_AUTH == asa_basic_auth
-assert module.EOS_DEPLOYMENT_ID == asa_deployment_id
+assert module.EOS_BASIC_AUTH == expected_basic_auth
+assert module.EOS_DEPLOYMENT_ID == expected_deployment_id
 assert captured["url"] == "https://api.epicgames.dev/auth/v1/oauth/token"
-assert captured["headers"]["authorization"] == asa_basic_auth
+assert captured["headers"]["authorization"] == expected_basic_auth
 assert captured["headers"]["content-type"] == "application/x-www-form-urlencoded"
 assert captured["headers"]["accept"] == "application/json"
 assert captured["body"]["grant_type"] == ["external_auth"]
 assert captured["body"]["external_auth_type"] == ["steam_session_ticket"]
 assert captured["body"]["external_auth_token"] == ["DEADBEEF"]
-assert captured["body"]["deployment_id"] == [asa_deployment_id]
+assert captured["body"]["deployment_id"] == [expected_deployment_id]
 assert captured["body"]["nonce"] and captured["body"]["nonce"][0]
 print("auth=match")
 print("ticket=DEADBEEF")
