@@ -9,7 +9,7 @@ load '../test_helper/project.bash'
     set -e
     modules_dir="$BATS_TEST_TMPDIR/modules"
     helper_copy="$BATS_TEST_TMPDIR/steam_ticket.js"
-    mkdir -p "$modules_dir/steam-user" "$modules_dir/steam-totp"
+    mkdir -p "$modules_dir/steam-user"
     cp "$REPO_ROOT/scripts/helpers/steam_ticket.js" "$helper_copy"
 
     cat > "$modules_dir/steam-user/index.js" <<'"'"'EOF'"'"'
@@ -37,13 +37,6 @@ module.exports = class SteamUser extends EventEmitter {
 };
 EOF
 
-    cat > "$modules_dir/steam-totp/index.js" <<'"'"'EOF'"'"'
-module.exports = {
-  getTimeOffset(callback) { callback(null, 0); },
-  generateAuthCode() { return "000000"; }
-};
-EOF
-
     TEST_MARKER="$BATS_TEST_TMPDIR/steam-ticket-marker"
     set +e
     output=$(NODE_PATH="$modules_dir" TEST_MARKER="$TEST_MARKER" STEAM_USERNAME="user" STEAM_PASSWORD="pass" STEAM_TICKET_REQUEST_DELAY_MS=0 timeout 5 node "$helper_copy")
@@ -65,7 +58,7 @@ EOF
     set -e
     modules_dir="$BATS_TEST_TMPDIR/modules"
     helper_copy="$BATS_TEST_TMPDIR/steam_ticket.js"
-    mkdir -p "$modules_dir/steam-user" "$modules_dir/steam-totp"
+    mkdir -p "$modules_dir/steam-user"
     cp "$REPO_ROOT/scripts/helpers/steam_ticket.js" "$helper_copy"
 
     cat > "$modules_dir/steam-user/index.js" <<'"'"'EOF'"'"'
@@ -86,13 +79,6 @@ module.exports = class SteamUser extends EventEmitter {
 };
 EOF
 
-    cat > "$modules_dir/steam-totp/index.js" <<'"'"'EOF'"'"'
-module.exports = {
-  getTimeOffset(callback) { callback(null, 0); },
-  generateAuthCode() { return "000000"; }
-};
-EOF
-
     set +e
     NODE_PATH="$modules_dir" STEAM_USERNAME="user" STEAM_PASSWORD="pass" STEAM_TICKET_REQUEST_DELAY_MS=0 timeout 5 node "$helper_copy"
     status=$?
@@ -103,4 +89,75 @@ EOF
   assert_success
   assert_output --partial "Failed to get auth ticket: Steam session ticket is unexpectedly short (21 bytes)"
   assert_output --partial "status=1"
+}
+
+@test "steam_ticket helper requests Steam Guard only when Steam asks for it" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    modules_dir="$BATS_TEST_TMPDIR/modules"
+    helper_copy="$BATS_TEST_TMPDIR/steam_ticket.js"
+    mkdir -p "$modules_dir/steam-user"
+    cp "$REPO_ROOT/scripts/helpers/steam_ticket.js" "$helper_copy"
+
+    cat > "$modules_dir/steam-user/index.js" <<'"'"'EOF'"'"'
+const {EventEmitter} = require("events");
+
+module.exports = class SteamUser extends EventEmitter {
+  logOn() {
+    setImmediate(() => this.emit("steamGuard", null, () => {}));
+  }
+
+  gamesPlayed() {}
+  createAuthSessionTicket() {}
+  logOff() {}
+};
+EOF
+
+    set +e
+    output=$(NODE_PATH="$modules_dir" STEAM_USERNAME="user" STEAM_PASSWORD="pass" STEAM_TICKET_REQUEST_DELAY_MS=0 timeout 5 node "$helper_copy" 2>&1)
+    status=$?
+    set -e
+    printf "status=%s\n" "$status"
+    printf "%s\n" "$output"
+  '
+
+  assert_success
+  assert_output --partial "status=1"
+  assert_output --partial "STEAM_GUARD_REQUIRED:mobile authenticator"
+  assert_output --partial "Enter the current 5-digit code from your Steam app when prompted."
+}
+
+@test "steam_ticket helper shows a clear message when Steam rate-limits the account" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    modules_dir="$BATS_TEST_TMPDIR/modules"
+    helper_copy="$BATS_TEST_TMPDIR/steam_ticket.js"
+    mkdir -p "$modules_dir/steam-user"
+    cp "$REPO_ROOT/scripts/helpers/steam_ticket.js" "$helper_copy"
+
+    cat > "$modules_dir/steam-user/index.js" <<'"'"'EOF'"'"'
+const {EventEmitter} = require("events");
+
+module.exports = class SteamUser extends EventEmitter {
+  logOn() {
+    setImmediate(() => this.emit("error", new Error("RateLimitExceeded")));
+  }
+
+  gamesPlayed() {}
+  createAuthSessionTicket() {}
+  logOff() {}
+};
+EOF
+
+    set +e
+    output=$(NODE_PATH="$modules_dir" STEAM_USERNAME="user" STEAM_PASSWORD="pass" STEAM_TICKET_REQUEST_DELAY_MS=0 timeout 5 node "$helper_copy" 2>&1)
+    status=$?
+    set -e
+    printf "status=%s\n" "$status"
+    printf "%s\n" "$output"
+  '
+
+  assert_success
+  assert_output --partial "status=1"
+  assert_output --partial "Steam error: RateLimitExceeded. Steam is temporarily rate-limiting this account. Wait a few minutes and try -status again."
 }

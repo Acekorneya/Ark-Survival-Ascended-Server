@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 const SteamUser = require("steam-user");
-const SteamTotp = require("steam-totp");
 
 const client = new SteamUser();
 const appId = parseInt(process.env.STEAM_APP_ID || "2399830", 10);
@@ -13,6 +12,16 @@ function debug(message) {
   if (debugEnabled) {
     console.error(message);
   }
+}
+
+function formatSteamError(err) {
+  const rawMessage = err && err.message ? String(err.message) : String(err || "Unknown Steam error");
+
+  if (rawMessage.includes("RateLimitExceeded")) {
+    return "Steam error: RateLimitExceeded. Steam is temporarily rate-limiting this account. Wait a few minutes and try -status again.";
+  }
+
+  return `Steam error: ${rawMessage}`;
 }
 
 function extractSessionTicket(sessionTicket) {
@@ -58,28 +67,11 @@ function getTicket(callback) {
   });
 }
 
-async function buildTwoFactorCode() {
-  if (!process.env.STEAM_SHARED_SECRET) {
-    return null;
-  }
-
-  const offset = await new Promise((resolve, reject) =>
-    SteamTotp.getTimeOffset((err, value) => (err ? reject(err) : resolve(value)))
-  );
-
-  return SteamTotp.generateAuthCode(process.env.STEAM_SHARED_SECRET, offset);
-}
-
 async function main() {
   const logOnOptions = {
     accountName: process.env.STEAM_USERNAME,
     password: process.env.STEAM_PASSWORD,
   };
-
-  const twoFactorCode = await buildTwoFactorCode();
-  if (twoFactorCode) {
-    logOnOptions.twoFactorCode = twoFactorCode;
-  }
 
   client.logOn(logOnOptions);
 
@@ -93,7 +85,7 @@ async function main() {
     console.error(`STEAM_GUARD_REQUIRED:${domain || "mobile authenticator"}`);
     console.error(
       `Steam Guard required (${domain || "mobile authenticator"}). ` +
-      `Re-run -status and enter the current code from your Steam app when prompted.`
+      `Enter the current 5-digit code from your Steam app when prompted.`
     );
     process.exit(1);
   });
@@ -128,7 +120,7 @@ async function main() {
   });
 
   client.on("error", (err) => {
-    console.error("Steam error:", err.message);
+    console.error(formatSteamError(err));
     process.exit(1);
   });
 }

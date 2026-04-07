@@ -115,7 +115,6 @@ load '../test_helper/project.bash'
     EOS_TOKEN_CACHE="$BATS_TEST_TMPDIR/eos-token-refresh.json"
     STEAM_USERNAME="steam_user"
     STEAM_PASSWORD="steam_pass"
-    STEAM_SHARED_SECRET=""
     node() { echo "ticket-hex"; }
     python3() { printf "%s" "{\"token\":\"fresh-token\",\"expires_at\":1700}"; }
     set +e
@@ -200,6 +199,43 @@ load '../test_helper/project.bash'
   assert_success
   assert_output --partial "status=1"
   assert_output --partial "token=STEAM_TICKET_FAILED"
+}
+
+@test "get_or_refresh_eos_token fails immediately on Steam rate limiting" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/rcon_commands.sh"
+    EOS_TOKEN_CACHE="$BATS_TEST_TMPDIR/eos-token-rate-limit.json"
+    EOS_EXCHANGE_MAX_ATTEMPTS=3
+    STEAM_USERNAME="steam_user"
+    STEAM_PASSWORD="steam_pass"
+    attempts_file="$BATS_TEST_TMPDIR/ticket-attempts"
+    node() {
+      local count=0
+      if [ -f "$attempts_file" ]; then
+        count=$(cat "$attempts_file")
+      fi
+      count=$((count + 1))
+      echo "$count" > "$attempts_file"
+      echo "Steam error: RateLimitExceeded. Steam is temporarily rate-limiting this account. Wait a few minutes and try -status again." >&2
+      return 1
+    }
+    sleep() { echo "unexpected-sleep"; }
+    set +e
+    token=$(get_or_refresh_eos_token)
+    status=$?
+    set -e
+    printf "status=%s\n" "$status"
+    printf "token=%s\n" "$token"
+    printf "attempts=%s\n" "$(cat "$attempts_file")"
+  '
+
+  assert_success
+  assert_output --partial "Steam error: RateLimitExceeded. Steam is temporarily rate-limiting this account. Wait a few minutes and try -status again."
+  assert_output --partial "status=1"
+  assert_output --partial "token=STEAM_TICKET_FAILED"
+  assert_output --partial "attempts=1"
+  refute_output --partial "unexpected-sleep"
 }
 
 @test "get_or_refresh_eos_token reports EOS exchange failures" {

@@ -101,10 +101,9 @@ EOF
     ensure_steam_credentials() {
       STEAM_USERNAME="steam_user"
       STEAM_PASSWORD="steam_pass"
-      STEAM_SHARED_SECRET=""
     }
     _run_status_in_container() {
-      printf "status:%s:%s:%s:%s\n" "$1" "$STEAM_USERNAME" "$STEAM_PASSWORD" "$STEAM_SHARED_SECRET"
+      printf "status:%s:%s:%s\n" "$1" "$STEAM_USERNAME" "$STEAM_PASSWORD"
     }
     _prompt_steam_guard_code() { echo "unexpected-guard-prompt"; return 1; }
     run_in_container() { echo "unexpected-run"; }
@@ -113,7 +112,7 @@ EOF
 
   assert_success
   assert_output --partial "Processing -status command on demo..."
-  assert_output --partial "status:demo:steam_user:steam_pass:"
+  assert_output --partial "status:demo:steam_user:steam_pass"
   refute_output --partial "unexpected-guard-prompt"
   refute_output --partial "unexpected-run"
 }
@@ -136,7 +135,6 @@ EOF
       echo "$count" > "$calls_file"
       STEAM_USERNAME="steam_user"
       STEAM_PASSWORD="steam_pass"
-      STEAM_SHARED_SECRET="steam_secret"
     }
     _run_status_in_container() {
       printf "status:%s:%s\n" "$1" "$STEAM_USERNAME"
@@ -151,6 +149,68 @@ EOF
   assert_output --partial "ensure_calls=1"
 }
 
+@test "execute_rcon_command passes an optionally entered Steam Guard code on the first status attempt" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/rcon-status-optional-guard" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    source "$REPO_ROOT/POK-manager.sh"
+    validate_instance() { return 0; }
+    _rcon_status_ready() { return 0; }
+    ensure_steam_credentials() {
+      STEAM_USERNAME="steam_user"
+      STEAM_PASSWORD="steam_pass"
+    }
+    _prompt_optional_steam_guard_code() {
+      printf "optional-prompt:%s\n" "$1"
+      STEAM_GUARD_CODE="54321"
+    }
+    _run_status_in_container() {
+      printf "status:%s:%s\n" "$1" "${STEAM_GUARD_CODE:-none}"
+    }
+    _prompt_steam_guard_code() { echo "unexpected-required-prompt"; return 1; }
+    execute_rcon_command -status demo
+  '
+
+  assert_success
+  assert_output --partial "optional-prompt:demo"
+  assert_output --partial "status:demo:54321"
+  refute_output --partial "unexpected-required-prompt"
+}
+
+@test "execute_rcon_command prompts once for an optional Steam Guard code for status -all" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/rcon-status-all-optional-guard" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    source "$REPO_ROOT/POK-manager.sh"
+    prompt_calls_file="$BATS_TEST_TMPDIR/optional_prompt_calls"
+    : > "$prompt_calls_file"
+    list_running_instances() { echo "alpha beta"; }
+    validate_instance() { return 0; }
+    _rcon_status_ready() { return 0; }
+    ensure_steam_credentials() {
+      STEAM_USERNAME="steam_user"
+      STEAM_PASSWORD="steam_pass"
+    }
+    _prompt_optional_steam_guard_code() {
+      local count=0
+      if [ -s "$prompt_calls_file" ]; then
+        count=$(cat "$prompt_calls_file")
+      fi
+      count=$((count + 1))
+      echo "$count" > "$prompt_calls_file"
+      STEAM_GUARD_CODE="54321"
+    }
+    _run_status_in_container() {
+      printf "status:%s:%s\n" "$1" "${STEAM_GUARD_CODE:-none}"
+    }
+    execute_rcon_command -status -all
+    printf "optional_prompt_calls=%s\n" "$(cat "$prompt_calls_file")"
+  '
+
+  assert_success
+  assert_output --partial "status:alpha:54321"
+  assert_output --partial "status:beta:54321"
+  assert_output --partial "optional_prompt_calls=1"
+}
+
 @test "execute_rcon_command prompts for Steam Guard only after status requires it" {
   run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/rcon-status-guard" POK_MANAGER_TEST_MODE=1 bash -lc '
     set -e
@@ -160,7 +220,6 @@ EOF
     ensure_steam_credentials() {
       STEAM_USERNAME="steam_user"
       STEAM_PASSWORD="steam_pass"
-      STEAM_SHARED_SECRET=""
     }
     _run_status_in_container() {
       if [ -z "${STEAM_GUARD_CODE:-}" ]; then
@@ -196,7 +255,6 @@ EOF
     ensure_steam_credentials() {
       STEAM_USERNAME="steam_user"
       STEAM_PASSWORD="steam_pass"
-      STEAM_SHARED_SECRET=""
     }
     _run_status_in_container() {
       if [ "$1" = "alpha" ] && [ -z "${STEAM_GUARD_CODE:-}" ]; then
@@ -222,6 +280,25 @@ EOF
   assert_output --partial "status:alpha:54321"
   assert_output --partial "status:beta:54321"
   assert_output --partial "prompt_calls=1"
+}
+
+@test "_prompt_optional_steam_guard_code skips prompting when no interactive terminal is available" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/rcon-optional-guard-cache" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    source "$REPO_ROOT/POK-manager.sh"
+    set +e
+    output=$(_prompt_optional_steam_guard_code demo 2>&1)
+    status=$?
+    set -e
+    printf "status=%s\n" "$status"
+    printf "output=%s\n" "$output"
+    printf "guard_code=%s\n" "${STEAM_GUARD_CODE:-empty}"
+  '
+
+  assert_success
+  assert_output --partial "status=0"
+  assert_output --partial "output="
+  assert_output --partial "guard_code=empty"
 }
 
 @test "execute_rcon_command skips Steam credential resolution when status target is not ready" {

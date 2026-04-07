@@ -424,15 +424,16 @@ Wildcard's current matchmaking status endpoint now requires a real EOS user toke
 
 POK-manager now handles this automatically:
 
-1. On the first `-status` run, the manager prompts for `STEAM_USERNAME`, `STEAM_PASSWORD`, and optionally `STEAM_SHARED_SECRET`.
+1. On the first `-status` run, the manager prompts for `STEAM_USERNAME` and `STEAM_PASSWORD`.
 2. Those values are saved in the instance Docker Compose file so future `-status` runs do not prompt again.
-3. Inside the container, the helper generates a Steam session ticket, exchanges it for an EOS bearer token, and then uses that token to query the ASA matchmaking API.
-4. The EOS token is cached and reused until it is close to expiring, so repeated `-status` checks do not need to re-authenticate every time.
+3. When a fresh Steam/EOS login is likely needed, the manager offers a prompt for the current 5-digit code from the Steam mobile app. You can leave it blank if Steam Guard is not enabled on that account.
+4. Inside the container, the helper generates a Steam session ticket, exchanges it for an EOS bearer token, and then uses that token to query the ASA matchmaking API.
+5. The EOS token is cached and reused until it is close to expiring, so repeated `-status` checks do not need to re-authenticate every time.
 
 Important notes:
 
 - These Steam credentials are only needed for the `-status` command path.
-- `STEAM_SHARED_SECRET` is optional, but you should set it if the Steam account uses Steam Guard mobile authenticator codes.
+- The 5-digit Steam Guard mobile code is never saved to compose. You can enter it up front for a fresh auth run, or leave it blank if the account does not use Steam Guard.
 - `-status -all` resolves the Steam credentials once and reuses them for every running instance.
 - The Steam values are preserved in the compose file, but they are not shown in the interactive config review screen to avoid echoing secrets back to the terminal.
 
@@ -682,7 +683,6 @@ When creating a new server instance using POK-manager.sh, a Docker Compose confi
 | `SERVER_ADMIN_PASSWORD`       | `MyPassword`      | The admin password for the server                                                         |
 | `STEAM_USERNAME`              |                   | Optional: Steam account name used only by `-status` to obtain an EOS user token           |
 | `STEAM_PASSWORD`              |                   | Optional: Steam password used only by `-status` to obtain an EOS user token               |
-| `STEAM_SHARED_SECRET`         |                   | Optional: Steam Guard shared secret for accounts that require mobile 2FA during `-status` |
 | `SERVER_PASSWORD`             |                   | Set a server password or leave it blank (ONLY NUMBERS AND CHARACTERS ARE ALLOWED BY DEVS) |
 | `ASA_PORT`                    | `7777`            | The game port for the server                                                              |
 | `RCON_PORT`                   | `27020`           | Rcon Port Use for Most Server Operations                                                  |
@@ -711,8 +711,9 @@ Host file ownership must match these values to prevent permission issues.
 
 **`-status` authentication note**
 
-- `STEAM_USERNAME`, `STEAM_PASSWORD`, and `STEAM_SHARED_SECRET` are only used for the `-status` matchmaking query flow.
+- `STEAM_USERNAME` and `STEAM_PASSWORD` are only used for the `-status` matchmaking query flow.
 - Most users do not need to add them manually because POK-manager can prompt for them and save them automatically on the first `-status` run.
+- When a fresh Steam/EOS auth is likely needed, POK-manager offers the current 5-digit mobile code prompt and does not save it.
 
 ---
 
@@ -751,7 +752,6 @@ services:
       - SERVER_ADMIN_PASSWORD=MyPassword     # The admin password for the server 
       - STEAM_USERNAME=                      # Optional: used only by -status to obtain an EOS user token
       - STEAM_PASSWORD=                      # Optional: used only by -status to obtain an EOS user token
-      - STEAM_SHARED_SECRET=                 # Optional: set this if the Steam account uses Steam Guard mobile 2FA
       - SERVER_PASSWORD=                     # Set a server password or leave it blank (ONLY NUMBERS AND CHARACTERS ARE ALLOWED BY DEVS)
       - ASA_PORT=7777                        # The port for the server
       - RCON_PORT=27020                      # The port for the RCON

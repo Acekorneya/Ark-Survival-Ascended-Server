@@ -79,7 +79,11 @@ EOF
     read_docker_compose_config demo
     printf "steam_user=%s\n" "${config_values["STEAM_USERNAME"]}"
     printf "steam_pass=%s\n" "${config_values["STEAM_PASSWORD"]}"
-    printf "steam_secret=%s\n" "${config_values["STEAM_SHARED_SECRET"]}"
+    if [ -n "${config_values["STEAM_SHARED_SECRET"]+set}" ]; then
+      echo "steam_secret_present=yes"
+    else
+      echo "steam_secret_present=no"
+    fi
     if printf "%s\n" "${config_order[@]}" | grep -qx "STEAM_PASSWORD"; then
       echo "steam_in_order=yes"
     else
@@ -90,7 +94,7 @@ EOF
   assert_success
   assert_output --partial "steam_user=steam_user"
   assert_output --partial "steam_pass=p@ss:wo#rd&x"
-  assert_output --partial "steam_secret=secret==value"
+  assert_output --partial "steam_secret_present=no"
   assert_output --partial "steam_in_order=no"
 }
 
@@ -200,7 +204,7 @@ EOF
   assert_output --partial "SAVE_WAIT_SECONDS=11"
 }
 
-@test "add_steam_creds_to_compose writes YAML-safe quoted Steam credential lines" {
+@test "add_steam_creds_to_compose writes YAML-safe quoted Steam credential lines and removes stale shared secrets" {
   run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/steam-compose-write" POK_MANAGER_TEST_MODE=1 bash -lc '
     set -e
     mkdir -p "$BASE_DIR/Instance_demo"
@@ -211,6 +215,7 @@ services:
     environment:
       - INSTANCE_NAME=demo
       - CUSTOM_SERVER_ARGS=
+      - '\''STEAM_SHARED_SECRET=legacy-secret'\''
     ports:
       - "7777:7777/tcp"
 EOF
@@ -218,15 +223,14 @@ EOF
     add_steam_creds_to_compose \
       "$BASE_DIR/Instance_demo/docker-compose-demo.yaml" \
       "steam user" \
-      "p@ss:wo#rd&x" \
-      "it'\''s-secret=="
+      "p@ss:wo#rd&x"
     cat "$BASE_DIR/Instance_demo/docker-compose-demo.yaml"
   '
 
   assert_success
   assert_output --partial "'STEAM_USERNAME=steam user'"
   assert_output --partial "'STEAM_PASSWORD=p@ss:wo#rd&x'"
-  assert_output --partial "'STEAM_SHARED_SECRET=it''s-secret=='"
+  refute_output --partial "STEAM_SHARED_SECRET"
 }
 
 @test "write_docker_compose_file preserves Steam credentials from config_values" {
@@ -270,7 +274,6 @@ EOF
       ["Custom Server Args"]=""
       ["STEAM_USERNAME"]="steam_user"
       ["STEAM_PASSWORD"]="secret#pass"
-      ["STEAM_SHARED_SECRET"]="shared==secret"
     )
     write_docker_compose_file demo
     cat "$BASE_DIR/Instance_demo/docker-compose-demo.yaml"
@@ -279,7 +282,7 @@ EOF
   assert_success
   assert_output --partial "'STEAM_USERNAME=steam_user'"
   assert_output --partial "'STEAM_PASSWORD=secret#pass'"
-  assert_output --partial "'STEAM_SHARED_SECRET=shared==secret'"
+  refute_output --partial "STEAM_SHARED_SECRET"
 }
 
 @test "write_docker_compose_file copies Steam credentials from existing instances for new configs" {
@@ -295,10 +298,8 @@ EOF
     find_existing_steam_creds() {
       local -n _user="$1"
       local -n _pass="$2"
-      local -n _secret="$3"
       _user="copied_user"
       _pass="copied pass"
-      _secret="copied==secret"
     }
     declare -A config_values=(
       ["Memory Limit"]="16G"
@@ -337,7 +338,7 @@ EOF
   assert_success
   assert_output --partial "'STEAM_USERNAME=copied_user'"
   assert_output --partial "'STEAM_PASSWORD=copied pass'"
-  assert_output --partial "'STEAM_SHARED_SECRET=copied==secret'"
+  refute_output --partial "STEAM_SHARED_SECRET"
 }
 
 @test "write_docker_compose_file skips Steam credentials when none are available" {

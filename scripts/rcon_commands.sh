@@ -41,6 +41,19 @@ get_or_refresh_eos_token() {
     return 1
   fi
 
+  _steam_ticket_error_is_retryable() {
+    local ticket_error_text="$1"
+
+    case "$ticket_error_text" in
+      *"RateLimitExceeded"*)
+        return 1
+        ;;
+      *)
+        return 0
+        ;;
+    esac
+  }
+
   while [ "$exchange_attempt" -le "$max_attempts" ]; do
     # The container path uses steam-user for ticket generation. Request a
     # fresh Steam ticket on every retry so we don't keep reusing a ticket that
@@ -52,6 +65,12 @@ get_or_refresh_eos_token() {
     rm -f "$ticket_err_file"
 
     if [ $ticket_status -ne 0 ] || [ -z "$ticket_hex" ]; then
+      if [ -n "$ticket_error" ] && ! _steam_ticket_error_is_retryable "$ticket_error"; then
+        printf '%s\n' "$ticket_error" >&2
+        echo "STEAM_TICKET_FAILED"
+        return 1
+      fi
+
       if [ "$exchange_attempt" -lt "$max_attempts" ]; then
         echo "Steam ticket is not ready yet. Waiting ${retry_delay}s before retrying (${exchange_attempt}/${max_attempts})..." >&2
         sleep "$retry_delay"
