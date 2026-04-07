@@ -20,6 +20,14 @@ services:
     mem_limit: 12G
 EOF
     yq() {
+      if [ "${1:-}" = "--version" ]; then
+        echo "yq (https://github.com/mikefarah/yq/) version v4.9.8"
+        return 0
+      fi
+      if [ "${1:-}" = "e" ] && [ "${2:-}" = "-n" ]; then
+        echo "probe: ok"
+        return 0
+      fi
       local expr="$2"
       local file="$3"
       case "$expr" in
@@ -63,6 +71,14 @@ services:
     mem_limit: 16G
 EOF
     yq() {
+      if [ "${1:-}" = "--version" ]; then
+        echo "yq (https://github.com/mikefarah/yq/) version v4.9.8"
+        return 0
+      fi
+      if [ "${1:-}" = "e" ] && [ "${2:-}" = "-n" ]; then
+        echo "probe: ok"
+        return 0
+      fi
       local expr="$2"
       local file="$3"
       case "$expr" in
@@ -96,6 +112,181 @@ EOF
   assert_output --partial "steam_pass=p@ss:wo#rd&x"
   assert_output --partial "steam_secret_present=no"
   assert_output --partial "steam_in_order=no"
+}
+
+@test "_read_compose_environment_lines strips double-quoted yq output defensively" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/compose-double-quoted" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    mkdir -p "$BASE_DIR/Instance_demo"
+    touch "$BASE_DIR/Instance_demo/docker-compose-demo.yaml"
+    yq() {
+      if [ "${1:-}" = "--version" ]; then
+        echo "yq (https://github.com/mikefarah/yq/) version v4.9.8"
+        return 0
+      fi
+      if [ "${1:-}" = "e" ] && [ "${2:-}" = "-n" ]; then
+        echo "probe: ok"
+        return 0
+      fi
+      if [ "${1:-}" = "e" ] && [ "${2:-}" = ".services.asaserver.environment[]" ]; then
+        echo "\"MAX_PLAYERS=70\""
+        echo "\"STEAM_PASSWORD=p@ss:wo#rd&x\""
+        return 0
+      fi
+      return 1
+    }
+    source "$REPO_ROOT/POK-manager.sh"
+    _read_compose_environment_lines "$BASE_DIR/Instance_demo/docker-compose-demo.yaml"
+  '
+
+  assert_success
+  assert_output --partial "MAX_PLAYERS=70"
+  assert_output --partial "STEAM_PASSWORD=p@ss:wo#rd&x"
+  refute_output --partial '"MAX_PLAYERS=70"'
+}
+
+@test "resolve_yq_bin prefers manager-owned Mike Farah yq over incompatible system yq" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/yq-managed-preferred" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    mkdir -p "$BASE_DIR/config/POK-manager/bin" "$BASE_DIR/fake-bin"
+    cat > "$BASE_DIR/config/POK-manager/bin/yq" <<'"'"'EOF'"'"'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--version" ]; then
+  echo "yq (https://github.com/mikefarah/yq/) version v4.9.8"
+  exit 0
+fi
+if [ "${1:-}" = "e" ] && [ "${2:-}" = "-n" ]; then
+  echo "probe: ok"
+  exit 0
+fi
+exit 0
+EOF
+    chmod +x "$BASE_DIR/config/POK-manager/bin/yq"
+    cat > "$BASE_DIR/fake-bin/yq" <<'"'"'EOF'"'"'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--version" ]; then
+  echo "yq 3.4.3"
+  exit 0
+fi
+exit 1
+EOF
+    chmod +x "$BASE_DIR/fake-bin/yq"
+    PATH="$BASE_DIR/fake-bin:$PATH"
+    source "$REPO_ROOT/POK-manager.sh"
+    resolved="$(resolve_yq_bin)"
+    printf "resolved=%s\n" "$resolved"
+    "$resolved" --version
+  '
+
+  assert_success
+  assert_output --partial "resolved=${BATS_TEST_TMPDIR}/yq-managed-preferred/config/POK-manager/bin/yq"
+  assert_output --partial "mikefarah/yq"
+}
+
+@test "resolve_yq_bin keeps using an existing Mike Farah system yq when manager-owned yq is absent" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/yq-system-valid" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    mkdir -p "$BASE_DIR/fake-bin"
+    cat > "$BASE_DIR/fake-bin/yq" <<'"'"'EOF'"'"'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--version" ]; then
+  echo "yq (https://github.com/mikefarah/yq/) version v4.9.8"
+  exit 0
+fi
+if [ "${1:-}" = "e" ] && [ "${2:-}" = "-n" ]; then
+  echo "probe: ok"
+  exit 0
+fi
+exit 0
+EOF
+    chmod +x "$BASE_DIR/fake-bin/yq"
+    PATH="$BASE_DIR/fake-bin:$PATH"
+    source "$REPO_ROOT/POK-manager.sh"
+    resolved="$(resolve_yq_bin)"
+    printf "resolved=%s\n" "$resolved"
+  '
+
+  assert_success
+  assert_output --partial "resolved=${BATS_TEST_TMPDIR}/yq-system-valid/fake-bin/yq"
+}
+
+@test "require_yq_bin rejects incompatible yq and tells users to run setup" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/yq-wrong-clear-error" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    mkdir -p "$BASE_DIR/fake-bin"
+    cat > "$BASE_DIR/fake-bin/yq" <<'"'"'EOF'"'"'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--version" ]; then
+  echo "yq 3.4.3"
+  exit 0
+fi
+exit 1
+EOF
+    chmod +x "$BASE_DIR/fake-bin/yq"
+    PATH="$BASE_DIR/fake-bin:$PATH"
+    source "$REPO_ROOT/POK-manager.sh"
+    require_yq_bin
+  '
+
+  assert_failure
+  assert_output --partial "Mike Farah"
+  assert_output --partial "Run ./POK-manager.sh -setup"
+}
+
+@test "install_yq installs manager-owned Mike Farah yq when system yq is incompatible" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/yq-install-managed" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    mkdir -p "$BASE_DIR/fake-bin"
+    cat > "$BASE_DIR/fake-bin/yq" <<'"'"'EOF'"'"'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--version" ]; then
+  echo "yq 3.4.3"
+  exit 0
+fi
+exit 1
+EOF
+    chmod +x "$BASE_DIR/fake-bin/yq"
+    cat > "$BASE_DIR/fake-bin/wget" <<'"'"'EOF'"'"'
+#!/usr/bin/env bash
+target=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -O)
+      target="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+[ -n "$target" ] || exit 1
+cat > "$target" <<'"'"'YQEOF'"'"'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--version" ]; then
+  echo "yq (https://github.com/mikefarah/yq/) version v4.9.8"
+  exit 0
+fi
+if [ "${1:-}" = "e" ] && [ "${2:-}" = "-n" ]; then
+  echo "probe: ok"
+  exit 0
+fi
+exit 0
+YQEOF
+EOF
+    chmod +x "$BASE_DIR/fake-bin/wget"
+    PATH="$BASE_DIR/fake-bin:$PATH"
+    source "$REPO_ROOT/POK-manager.sh"
+    install_yq
+    managed="$(managed_yq_path)"
+    printf "managed=%s\n" "$managed"
+    "$managed" --version
+  '
+
+  assert_success
+  assert_output --partial "incompatible yq"
+  assert_output --partial "managed=${BATS_TEST_TMPDIR}/yq-install-managed/config/POK-manager/bin/yq"
+  assert_output --partial "mikefarah/yq"
 }
 
 @test "prompt_for_input validates API and CPU Optimization as booleans" {
@@ -410,6 +601,14 @@ services:
     mem_limit: 14G
 EOF
     yq() {
+      if [ "${1:-}" = "--version" ]; then
+        echo "yq (https://github.com/mikefarah/yq/) version v4.9.8"
+        return 0
+      fi
+      if [ "${1:-}" = "e" ] && [ "${2:-}" = "-n" ]; then
+        echo "probe: ok"
+        return 0
+      fi
       local expr="$2"
       local file="$3"
       case "$expr" in

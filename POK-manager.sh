@@ -15,6 +15,8 @@ POK_MANAGER_SCRIPT_PATH="${POK_MANAGER_SCRIPT_PATH:-$(readlink -f "${BASH_SOURCE
 PATH_CONFIG_FILE=""
 LAST_VERSION_FILE=""
 POK_MANAGER_INITIALIZED=0
+YQ_BIN="${YQ_BIN:-}"
+POK_MANAGER_YQ_VERSION="${POK_MANAGER_YQ_VERSION:-v4.9.8}"
 
 # Function to determine the expected ownership (UID:GID) based on installation mode
 get_expected_ownership() {
@@ -1410,66 +1412,146 @@ copy_default_configs() {
   fi
 }
 
-install_yq() {
-  echo "Checking for yq..."
-  if ! command -v yq &>/dev/null; then
-    echo "yq not found. Attempting to install Mike Farah's yq..."
+managed_yq_path() {
+  printf '%s\n' "${BASE_DIR}/config/POK-manager/bin/yq"
+}
 
-    # Define the version of yq to install
-    YQ_VERSION="v4.9.8" # Check https://github.com/mikefarah/yq for the latest version
+is_mikefarah_yq() {
+  local candidate="${1:-}"
 
-    # Determine OS and architecture
-    os=""
-    case "$(uname -s)" in
-      Linux) os="linux" ;;
-      Darwin) os="darwin" ;;
-      *) echo "Unsupported OS."; exit 1 ;;  
-    esac
+  [ -n "$candidate" ] || return 1
+  command -v "$candidate" &>/dev/null || return 1
+  "$candidate" e -n '.probe = "ok"' >/dev/null 2>&1
+}
 
-    arch=""
-    case "$(uname -m)" in
-      x86_64) arch="amd64" ;;
-      arm64) arch="arm64" ;;
-      aarch64) arch="arm64" ;;
-      *) echo "Unsupported architecture."; exit 1 ;;
-    esac
+resolve_yq_bin() {
+  local managed_yq
+  local system_yq=""
 
-    YQ_BINARY="yq_${os}_${arch}"
-
-    # Check for wget or curl and install if not present
-    if ! command -v wget &>/dev/null && ! command -v curl &>/dev/null; then
-      echo "Neither wget nor curl found. Attempting to install wget..."
-      if command -v apt-get &>/dev/null; then
-        sudo apt-get update && sudo apt-get install -y wget
-      elif command -v yum &>/dev/null; then
-        sudo yum install -y wget
-      elif command -v pacman &>/dev/null; then
-        sudo pacman -Sy wget
-      elif command -v dnf &>/dev/null; then
-        sudo dnf install -y wget
-      else
-        echo "Package manager not detected. Please manually install wget or curl."
-        exit 1
-      fi
-    fi
-
-    # Download and install yq
-    if command -v wget &>/dev/null; then
-      wget "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${YQ_BINARY}" -O /usr/local/bin/yq && chmod +x /usr/local/bin/yq
-    elif command -v curl &>/dev/null; then
-      curl -L "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${YQ_BINARY}" -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq
-    fi
-
-    # Verify installation
-    if ! command -v yq &>/dev/null; then
-      echo "Failed to install Mike Farah's yq."
-      exit 1
-    else
-      echo "Mike Farah's yq installed successfully."
-    fi
-  else
-    echo "yq is already installed."
+  if [ -n "${YQ_BIN:-}" ] && is_mikefarah_yq "$YQ_BIN"; then
+    printf '%s\n' "$YQ_BIN"
+    return 0
   fi
+
+  managed_yq="$(managed_yq_path)"
+  if [ -x "$managed_yq" ] && is_mikefarah_yq "$managed_yq"; then
+    YQ_BIN="$managed_yq"
+    printf '%s\n' "$YQ_BIN"
+    return 0
+  fi
+
+  system_yq="$(command -v yq 2>/dev/null || true)"
+  if [ -n "$system_yq" ] && is_mikefarah_yq "$system_yq"; then
+    YQ_BIN="$system_yq"
+    printf '%s\n' "$YQ_BIN"
+    return 0
+  fi
+
+  return 1
+}
+
+require_yq_bin() {
+  local resolved_yq=""
+
+  if resolved_yq="$(resolve_yq_bin)"; then
+    printf '%s\n' "$resolved_yq"
+    return 0
+  fi
+
+  echo "Error: Mike Farah's yq is required to read Docker Compose files." >&2
+  echo "Run ./POK-manager.sh -setup to install the manager-owned yq binary." >&2
+  return 1
+}
+
+_install_manager_owned_yq() {
+  local install_dir="${BASE_DIR}/config/POK-manager/bin"
+  local target_yq
+  local tmp_yq
+  local os=""
+  local arch=""
+  local yq_binary=""
+  local yq_url=""
+
+  target_yq="$(managed_yq_path)"
+  tmp_yq="${target_yq}.tmp.$$"
+
+  case "$(uname -s)" in
+    Linux) os="linux" ;;
+    Darwin) os="darwin" ;;
+    *) echo "Unsupported OS."; exit 1 ;;
+  esac
+
+  case "$(uname -m)" in
+    x86_64) arch="amd64" ;;
+    arm64) arch="arm64" ;;
+    aarch64) arch="arm64" ;;
+    *) echo "Unsupported architecture."; exit 1 ;;
+  esac
+
+  yq_binary="yq_${os}_${arch}"
+  yq_url="https://github.com/mikefarah/yq/releases/download/${POK_MANAGER_YQ_VERSION}/${yq_binary}"
+
+  if ! command -v wget &>/dev/null && ! command -v curl &>/dev/null; then
+    echo "Neither wget nor curl found. Attempting to install wget..."
+    if command -v apt-get &>/dev/null; then
+      sudo apt-get update && sudo apt-get install -y wget
+    elif command -v yum &>/dev/null; then
+      sudo yum install -y wget
+    elif command -v pacman &>/dev/null; then
+      sudo pacman -Sy wget
+    elif command -v dnf &>/dev/null; then
+      sudo dnf install -y wget
+    else
+      echo "Package manager not detected. Please manually install wget or curl."
+      exit 1
+    fi
+  fi
+
+  mkdir -p "$install_dir"
+
+  if command -v wget &>/dev/null; then
+    wget "$yq_url" -O "$tmp_yq"
+  elif command -v curl &>/dev/null; then
+    curl -L "$yq_url" -o "$tmp_yq"
+  fi
+
+  chmod +x "$tmp_yq"
+  if ! is_mikefarah_yq "$tmp_yq"; then
+    rm -f "$tmp_yq"
+    echo "Failed to install Mike Farah's yq."
+    exit 1
+  fi
+
+  mv -f "$tmp_yq" "$target_yq"
+  YQ_BIN="$target_yq"
+}
+
+install_yq() {
+  local resolved_yq=""
+  local system_yq=""
+
+  echo "Checking for Mike Farah's yq..."
+
+  if resolved_yq="$(resolve_yq_bin)"; then
+    echo "Mike Farah's yq is available at ${resolved_yq}."
+    return 0
+  fi
+
+  system_yq="$(command -v yq 2>/dev/null || true)"
+  if [ -n "$system_yq" ]; then
+    echo "Found an incompatible yq at ${system_yq}; installing the manager-owned Mike Farah yq instead."
+  else
+    echo "yq not found. Installing the manager-owned Mike Farah yq..."
+  fi
+
+  _install_manager_owned_yq
+
+  if ! resolved_yq="$(resolve_yq_bin)"; then
+    echo "Failed to install Mike Farah's yq."
+    exit 1
+  fi
+
+  echo "Mike Farah's yq installed successfully at ${resolved_yq}."
 }
 
 # Root tasks
@@ -1525,14 +1607,20 @@ pull_docker_image() {
 _read_compose_environment_lines() {
   local compose_file="$1"
   local env_line=""
+  local yq_bin=""
+
+  yq_bin="$(require_yq_bin)" || return 1
 
   while IFS= read -r env_line; do
-    if [[ "$env_line" == \'*\' ]]; then
+    if [[ "$env_line" == \"*\" ]]; then
+      env_line="${env_line#\"}"
+      env_line="${env_line%\"}"
+    elif [[ "$env_line" == \'*\' ]]; then
       env_line="${env_line#\'}"
       env_line="${env_line%\'}"
     fi
     printf '%s\n' "$env_line"
-  done < <(yq e '.services.asaserver.environment[]' "$compose_file")
+  done < <("$yq_bin" e '.services.asaserver.environment[]' "$compose_file")
 }
 
 _parse_steam_creds_from_compose() {
@@ -1776,7 +1864,9 @@ read_docker_compose_config() {
 
   # Separately parse the mem_limit
   local mem_limit
-  mem_limit=$(yq e '.services.asaserver.mem_limit' "$docker_compose_file")
+  local yq_bin
+  yq_bin="$(require_yq_bin)" || return 1
+  mem_limit=$("$yq_bin" e '.services.asaserver.mem_limit' "$docker_compose_file")
   if [ ! -z "$mem_limit" ]; then
     # Assuming you want to strip the last character (G) and store just the numeric part
     # If you want to keep the 'G', remove the `${mem_limit%?}` manipulation

@@ -11,6 +11,7 @@
 - Manager stop/shutdown now uses the container health probe for save decisions: `ok` and `degraded` attempt `saveworld`, `starting`/`unhealthy` skip the save, RCON-disabled healthy servers warn and stop directly, and save confirmation looks for the exact `World Save Complete. Took:` log entry.
 - Fixed `-status` for the new EOS user-token requirement by generating a Steam session ticket inside the container, exchanging it for an EOS bearer token, and caching the token for reuse across status checks.
 - POK-manager now stores and preserves `STEAM_USERNAME` and `STEAM_PASSWORD` in instance compose files without exposing them through the interactive config review, offers the current 5-digit Steam Guard mobile code up front when a fresh auth is likely needed, and `-status -all` resolves the Steam credentials once and reuses them for every running instance.
+- POK-manager setup now validates Mike Farah's `yq` specifically and installs a manager-owned copy when a different `yq` implementation is found, preventing compose-copy parsing failures without overwriting the user's system `yq`.
 
 ## Version 2.1.79 (Previous)
 - **CRITICAL FIX**: Fixed major server startup delay (10-20 minutes on slow disks) by removing redundant recursive directory permission checks in `init.sh` and `common.sh`.
