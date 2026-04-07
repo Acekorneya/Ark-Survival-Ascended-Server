@@ -117,6 +117,29 @@ EOF
   refute_output --partial "unexpected-run"
 }
 
+@test "_run_status_with_guard_retry streams status auth progress without storing it in final output" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/rcon-status-live-progress" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    source "$REPO_ROOT/POK-manager.sh"
+    _run_status_in_container() {
+      echo "Status auth [$1]: acquiring token..." >&2
+      echo "status-output:$1"
+    }
+    set +e
+    _run_status_with_guard_retry demo
+    status=$?
+    set -e
+    printf "status=%s\n" "$status"
+    printf "captured=<%s>\n" "$RUN_STATUS_OUTPUT"
+  '
+
+  assert_success
+  assert_output --partial "Status auth [demo]: acquiring token..."
+  assert_output --partial "status=0"
+  assert_output --partial "captured=<status-output:demo>"
+  refute_output --partial "captured=<Status auth"
+}
+
 @test "execute_rcon_command resolves Steam credentials once for status -all" {
   run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/rcon-status-all" POK_MANAGER_TEST_MODE=1 bash -lc '
     set -e

@@ -4281,7 +4281,7 @@ _run_status_with_guard_retry() {
   RUN_STATUS_OUTPUT=""
 
   while true; do
-    if status_output="$(_run_status_in_container "$instance_name" 2>&1)"; then
+    if status_output="$(_run_status_in_container "$instance_name")"; then
       status_code=0
     else
       status_code=$?

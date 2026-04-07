@@ -108,6 +108,28 @@ load '../test_helper/project.bash'
   assert_output --partial "token=cached-token"
 }
 
+@test "get_or_refresh_eos_token reports cached token auth progress without polluting stdout" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/rcon_commands.sh"
+    INSTANCE_NAME="demo"
+    EOS_TOKEN_CACHE="$BATS_TEST_TMPDIR/eos-token-cache-progress.json"
+    printf "%s" "{\"token\":\"cached-token\",\"expires_at\":1600}" > "$EOS_TOKEN_CACHE"
+    date() { echo 1000; }
+    set +e
+    token=$(STATUS_AUTH_PROGRESS=TRUE get_or_refresh_eos_token 3>&2)
+    status=$?
+    set -e
+    printf "status=%s\n" "$status"
+    printf "token=%s\n" "$token"
+  '
+
+  assert_success
+  assert_output --partial "Status auth [demo]: valid cached EOS userToken found (10m 0s remaining). Token source: cache."
+  assert_output --partial "status=0"
+  assert_output --partial "token=cached-token"
+}
+
 @test "get_or_refresh_eos_token refreshes the cache when the token is missing or expired" {
   run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
     set -e
@@ -130,6 +152,35 @@ load '../test_helper/project.bash'
   assert_output --partial "status=0"
   assert_output --partial "token=fresh-token"
   assert_output --partial "\"token\":\"fresh-token\""
+}
+
+@test "get_or_refresh_eos_token reports fresh exchange auth progress without leaking tokens" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/rcon_commands.sh"
+    INSTANCE_NAME="demo"
+    EOS_TOKEN_CACHE="$BATS_TEST_TMPDIR/eos-token-refresh-progress.json"
+    STEAM_USERNAME="steam_user"
+    STEAM_PASSWORD="steam_pass"
+    node() { printf "%0128d" 0 | tr "0" "A"; }
+    python3() { printf "%s" "{\"token\":\"fresh-token\",\"expires_in\":3600,\"expires_at\":4600}"; }
+    date() { echo 1000; }
+    set +e
+    token=$(STATUS_AUTH_PROGRESS=TRUE get_or_refresh_eos_token 3>&2)
+    status=$?
+    set -e
+    printf "status=%s\n" "$status"
+    printf "token=%s\n" "$token"
+  '
+
+  assert_success
+  assert_output --partial "Status auth [demo]: no valid cached EOS userToken. Acquiring fresh Steam ticket..."
+  assert_output --partial "Status auth [demo]: Steam ticket obtained (64 bytes)."
+  assert_output --partial "Status auth [demo]: exchanging Steam ticket for EOS userToken..."
+  assert_output --partial "Status auth [demo]: EOS userToken obtained (60m 0s remaining). Token source: fresh exchange."
+  assert_output --partial "status=0"
+  assert_output --partial "token=fresh-token"
+  refute_output --partial "AAAAAAAAAAAAAAAA"
 }
 
 @test "get_or_refresh_eos_token normalizes Steam ticket hex before EOS exchange" {
@@ -238,6 +289,44 @@ load '../test_helper/project.bash'
   refute_output --partial "unexpected-sleep"
 }
 
+@test "get_or_refresh_eos_token fails immediately when Steam Guard is required" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/rcon_commands.sh"
+    EOS_TOKEN_CACHE="$BATS_TEST_TMPDIR/eos-token-guard-required.json"
+    EOS_EXCHANGE_MAX_ATTEMPTS=3
+    STEAM_USERNAME="steam_user"
+    STEAM_PASSWORD="steam_pass"
+    attempts_file="$BATS_TEST_TMPDIR/ticket-attempts"
+    node() {
+      local count=0
+      if [ -f "$attempts_file" ]; then
+        count=$(cat "$attempts_file")
+      fi
+      count=$((count + 1))
+      echo "$count" > "$attempts_file"
+      echo "STEAM_GUARD_REQUIRED:mobile authenticator" >&2
+      echo "Steam Guard required (mobile authenticator). Enter the current 5-digit code from your Steam app when prompted." >&2
+      return 1
+    }
+    sleep() { echo "unexpected-sleep"; }
+    set +e
+    token=$(get_or_refresh_eos_token)
+    status=$?
+    set -e
+    printf "status=%s\n" "$status"
+    printf "token=%s\n" "$token"
+    printf "attempts=%s\n" "$(cat "$attempts_file")"
+  '
+
+  assert_success
+  assert_output --partial "STEAM_GUARD_REQUIRED:mobile authenticator"
+  assert_output --partial "status=1"
+  assert_output --partial "token=STEAM_TICKET_FAILED"
+  assert_output --partial "attempts=1"
+  refute_output --partial "unexpected-sleep"
+}
+
 @test "get_or_refresh_eos_token reports EOS exchange failures" {
   run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
     set -e
@@ -296,7 +385,7 @@ load '../test_helper/project.bash'
     }
     sleep() { :; }
     set +e
-    token=$(get_or_refresh_eos_token)
+    token=$(STATUS_AUTH_PROGRESS=TRUE get_or_refresh_eos_token 3>&2)
     status=$?
     set -e
     printf "status=%s\n" "$status"

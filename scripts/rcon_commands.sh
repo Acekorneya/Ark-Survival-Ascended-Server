@@ -9,6 +9,57 @@ source "${POK_SCRIPTS_DIR}/common.sh"
 EOS_TOKEN_CACHE="/home/pok/arkserver/ShooterGame/Binaries/Win64/.eos_token.json"
 HELPERS_DIR="/home/pok/scripts/helpers"
 
+_status_auth_format_duration() {
+  local seconds="${1:-0}"
+  local minutes=0
+  local remaining_seconds=0
+
+  if ! [[ "$seconds" =~ ^[0-9]+$ ]]; then
+    seconds=0
+  fi
+
+  minutes=$((seconds / 60))
+  remaining_seconds=$((seconds % 60))
+  printf '%sm %ss' "$minutes" "$remaining_seconds"
+}
+
+_status_auth_progress() {
+  local message="$1"
+  local prefix="Status auth"
+  local progress_fd="${STATUS_AUTH_PROGRESS_FD:-2}"
+
+  if [ "${STATUS_AUTH_PROGRESS:-FALSE}" != "TRUE" ]; then
+    return 0
+  fi
+
+  if [ -n "${INSTANCE_NAME:-}" ]; then
+    prefix+=" [${INSTANCE_NAME}]"
+  fi
+
+  printf '%s: %s\n' "$prefix" "$message" >&"${progress_fd}"
+}
+
+_status_auth_token_remaining() {
+  local token_json="$1"
+  local now="$2"
+  local expires_in=""
+  local expires_at=""
+
+  expires_in=$(printf '%s' "$token_json" | jq -r '.expires_in // empty' 2>/dev/null)
+  if [[ "$expires_in" =~ ^[0-9]+$ ]]; then
+    printf '%s' "$expires_in"
+    return 0
+  fi
+
+  expires_at=$(printf '%s' "$token_json" | jq -r '.expires_at // empty' 2>/dev/null)
+  if [[ "$expires_at" =~ ^[0-9]+$ ]] && [ "$expires_at" -gt "$now" ]; then
+    printf '%s' "$((expires_at - now))"
+    return 0
+  fi
+
+  printf '0'
+}
+
 get_or_refresh_eos_token() {
   local ticket_err_file=""
   local exchange_err_file=""
@@ -31,6 +82,7 @@ get_or_refresh_eos_token() {
     if [ -n "$token" ] && [ "$token" != "null" ] && \
        [ -n "$expires_at" ] && [ "$expires_at" != "null" ] && \
        [ "$now" -lt "$((expires_at - buffer))" ] 2>/dev/null; then
+      _status_auth_progress "valid cached EOS userToken found ($(_status_auth_format_duration "$((expires_at - now))") remaining). Token source: cache."
       echo "$token"
       return 0
     fi
@@ -41,10 +93,15 @@ get_or_refresh_eos_token() {
     return 1
   fi
 
+  _status_auth_progress "no valid cached EOS userToken. Acquiring fresh Steam ticket..."
+
   _steam_ticket_error_is_retryable() {
     local ticket_error_text="$1"
 
     case "$ticket_error_text" in
+      *"STEAM_GUARD_REQUIRED:"*)
+        return 1
+        ;;
       *"RateLimitExceeded"*)
         return 1
         ;;
@@ -72,7 +129,7 @@ get_or_refresh_eos_token() {
       fi
 
       if [ "$exchange_attempt" -lt "$max_attempts" ]; then
-        echo "Steam ticket is not ready yet. Waiting ${retry_delay}s before retrying (${exchange_attempt}/${max_attempts})..." >&2
+        _status_auth_progress "Steam ticket is not ready yet. Waiting ${retry_delay}s before retrying (${exchange_attempt}/${max_attempts})..."
         sleep "$retry_delay"
         exchange_attempt=$((exchange_attempt + 1))
         continue
@@ -87,6 +144,8 @@ get_or_refresh_eos_token() {
       return 1
     fi
     ticket_hex="${ticket_hex^^}"
+    _status_auth_progress "Steam ticket obtained ($((${#ticket_hex} / 2)) bytes)."
+    _status_auth_progress "exchanging Steam ticket for EOS userToken..."
 
     exchange_err_file=$(mktemp)
     token_json=$(python3 "${HELPERS_DIR}/eos_token.py" "$ticket_hex" 2>"$exchange_err_file")
@@ -99,7 +158,7 @@ get_or_refresh_eos_token() {
     fi
 
     if [ "$exchange_attempt" -lt "$max_attempts" ]; then
-      echo "Steam login may still be awaiting mobile approval or the session ticket may not be ready yet. Waiting ${retry_delay}s before requesting a fresh Steam ticket and retrying EOS token exchange (${exchange_attempt}/${max_attempts})..." >&2
+      _status_auth_progress "Steam login may still be awaiting mobile approval or the session ticket may not be ready yet. Waiting ${retry_delay}s before requesting a fresh Steam ticket and retrying EOS token exchange (${exchange_attempt}/${max_attempts})..."
       sleep "$retry_delay"
     fi
 
@@ -120,6 +179,8 @@ get_or_refresh_eos_token() {
   local tmp_cache="${EOS_TOKEN_CACHE}.tmp.$$"
   printf '%s' "$token_json" > "$tmp_cache"
   mv "$tmp_cache" "$EOS_TOKEN_CACHE"
+
+  _status_auth_progress "EOS userToken obtained ($(_status_auth_format_duration "$(_status_auth_token_remaining "$token_json" "$(date +%s)")") remaining). Token source: fresh exchange."
 
   echo "$token_json" | jq -r '.token'
   return 0
@@ -235,7 +296,7 @@ full_status_display() {
   fi
 
   auth_error_file=$(mktemp)
-  token=$(get_or_refresh_eos_token 2>"$auth_error_file")
+  token=$(STATUS_AUTH_PROGRESS=TRUE STATUS_AUTH_PROGRESS_FD=3 get_or_refresh_eos_token 3>&2 2>"$auth_error_file")
   token_status=$?
   auth_error="$(cat "$auth_error_file" 2>/dev/null)"
   rm -f "$auth_error_file"
@@ -249,7 +310,7 @@ full_status_display() {
       ;;
     "STEAM_TICKET_FAILED")
       echo "Error: Failed to get Steam session ticket."
-      echo "Check your STEAM_USERNAME, STEAM_PASSWORD, and STEAM_SHARED_SECRET."
+      echo "Check your STEAM_USERNAME, STEAM_PASSWORD, and current Steam Guard mobile code if the account requires one."
       if [ -n "$auth_error" ]; then
         printf '%s\n' "$auth_error"
       fi
