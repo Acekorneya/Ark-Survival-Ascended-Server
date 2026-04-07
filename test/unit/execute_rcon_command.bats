@@ -172,6 +172,54 @@ EOF
   assert_output --partial "ensure_calls=1"
 }
 
+@test "execute_rcon_command suppresses repeated cached token progress for status -all" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/rcon-status-all-cache-progress" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    source "$REPO_ROOT/POK-manager.sh"
+    list_running_instances() { echo "alpha beta gamma"; }
+    validate_instance() { return 0; }
+    _rcon_status_ready() { return 0; }
+    _shared_eos_token_cache_is_valid() { return 1; }
+    ensure_steam_credentials() {
+      STEAM_USERNAME="steam_user"
+      STEAM_PASSWORD="steam_pass"
+    }
+    _run_status_in_container() {
+      printf "status:%s:suppress=%s\n" "$1" "${STATUS_AUTH_SUPPRESS_CACHE_PROGRESS:-unset}"
+    }
+    execute_rcon_command -status -all
+  '
+
+  assert_success
+  assert_output --partial "status:alpha:suppress=FALSE"
+  assert_output --partial "status:beta:suppress=FALSE"
+  assert_output --partial "status:gamma:suppress=TRUE"
+}
+
+@test "execute_rcon_command shows cached token progress once when status -all starts with a valid cache" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/rcon-status-all-valid-cache-progress" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    source "$REPO_ROOT/POK-manager.sh"
+    list_running_instances() { echo "alpha beta gamma"; }
+    validate_instance() { return 0; }
+    _rcon_status_ready() { return 0; }
+    _shared_eos_token_cache_is_valid() { return 0; }
+    ensure_steam_credentials() {
+      STEAM_USERNAME="steam_user"
+      STEAM_PASSWORD="steam_pass"
+    }
+    _run_status_in_container() {
+      printf "status:%s:suppress=%s\n" "$1" "${STATUS_AUTH_SUPPRESS_CACHE_PROGRESS:-unset}"
+    }
+    execute_rcon_command -status -all
+  '
+
+  assert_success
+  assert_output --partial "status:alpha:suppress=FALSE"
+  assert_output --partial "status:beta:suppress=TRUE"
+  assert_output --partial "status:gamma:suppress=TRUE"
+}
+
 @test "execute_rcon_command passes an optionally entered Steam Guard code on the first status attempt" {
   run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/rcon-status-optional-guard" POK_MANAGER_TEST_MODE=1 bash -lc '
     set -e

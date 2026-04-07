@@ -4262,6 +4262,9 @@ _run_status_in_container() {
   if [ -n "${STEAM_GUARD_CODE:-}" ]; then
     docker_exec_args+=(-e "STEAM_GUARD_CODE=${STEAM_GUARD_CODE}")
   fi
+  if [ "${STATUS_AUTH_SUPPRESS_CACHE_PROGRESS:-FALSE}" = "TRUE" ]; then
+    docker_exec_args+=(-e "STATUS_AUTH_SUPPRESS_CACHE_PROGRESS=TRUE")
+  fi
 
   if docker ps -q -f name=^/${container_name}$ > /dev/null; then
     docker exec "${docker_exec_args[@]}" "$container_name" /bin/bash -c "/home/pok/scripts/rcon_interface.sh -status"
@@ -4331,11 +4334,17 @@ _rcon_process_all_running_instances() {
   shift 2
   local running_instances=("$@")
   local instance
+  local status_cache_progress_remaining=0
   declare -A instance_outputs
 
   if [[ "$action" == "-status" ]] && [ ${#running_instances[@]} -gt 0 ]; then
     ensure_steam_credentials "${running_instances[0]}" || return 1
     _prompt_optional_steam_guard_code "${running_instances[0]}"
+    if _shared_eos_token_cache_is_valid; then
+      status_cache_progress_remaining=1
+    else
+      status_cache_progress_remaining=2
+    fi
   fi
 
   echo "----- Processing $action command for all running instances. Please wait... -----"
@@ -4350,11 +4359,19 @@ _rcon_process_all_running_instances() {
     fi
 
     if [[ "$action" == "-status" ]]; then
+      if [ "$status_cache_progress_remaining" -gt 0 ]; then
+        STATUS_AUTH_SUPPRESS_CACHE_PROGRESS=FALSE
+        status_cache_progress_remaining=$((status_cache_progress_remaining - 1))
+      else
+        STATUS_AUTH_SUPPRESS_CACHE_PROGRESS=TRUE
+      fi
+
       if _run_status_with_guard_retry "$instance"; then
         instance_outputs["$instance"]="$RUN_STATUS_OUTPUT"
       else
         instance_outputs["$instance"]="$RUN_STATUS_OUTPUT"
       fi
+      STATUS_AUTH_SUPPRESS_CACHE_PROGRESS=FALSE
     else
       instance_outputs["$instance"]="$(run_in_container "$instance" "$action" "$message")"
     fi

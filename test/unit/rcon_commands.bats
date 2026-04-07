@@ -125,7 +125,29 @@ load '../test_helper/project.bash'
   '
 
   assert_success
-  assert_output --partial "Status auth [demo]: valid cached EOS userToken found (10m 0s remaining). Token source: cache."
+  assert_output --partial "Status auth: valid cached EOS userToken found (10m 0s remaining). Token source: cache."
+  assert_output --partial "status=0"
+  assert_output --partial "token=cached-token"
+}
+
+@test "get_or_refresh_eos_token can suppress cached token auth progress" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/rcon_commands.sh"
+    INSTANCE_NAME="demo"
+    EOS_TOKEN_CACHE="$BATS_TEST_TMPDIR/eos-token-cache-progress-suppressed.json"
+    printf "%s" "{\"token\":\"cached-token\",\"expires_at\":1600}" > "$EOS_TOKEN_CACHE"
+    date() { echo 1000; }
+    set +e
+    token=$(STATUS_AUTH_PROGRESS=TRUE STATUS_AUTH_SUPPRESS_CACHE_PROGRESS=TRUE get_or_refresh_eos_token 3>&2)
+    status=$?
+    set -e
+    printf "status=%s\n" "$status"
+    printf "token=%s\n" "$token"
+  '
+
+  assert_success
+  refute_output --partial "Status auth: valid cached EOS userToken"
   assert_output --partial "status=0"
   assert_output --partial "token=cached-token"
 }
@@ -174,10 +196,10 @@ load '../test_helper/project.bash'
   '
 
   assert_success
-  assert_output --partial "Status auth [demo]: no valid cached EOS userToken. Acquiring fresh Steam ticket..."
-  assert_output --partial "Status auth [demo]: Steam ticket obtained (64 bytes)."
-  assert_output --partial "Status auth [demo]: exchanging Steam ticket for EOS userToken..."
-  assert_output --partial "Status auth [demo]: EOS userToken obtained (60m 0s remaining). Token source: fresh exchange."
+  assert_output --partial "Status auth: no valid cached EOS userToken. Acquiring fresh Steam ticket..."
+  assert_output --partial "Status auth: Steam ticket obtained (64 bytes)."
+  assert_output --partial "Status auth: exchanging Steam ticket for EOS userToken..."
+  assert_output --partial "Status auth: EOS userToken obtained (60m 0s remaining). Token source: fresh exchange."
   assert_output --partial "status=0"
   assert_output --partial "token=fresh-token"
   refute_output --partial "AAAAAAAAAAAAAAAA"

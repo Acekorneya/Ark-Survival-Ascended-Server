@@ -32,10 +32,6 @@ _status_auth_progress() {
     return 0
   fi
 
-  if [ -n "${INSTANCE_NAME:-}" ]; then
-    prefix+=" [${INSTANCE_NAME}]"
-  fi
-
   printf '%s: %s\n' "$prefix" "$message" >&"${progress_fd}"
 }
 
@@ -72,6 +68,7 @@ get_or_refresh_eos_token() {
   local retry_delay="${EOS_EXCHANGE_RETRY_DELAY_SECONDS:-5}"
   local ticket_hex=""
   local token_json=""
+  local suppress_cache_progress="${STATUS_AUTH_SUPPRESS_CACHE_PROGRESS:-FALSE}"
 
   if [ -f "$EOS_TOKEN_CACHE" ]; then
     local token expires_at now buffer=300
@@ -82,7 +79,9 @@ get_or_refresh_eos_token() {
     if [ -n "$token" ] && [ "$token" != "null" ] && \
        [ -n "$expires_at" ] && [ "$expires_at" != "null" ] && \
        [ "$now" -lt "$((expires_at - buffer))" ] 2>/dev/null; then
-      _status_auth_progress "valid cached EOS userToken found ($(_status_auth_format_duration "$((expires_at - now))") remaining). Token source: cache."
+      if [ "$suppress_cache_progress" != "TRUE" ]; then
+        _status_auth_progress "valid cached EOS userToken found ($(_status_auth_format_duration "$((expires_at - now))") remaining). Token source: cache."
+      fi
       echo "$token"
       return 0
     fi
