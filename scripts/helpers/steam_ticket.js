@@ -21,6 +21,10 @@ function formatSteamError(err) {
     return "Steam error: RateLimitExceeded. Steam is temporarily rate-limiting this account. Wait a few minutes and try -status again.";
   }
 
+  if (rawMessage.includes("LoggedInElsewhere")) {
+    return "Steam error: LoggedInElsewhere. This Steam account is currently logged in on another device (e.g. you are playing a game). Close Steam or stop playing, then try -status again.";
+  }
+
   return `Steam error: ${rawMessage}`;
 }
 

@@ -417,12 +417,12 @@ load '../test_helper/project.bash'
   '
 
   assert_success
-  assert_output --partial "Steam login may still be awaiting mobile approval or the session ticket may not be ready yet. Waiting 1s before requesting a fresh Steam ticket and retrying EOS token exchange (1/3)..."
-  assert_output --partial "Steam login may still be awaiting mobile approval or the session ticket may not be ready yet. Waiting 1s before requesting a fresh Steam ticket and retrying EOS token exchange (2/3)..."
+  assert_output --partial "EOS exchange failed. Waiting 1s before retrying (1/3)..."
+  assert_output --partial "EOS exchange failed. Waiting 1s before retrying (2/3)..."
   assert_output --partial "status=0"
   assert_output --partial "token=fresh-token"
   assert_output --partial "attempts=3"
-  assert_output --partial "ticket_attempts=3"
+  assert_output --partial "ticket_attempts=1"
 }
 
 @test "full_status_display shows detailed EOS exchange errors" {

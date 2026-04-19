@@ -104,48 +104,76 @@ get_or_refresh_eos_token() {
       *"RateLimitExceeded"*)
         return 1
         ;;
+      *"LoggedInElsewhere"*)
+        return 1
+        ;;
       *)
         return 0
         ;;
     esac
   }
 
-  while [ "$exchange_attempt" -le "$max_attempts" ]; do
-    # The container path uses steam-user for ticket generation. Request a
-    # fresh Steam ticket on every retry so we don't keep reusing a ticket that
-    # was created before mobile approval or app session readiness completed.
+  # Phase 1 — Acquire Steam ticket.
+  # If a guard code is provided it is single-use: try exactly once and bail on
+  # any failure so the outer retry wrapper can re-prompt for a fresh code.
+  # Without a guard code we retry up to max_attempts (transient login delays).
+  local ticket_acquire_max
+  if [ -n "${STEAM_GUARD_CODE:-}" ]; then
+    ticket_acquire_max=1
+  else
+    ticket_acquire_max="$max_attempts"
+  fi
+
+  while [ "$exchange_attempt" -le "$ticket_acquire_max" ]; do
     ticket_err_file=$(mktemp)
     ticket_hex=$(node "${HELPERS_DIR}/steam_ticket.js" 2>"$ticket_err_file")
     ticket_status=$?
     ticket_error="$(cat "$ticket_err_file" 2>/dev/null)"
     rm -f "$ticket_err_file"
 
-    if [ $ticket_status -ne 0 ] || [ -z "$ticket_hex" ]; then
-      if [ -n "$ticket_error" ] && ! _steam_ticket_error_is_retryable "$ticket_error"; then
-        printf '%s\n' "$ticket_error" >&2
-        echo "STEAM_TICKET_FAILED"
-        return 1
-      fi
+    if [ $ticket_status -eq 0 ] && [ -n "$ticket_hex" ]; then
+      ticket_hex="${ticket_hex^^}"
+      _status_auth_progress "Steam ticket obtained ($((${#ticket_hex} / 2)) bytes)."
+      break
+    fi
 
-      if [ "$exchange_attempt" -lt "$max_attempts" ]; then
-        _status_auth_progress "Steam ticket is not ready yet. Waiting ${retry_delay}s before retrying (${exchange_attempt}/${max_attempts})..."
-        sleep "$retry_delay"
-        exchange_attempt=$((exchange_attempt + 1))
-        continue
-      fi
+    # Non-retryable errors (STEAM_GUARD_REQUIRED, RateLimitExceeded)
+    if [ -n "$ticket_error" ] && ! _steam_ticket_error_is_retryable "$ticket_error"; then
+      printf '%s\n' "$ticket_error" >&2
+      echo "STEAM_TICKET_FAILED"
+      return 1
+    fi
 
+    # Guard code was consumed on the first attempt — don't retry with the same code
+    if [ -n "${STEAM_GUARD_CODE:-}" ]; then
       if [ -n "$ticket_error" ]; then
         printf '%s\n' "$ticket_error" >&2
       else
-        echo "Steam ticket helper returned no ticket." >&2
+        echo "Steam ticket failed. The guard code may have been consumed; request a new code." >&2
       fi
       echo "STEAM_TICKET_FAILED"
       return 1
     fi
-    ticket_hex="${ticket_hex^^}"
-    _status_auth_progress "Steam ticket obtained ($((${#ticket_hex} / 2)) bytes)."
-    _status_auth_progress "exchanging Steam ticket for EOS userToken..."
 
+    if [ "$exchange_attempt" -lt "$ticket_acquire_max" ]; then
+      _status_auth_progress "Steam ticket is not ready yet. Waiting ${retry_delay}s before retrying (${exchange_attempt}/${ticket_acquire_max})..."
+      sleep "$retry_delay"
+    fi
+    exchange_attempt=$((exchange_attempt + 1))
+  done
+
+  if [ -z "$ticket_hex" ]; then
+    if [ -n "$ticket_error" ]; then printf '%s\n' "$ticket_error" >&2; fi
+    echo "STEAM_TICKET_FAILED"
+    return 1
+  fi
+
+  # Phase 2 — Retry EOS exchange only, reusing the ticket already obtained.
+  # Never call node steam_ticket.js again — the Steam session is still active.
+  exchange_attempt=1
+  _status_auth_progress "exchanging Steam ticket for EOS userToken..."
+
+  while [ "$exchange_attempt" -le "$max_attempts" ]; do
     exchange_err_file=$(mktemp)
     token_json=$(python3 "${HELPERS_DIR}/eos_token.py" "$ticket_hex" 2>"$exchange_err_file")
     exchange_status=$?
@@ -157,10 +185,9 @@ get_or_refresh_eos_token() {
     fi
 
     if [ "$exchange_attempt" -lt "$max_attempts" ]; then
-      _status_auth_progress "Steam login may still be awaiting mobile approval or the session ticket may not be ready yet. Waiting ${retry_delay}s before requesting a fresh Steam ticket and retrying EOS token exchange (${exchange_attempt}/${max_attempts})..."
+      _status_auth_progress "EOS exchange failed. Waiting ${retry_delay}s before retrying (${exchange_attempt}/${max_attempts})..."
       sleep "$retry_delay"
     fi
-
     exchange_attempt=$((exchange_attempt + 1))
   done
 
