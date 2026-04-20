@@ -100,7 +100,7 @@ async function main() {
     setTimeout(() => {
       getTicket((err, ticket) => {
         if (err) {
-          console.error("Failed to get auth ticket:", err.message);
+          console.error(formatSteamError(err));
           process.exit(1);
         }
 

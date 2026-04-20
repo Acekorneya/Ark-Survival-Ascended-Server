@@ -353,6 +353,48 @@ EOF
   assert_output --partial "prompt_calls=1"
 }
 
+@test "execute_rcon_command aborts remaining instances after a shared Steam auth failure during status -all" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/rcon-status-all-shared-auth-failure" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    source "$REPO_ROOT/POK-manager.sh"
+    calls_file="$BATS_TEST_TMPDIR/status_calls"
+    : > "$calls_file"
+    list_running_instances() { echo "alpha beta"; }
+    validate_instance() { return 0; }
+    _rcon_status_ready() { return 0; }
+    ensure_steam_credentials() {
+      STEAM_USERNAME="steam_user"
+      STEAM_PASSWORD="steam_pass"
+    }
+    _prompt_optional_steam_guard_code() { :; }
+    _run_status_with_guard_retry() {
+      printf "%s\n" "$1" >> "$calls_file"
+      if [ "$1" = "alpha" ]; then
+        RUN_STATUS_OUTPUT="Error: Failed to get Steam session ticket.
+Steam error: LoggedInElsewhere. This Steam account is currently logged in on another device (e.g. you are playing a game). Close Steam or stop playing, then try -status again."
+        return 1
+      fi
+      RUN_STATUS_OUTPUT="status:$1"
+      return 0
+    }
+    set +e
+    execute_rcon_command -status -all
+    status=$?
+    set -e
+    printf "status=%s\n" "$status"
+    printf "calls=%s\n" "$(tr "\n" "," < "$calls_file")"
+  '
+
+  assert_success
+  assert_output --partial "----- Server alpha: Command: status -----"
+  assert_output --partial "Error: Failed to get Steam session ticket."
+  assert_output --partial "Steam error: LoggedInElsewhere. This Steam account is currently logged in on another device (e.g. you are playing a game). Close Steam or stop playing, then try -status again."
+  assert_output --partial "----- Aborted remaining instances because shared Steam/EOS authentication failed on alpha. -----"
+  assert_output --partial "status=1"
+  assert_output --partial "calls=alpha,"
+  refute_output --partial "status:beta"
+}
+
 @test "_prompt_optional_steam_guard_code skips prompting when no interactive terminal is available" {
   run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/rcon-optional-guard-cache" POK_MANAGER_TEST_MODE=1 bash -lc '
     set -e

@@ -4257,6 +4257,11 @@ _status_output_requires_steam_guard() {
   [[ "$status_output" == *"STEAM_GUARD_REQUIRED:"* ]]
 }
 
+_status_output_is_shared_auth_failure() {
+  local status_output="$1"
+  [[ "$status_output" == *"Error: Failed to get Steam session ticket."* || "$status_output" == *"Error: Failed to exchange Steam ticket for EOS token."* ]]
+}
+
 _sanitize_status_output() {
   local status_output="$1"
   printf '%s\n' "$status_output" | grep -v '^STEAM_GUARD_REQUIRED:' || true
@@ -4425,6 +4430,8 @@ _rcon_process_all_running_instances() {
   local running_instances=("$@")
   local instance
   local status_cache_progress_remaining=0
+  local status_auth_failed_all=false
+  local status_auth_failed_instance=""
   declare -A instance_outputs
 
   if [[ "$action" == "-status" ]] && [ ${#running_instances[@]} -gt 0 ]; then
@@ -4460,6 +4467,12 @@ _rcon_process_all_running_instances() {
         instance_outputs["$instance"]="$RUN_STATUS_OUTPUT"
       else
         instance_outputs["$instance"]="$RUN_STATUS_OUTPUT"
+        if _status_output_is_shared_auth_failure "$RUN_STATUS_OUTPUT"; then
+          status_auth_failed_all=true
+          status_auth_failed_instance="$instance"
+          STATUS_AUTH_SUPPRESS_CACHE_PROGRESS=FALSE
+          break
+        fi
       fi
       STATUS_AUTH_SUPPRESS_CACHE_PROGRESS=FALSE
     else
@@ -4471,6 +4484,11 @@ _rcon_process_all_running_instances() {
     echo "----- Server $instance: Command: ${action#-}${message:+ $message} -----"
     echo "${instance_outputs[$instance]}"
   done
+
+  if [[ "$action" == "-status" && "$status_auth_failed_all" == "true" ]]; then
+    echo "----- Aborted remaining instances because shared Steam/EOS authentication failed on ${status_auth_failed_instance}. -----"
+    return 1
+  fi
 
   echo "----- All running instances processed with $action command. -----"
 }

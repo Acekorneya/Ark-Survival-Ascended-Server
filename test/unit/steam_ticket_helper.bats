@@ -87,8 +87,47 @@ EOF
   '
 
   assert_success
-  assert_output --partial "Failed to get auth ticket: Steam session ticket is unexpectedly short (21 bytes)"
+  assert_output --partial "Steam error: Steam session ticket is unexpectedly short (21 bytes)"
   assert_output --partial "status=1"
+}
+
+@test "steam_ticket helper shows a clear message when session ticket creation fails because the account is in use elsewhere" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    modules_dir="$BATS_TEST_TMPDIR/modules"
+    helper_copy="$BATS_TEST_TMPDIR/steam_ticket.js"
+    mkdir -p "$modules_dir/steam-user"
+    cp "$REPO_ROOT/scripts/helpers/steam_ticket.js" "$helper_copy"
+
+    cat > "$modules_dir/steam-user/index.js" <<'"'"'EOF'"'"'
+const {EventEmitter} = require("events");
+
+module.exports = class SteamUser extends EventEmitter {
+  logOn() {
+    setImmediate(() => this.emit("loggedOn"));
+  }
+
+  gamesPlayed() {}
+
+  createAuthSessionTicket(appId, callback) {
+    callback(new Error("LoggedInElsewhere"));
+  }
+
+  logOff() {}
+};
+EOF
+
+    set +e
+    output=$(NODE_PATH="$modules_dir" STEAM_USERNAME="user" STEAM_PASSWORD="pass" STEAM_TICKET_REQUEST_DELAY_MS=0 timeout 5 node "$helper_copy" 2>&1)
+    status=$?
+    set -e
+    printf "status=%s\n" "$status"
+    printf "%s\n" "$output"
+  '
+
+  assert_success
+  assert_output --partial "status=1"
+  assert_output --partial "Steam error: LoggedInElsewhere. This Steam account is currently logged in on another device (e.g. you are playing a game). Close Steam or stop playing, then try -status again."
 }
 
 @test "steam_ticket helper requests Steam Guard only when Steam asks for it" {
