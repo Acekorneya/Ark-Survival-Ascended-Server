@@ -1,7 +1,7 @@
 #!/bin/bash
 # Version information
 POK_MANAGER_VERSION="2.1.80"
-POK_MANAGER_BRANCH="beta" # Can be "stable" or "beta"
+POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory for the script
 if [[ -z "${BASE_DIR:-}" ]]; then
