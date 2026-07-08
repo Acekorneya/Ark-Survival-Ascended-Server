@@ -1986,9 +1986,11 @@ EOF
     echo "      - \"${abs_instance_dir}/API_Logs:/home/pok/arkserver/ShooterGame/Binaries/Win64/logs\"" >> "$docker_compose_file"
   fi
 
-  # Add the Cluster volume
+  # Add the Cluster volume, security options, and memory limit
   cat >> "$docker_compose_file" <<-EOF
       - "${base_dir}/Cluster:/home/pok/arkserver/ShooterGame/Saved/clusters"
+    security_opt:
+      - "seccomp=unconfined"
     mem_limit: ${config_values[Memory Limit]}
 EOF
 
@@ -2037,8 +2039,38 @@ adjust_docker_permissions() {
     local use_sudo
     use_sudo=$(cat "$config_file" 2>/dev/null || echo "true")
     if [ "$use_sudo" = "false" ]; then
-      echo "User has chosen to run Docker commands without 'sudo'."
-      return
+      # Verify if docker commands actually work without sudo
+      if ! docker ps >/dev/null 2>&1; then
+        if docker ps 2>&1 | grep -q -i "permission denied"; then
+          echo "⚠️ Error: User preference is set to run Docker without 'sudo', but permission was denied to the Docker socket."
+          
+          # Try to fix by changing ownership of docker.sock (since it resets on reboot)
+          if groups $USER 2>/dev/null | grep -q '\bdocker\b' || groups 2>/dev/null | grep -q '\bdocker\b'; then
+            echo "User is in the 'docker' group. Attempting to refresh /var/run/docker.sock ownership..."
+            if sudo chown $USER /var/run/docker.sock 2>/dev/null; then
+              if docker ps >/dev/null 2>&1; then
+                echo "✅ Docker socket ownership updated successfully. Docker is now accessible."
+                return
+              fi
+            fi
+          fi
+          
+          # If we still can't access, ask user if they want to switch to using sudo
+          echo "It seems the user does not have permission to run Docker commands without 'sudo' (or the session was not refreshed)."
+          read -r -p "Would you like to switch to running Docker commands WITH 'sudo'? [Y/n] " switch_sudo
+          if [[ ! "$switch_sudo" =~ ^[Nn]$ ]]; then
+            echo "true" > "$config_file" 2>/dev/null || true
+            echo "Switched preference to run Docker commands with 'sudo'."
+            return
+          fi
+        else
+          echo "⚠️ Warning: User preference is set to run Docker without 'sudo', but Docker is not responding."
+          echo "Please ensure the Docker daemon is running (e.g., 'sudo systemctl start docker')."
+        fi
+      else
+        echo "User has chosen to run Docker commands without 'sudo'."
+        return
+      fi
     fi
   else
     # If we can't read the file due to permissions
@@ -5668,12 +5700,12 @@ restore_instance() {
 select_instance() {
   local instances=($(list_instances))
   if [ ${#instances[@]} -eq 0 ]; then
-    echo "No instances found."
+    >&2 echo "No instances found."
     exit 1
   fi
-  echo "Available instances:"
+  >&2 echo "Available instances:"
   for ((i=0; i<${#instances[@]}; i++)); do
-    echo "$((i+1)). ${instances[i]}"
+    >&2 echo "$((i+1)). ${instances[i]}"
   done
   while true; do
     read -p "Enter the number of the instance: " choice
@@ -5681,7 +5713,7 @@ select_instance() {
       echo "${instances[$((choice-1))]}"
       break
     else
-      echo "Invalid choice. Please try again."
+      >&2 echo "Invalid choice. Please try again."
     fi
   done
 }
@@ -6101,6 +6133,14 @@ _manage_service_handle_fix() {
     echo ""
     echo "Step 5: Skipped permission normalization (requires sudo)."
   fi
+
+  echo ""
+  echo "Step 6: Ensuring security options (seccomp=unconfined) in all docker-compose files..."
+  for instance_dir in "${BASE_DIR}"/Instance_*/; do
+    if [ -d "$instance_dir" ]; then
+      _migration_add_seccomp_security_opt_for_instance_dir "$instance_dir"
+    fi
+  done
 
   echo ""
   if [ "$fix_failed" = true ]; then
@@ -7512,6 +7552,38 @@ _migration_update_api_logs_volume_for_instance_dir() {
     chown 7777:7777 "$docker_compose_file"
   fi
 }
+
+_migration_add_seccomp_security_opt_for_instance_dir() {
+  local instance_dir="$1"
+  local instance_name
+  local docker_compose_file
+  local tmp_file
+
+  instance_name=$(basename "$instance_dir" | sed -E 's/Instance_(.*)/\1/')
+  docker_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
+
+  if [ -f "$docker_compose_file" ] && ! grep -q "seccomp=unconfined" "$docker_compose_file"; then
+    echo "Adding seccomp security options to docker-compose file for instance: $instance_name"
+    tmp_file="${docker_compose_file}.tmp"
+    awk '
+      /restart: unless-stopped/ {
+        print
+        print "    security_opt:"
+        print "      - \"seccomp=unconfined\""
+        next
+      }
+      { print }
+    ' "$docker_compose_file" > "$tmp_file"
+    mv -f "$tmp_file" "$docker_compose_file"
+    
+    # Preserve ownership if running with sudo
+    if [ "$(id -u)" -eq 0 ]; then
+      local ownership=$(get_expected_ownership)
+      chown "${ownership}" "$docker_compose_file" 2>/dev/null || true
+    fi
+  fi
+}
+
 
 _migration_update_api_logs_volumes() {
   local instance_dir

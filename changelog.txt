@@ -1,4 +1,8 @@
 ## Version 2.1.80 (Latest)
+- Added `security_opt: - "seccomp=unconfined"` to `docker-compose.yaml` (template) and newly written instance configurations to prevent `steamcmd` worker thread crashes and update connection failures on host systems with restrictive libseccomp policies.
+- Added Step 6 to the `-fix` command to automatically migrate existing instance compose files to include the `seccomp=unconfined` option.
+- Enhanced Docker permission check (`adjust_docker_permissions`) to verify active access to `/var/run/docker.sock` when running without `sudo`. It now auto-recovers socket ownership (if user belongs to the `docker` group) or prompts to revert to using `sudo`.
+- Fixed a bug in `select_instance` where the list of available instances was captured inside command substitution subshells instead of displaying to the terminal.
 - Refactored the manager/runtime scripts for cleaner command handling, safer sourcing, and better maintainability while preserving existing behavior.
 - Expanded automated validation, fixed log handling, API log tailing, and startup readiness checks, and added an interactive `-delete` command for safe instance removal.
 - Added a built-in internal `/healthz` endpoint with image-level Docker health checks for Docker and Kubernetes probe support #122.

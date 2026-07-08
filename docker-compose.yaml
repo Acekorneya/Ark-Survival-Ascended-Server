@@ -60,4 +60,6 @@ services:
       - "./ServerFiles/arkserver:/home/pok/arkserver"
       - "./Instance_my_instance/Saved:/home/pok/arkserver/ShooterGame/Saved"
       - "./Cluster:/home/pok/arkserver/ShooterGame/Saved/clusters"
+    security_opt:
+      - "seccomp=unconfined"
     mem_limit: 16G
