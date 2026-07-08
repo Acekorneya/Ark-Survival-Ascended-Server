@@ -1267,10 +1267,10 @@ Thank you for your support!
 
 ## Star History
 
-<a href="https://star-history.com/#Acekorneya/Ark-Survival-Ascended-Server&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Acekorneya/Ark-Survival-Ascended-Server&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Acekorneya/Ark-Survival-Ascended-Server&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Acekorneya/Ark-Survival-Ascended-Server&type=Date" />
-  </picture>
+<a href="https://www.star-history.com/?type=date&repos=Acekorneya%2FArk-Survival-Ascended-Server">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Acekorneya/Ark-Survival-Ascended-Server&type=date&theme=dark&legend=top-left&sealed_token=2T_Iq_OA8JVzwO5TYlEQ3yJyBODdy5waQunsYyr35VXwmz4HuRKyzMkfQLAI6lfV8FYZ9wWWGLYbXpyjHV12J3H065X_Vd9fKydcpPAM2TyYr8mExWr9sw" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Acekorneya/Ark-Survival-Ascended-Server&type=date&legend=top-left&sealed_token=2T_Iq_OA8JVzwO5TYlEQ3yJyBODdy5waQunsYyr35VXwmz4HuRKyzMkfQLAI6lfV8FYZ9wWWGLYbXpyjHV12J3H065X_Vd9fKydcpPAM2TyYr8mExWr9sw" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Acekorneya/Ark-Survival-Ascended-Server&type=date&legend=top-left&sealed_token=2T_Iq_OA8JVzwO5TYlEQ3yJyBODdy5waQunsYyr35VXwmz4HuRKyzMkfQLAI6lfV8FYZ9wWWGLYbXpyjHV12J3H065X_Vd9fKydcpPAM2TyYr8mExWr9sw" />
+ </picture>
 </a>
