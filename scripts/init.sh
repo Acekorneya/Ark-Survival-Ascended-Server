@@ -8,6 +8,34 @@ POK_SCRIPTS_DIR="${POK_SCRIPTS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
 source "${POK_SCRIPTS_DIR}/common.sh"
 # shellcheck source=/dev/null
 source "${POK_SCRIPTS_DIR}/update_coordination.sh"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/shutdown_server.sh"
+
+INIT_SHUTDOWN_IN_PROGRESS=false
+
+container_signal_shutdown() {
+  if [ "$INIT_SHUTDOWN_IN_PROGRESS" = "true" ]; then
+    return 0
+  fi
+
+  INIT_SHUTDOWN_IN_PROGRESS=true
+  trap '' SIGTERM SIGINT
+  echo "[INFO] Container stop signal received; starting verified two-stage ASA shutdown..."
+
+  if safe_container_stop; then
+    echo "[SUCCESS] Both world saves are verified. Exiting container cleanly."
+    exit 0
+  fi
+
+  echo "[FATAL] Container stop remains unsafe because save verification failed." >&2
+  echo "[FATAL] PID 1 will remain alive until Docker's configured grace period expires." >&2
+  INIT_SHUTDOWN_IN_PROGRESS=false
+  trap container_signal_shutdown SIGTERM SIGINT
+  return 1
+}
+
+trap container_signal_shutdown SIGTERM SIGINT
+rm -f "$VERIFIED_SHUTDOWN_MARKER" 2>/dev/null || true
 
 if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
   return 0
@@ -828,6 +856,9 @@ elif [ "${API}" = "TRUE" ] && env_value_is_truthy "${UPDATE_SERVER:-FALSE}"; the
   echo "⚠️           ./POK-manager.sh -start <instance_name>"
 fi
 
-# Keep the init.sh script running to prevent container from exiting
-# This will not block log display since logs are handled separately
-tail -f /dev/null
+# Keep PID 1 interruptible so SIGTERM runs the verified shutdown handler. A
+# foreground `tail -f /dev/null` can prevent Bash from processing the trap.
+while true; do
+  sleep 86400 &
+  wait $! || true
+done

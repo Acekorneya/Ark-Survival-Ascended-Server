@@ -214,61 +214,107 @@ get_or_refresh_eos_token() {
 
 # Define RCON commands as functions
 saveWorld() {
-  send_rcon_command "saveworld"
-  echo "World save command issued."
+  if send_rcon_command "saveworld" "${SAVE_WAIT_SECONDS:-60}"; then
+    echo "World save command issued."
+    return 0
+  fi
+
+  echo "Error: World save command was not accepted by RCON." >&2
+  return 1
 }
 
 sendChat() {
   local message="$1"
-  send_rcon_command "ServerChat $message" 
-  echo "Chat message sent: $message"
+  if send_rcon_command "ServerChat $message"; then
+    echo "Chat message sent: $message"
+    return 0
+  fi
+
+  return 1
 }
 
 # Function to initiate server shutdown
 shutdownServer() {
-  send_rcon_command "DoExit"
-  echo "Server shutdown command issued."
+  if send_rcon_command "DoExit" "${SAVE_WAIT_SECONDS:-60}"; then
+    echo "Server shutdown command issued."
+    return 0
+  fi
+
+  echo "Error: Server shutdown command was not accepted by RCON." >&2
+  return 1
 }
 
 # Enhanced RCON command function with better error handling
 send_rcon_command() {
   local command="$1"
+  local total_timeout="${2:-32}"
   local max_retries=3
   local retry=0
   local success=false
+  local started_at
+  local deadline
 
   # Configure timeout for rcon command to prevent hanging
   local timeout_seconds=10
+  if ! [[ "$total_timeout" =~ ^[0-9]+$ ]] || [ "$total_timeout" -lt 1 ]; then
+    total_timeout=32
+  fi
+  started_at=$(date +%s)
+  deadline=$((started_at + total_timeout))
   
   while [ $retry -lt $max_retries ] && [ "$success" = "false" ]; do
+    local now
+    local remaining
+    local attempt_timeout
+    now=$(date +%s)
+    remaining=$((deadline - now))
+    if [ "$remaining" -le 0 ]; then
+      echo "Error: RCON command exceeded its ${total_timeout}-second deadline." >&2
+      break
+    fi
+    attempt_timeout="$timeout_seconds"
+    if [ "$remaining" -lt "$attempt_timeout" ]; then
+      attempt_timeout="$remaining"
+    fi
+
     # Capture the output and error of the rcon command with timeout
     local output
-    output=$(timeout $timeout_seconds ${RCON_PATH} -a ${RCON_HOST}:${RCON_PORT} -p "${RCON_PASSWORD}" "$command" 2>&1)
+    output=$(timeout "$attempt_timeout" "${RCON_PATH}" -a "${RCON_HOST}:${RCON_PORT}" -p "${RCON_PASSWORD}" "$command" 2>&1)
     local status=$?
     
     # Check for timeout
     if [ $status -eq 124 ]; then
-      echo "Warning: RCON command timed out after $timeout_seconds seconds. Retrying..." >&2
+      echo "Warning: RCON command timed out after $attempt_timeout seconds. Retrying..." >&2
       retry=$((retry + 1))
-      sleep 1
+      [ "$(date +%s)" -lt "$deadline" ] && sleep 1
       continue
     fi
 
-    # Check if the output contains a critical failure message
-    if echo "$output" | grep -q "Failed to connect"; then
-      if [ $retry -lt $((max_retries - 1)) ]; then
-        echo "Warning: Failed to connect to RCON server (attempt $((retry + 1))/$max_retries). Retrying..." >&2
-        retry=$((retry + 1))
-        sleep 1
-      else
-        echo "Error: Failed to connect to RCON server after $max_retries attempts." >&2
-        return 1
+    # rcon-cli uses this response for commands such as saveworld and DoExit.
+    if echo "$output" | grep -q "Server received, But no response!!"; then
+      if [ "${RCON_QUIET_MODE:-FALSE}" != "TRUE" ]; then
+        echo "Command received by server, but no response was provided." >&2
       fi
-    elif [ "${RCON_QUIET_MODE:-FALSE}" != "TRUE" ] && echo "$output" | grep -q "Server received, But no response!!"; then
-      # For commands that don't return responses (like DoExit), this is normal
-      echo "Command received by server, but no response was provided." >&2
       success=true
       break
+    fi
+
+    # Check both the process status and known connection/authentication failures.
+    if [ $status -ne 0 ] || echo "$output" | grep -Eqi "Failed to connect|authentication failed|auth failed|invalid password"; then
+      if [ $retry -lt $((max_retries - 1)) ]; then
+        if echo "$output" | grep -qi "Failed to connect"; then
+          echo "Warning: Failed to connect to RCON server (attempt $((retry + 1))/$max_retries). Retrying..." >&2
+        else
+          echo "Warning: RCON command failed (attempt $((retry + 1))/$max_retries). Retrying..." >&2
+        fi
+        [ -n "$output" ] && echo "$output" >&2
+        retry=$((retry + 1))
+        [ "$(date +%s)" -lt "$deadline" ] && sleep 1
+      else
+        echo "Error: RCON command failed after $max_retries attempts." >&2
+        [ -n "$output" ] && echo "$output" >&2
+        return 1
+      fi
     else
       # Command succeeded
       success=true

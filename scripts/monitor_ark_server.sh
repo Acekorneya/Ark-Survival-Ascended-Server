@@ -30,23 +30,22 @@ check_restart_timeout() {
     local current_time=$(date +%s)
     local elapsed_time=$((current_time - start_time))
     
-    # If it's been more than 5 minutes (300 seconds), force kill the container
+    # If it's been more than 5 minutes, retry a verified shutdown before restart.
     if [ $elapsed_time -gt 300 ]; then
-      echo "[CRITICAL] Restart timeout exceeded (${elapsed_time}s) - FORCING CONTAINER KILL"
+      echo "[CRITICAL] Restart timeout exceeded (${elapsed_time}s) - requesting verified container restart"
+
+      if shutdown_server_process_running && ! safe_container_stop; then
+        echo "[ERROR] Restart timeout recovery aborted because both saves were not verified." >&2
+        date +%s > "$RESTART_TIMESTAMP_FILE"
+        return 1
+      fi
       
       # Absolutely ensure container dies
       echo "true" > /home/pok/stop_monitor.flag
       sync
       
-      # Execute most aggressive kill sequence
-      killall -9 -u pok || true
-      sleep 1
-      kill -9 -1 || true
-      sleep 1
-      kill -9 1 || true
-      sleep 1
-      kill -ABRT $$ || true
-      exec kill -SEGV $$ || exit 1
+      kill -TERM 1
+      return 0
     fi
   else
     # If no restart flag, remove the timestamp file if it exists
@@ -282,15 +281,10 @@ exit_container_for_recovery() {
   if pgrep -f "AsaApiLoader.exe" >/dev/null 2>&1 || pgrep -f "ArkAscendedServer.exe" >/dev/null 2>&1; then
     # Use safe_container_stop function to ensure world save
     echo "[$current_time] [INFO] Server is running, ensuring world data is saved before container exit..." | tee -a "$RECOVERY_LOG"
-    safe_container_stop
-    
-    # Kill any running server processes after safe stop
-    echo "[$current_time] [INFO] Terminating any running server processes after save..." | tee -a "$RECOVERY_LOG"
-    pkill -9 -f "AsaApiLoader.exe" >/dev/null 2>&1 || true
-    pkill -9 -f "ArkAscendedServer.exe" >/dev/null 2>&1 || true
-    pkill -9 -f "wine" >/dev/null 2>&1 || true
-    pkill -9 -f "wineserver" >/dev/null 2>&1 || true
-    sleep 2
+    if ! safe_container_stop; then
+      echo "[$current_time] [ERROR] Recovery restart aborted because both saves were not verified." | tee -a "$RECOVERY_LOG"
+      return 1
+    fi
   else
     echo "[$current_time] [INFO] Server not running, no world save needed" | tee -a "$RECOVERY_LOG"
   fi
@@ -310,28 +304,9 @@ exit_container_for_recovery() {
   # Allow some time for logs to be written
   sleep 3
   
-  echo "[$current_time] [INFO] Force killing ALL container processes..." | tee -a "$RECOVERY_LOG"
-  
-  # Super aggressive container kill approach:
-  
-  # 1. Kill all processes owned by our user
-  echo "[$current_time] [INFO] Killing all user processes with SIGKILL..." | tee -a "$RECOVERY_LOG"
-  killall -9 -u pok || true
-  
-  # 2. Kill all processes in our process group
-  echo "[$current_time] [INFO] Killing all processes in process group with SIGKILL..." | tee -a "$RECOVERY_LOG"
-  kill -9 -1 || true
-  
-  # 3. Force kill init process (tini)
-  echo "[$current_time] [INFO] Directly killing PID 1 (tini) with SIGKILL..." | tee -a "$RECOVERY_LOG"
-  kill -9 1 || true
-  
-  # 4. As absolute last resort, crash our own process with ABORT signal
-  echo "[$current_time] [INFO] Last resort: Sending SIGABRT to our own process to force container crash..." | tee -a "$RECOVERY_LOG"
-  kill -ABRT $$ || true
-  
-  # If we somehow get here, exit with failure code
-  exit 1
+  echo "[$current_time] [INFO] Signaling PID 1 for a clean container restart..." | tee -a "$RECOVERY_LOG"
+  kill -TERM 1
+  return 0
 }
 
 # Enhanced recovery function with better logging and recovery 
@@ -594,6 +569,10 @@ handle_first_launch_recovery() {
   
   # Terminate any running processes
   echo "[INFO] Stopping any running server processes..."
+  if shutdown_server_process_running && ! safe_container_stop; then
+    echo "[ERROR] First-launch recovery aborted because both saves were not verified." >&2
+    return 1
+  fi
   pkill -9 -f "AsaApiLoader.exe" >/dev/null 2>&1 || true
   pkill -9 -f "ArkAscendedServer.exe" >/dev/null 2>&1 || true
   pkill -9 -f "wine" >/dev/null 2>&1 || true
@@ -725,26 +704,16 @@ while true; do
   if [ -f "/home/pok/restart_reason.flag" ]; then
     if ! is_process_running; then
       current_time=$(date "+%Y-%m-%d %H:%M:%S")
-      echo "[$current_time] [WARNING] Detected a restart flag with server not running - forced container kill needed" | tee -a "$RECOVERY_LOG"
-      display_monitor_status "⚠️ Restart detected but server not running - forcing container kill" "WARNING" "true"
+      echo "[$current_time] [WARNING] Detected a restart flag with server not running - requesting clean container restart" | tee -a "$RECOVERY_LOG"
+      display_monitor_status "⚠️ Restart detected with server stopped - restarting container" "WARNING" "true"
       
       # Ensure stop flag is created
       echo "true" > /home/pok/stop_monitor.flag
       
-      # Execute the most aggressive kill methods immediately
-      echo "[$current_time] [WARNING] Executing emergency container kill sequence" | tee -a "$RECOVERY_LOG"
-      
       # Force sync to ensure all data is written
       sync
-      
-      # Kill everything with maximum prejudice
-      killall -9 -u pok || true
-      kill -9 -1 || true
-      kill -9 1 || true
-      kill -ABRT $$ || true
-      
-      # If we somehow get here, try a second approach
-      exec kill -SEGV $$ || exit 1
+      kill -TERM 1
+      exit 0
     else
       # Server is healthy; clear restart coordination markers
       rm -f "/home/pok/restart_reason.flag"

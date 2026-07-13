@@ -1,6 +1,6 @@
 #!/bin/bash
 # Version information
-POK_MANAGER_VERSION="2.1.80"
+POK_MANAGER_VERSION="2.1.81"
 POK_MANAGER_BRANCH="stable" # Can be "stable" or "beta"
 
 # Get the base directory for the script
@@ -371,7 +371,7 @@ declare -A default_config_values=(
     ["Update Window Start"]="12:00 AM"
     ["Update Window End"]="11:59 PM" 
     ["Restart Notice"]="30"
-    ["Save Wait Seconds"]="5"
+    ["Save Wait Seconds"]="60"
     ["MOTD Enabled"]="FALSE"
     ["MOTD"]="Welcome To my Server"
     ["MOTD Duration"]="30"
@@ -421,8 +421,8 @@ validate_number() {
 
 validate_save_wait_seconds() {
   local input=$1
-  while ! [[ "$input" =~ ^[0-9]+$ ]] || [ "$input" -lt 1 ] || [ "$input" -gt 60 ]; do
-    read -rp "Invalid input. Please enter a whole number between 1 and 60 seconds: " input
+  while ! [[ "$input" =~ ^[0-9]+$ ]] || [ "$input" -lt 1 ] || [ "$input" -gt 900 ]; do
+    read -rp "Invalid input. Please enter a whole number between 1 and 900 seconds: " input
   done
   echo "$input"
 }
@@ -1881,6 +1881,12 @@ write_docker_compose_file() {
   local instance_dir="${base_dir}/Instance_${instance_name}"
   local docker_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
   local image_tag=$(get_docker_image_tag "$instance_name")
+  local save_wait_seconds
+  local stop_grace_seconds
+
+  save_wait_seconds=$(_sanitize_save_wait_seconds "${config_values["Save Wait Seconds"]:-60}" "instance ${instance_name}")
+  config_values["Save Wait Seconds"]="$save_wait_seconds"
+  stop_grace_seconds=$((2 * save_wait_seconds + 90))
 
   # Ensure the instance directory exists
   mkdir -p "${instance_dir}"
@@ -1911,6 +1917,7 @@ services:
     image: acekorneya/asa_server:${image_tag}
     container_name: asa_${instance_name} 
     restart: unless-stopped
+    stop_grace_period: ${stop_grace_seconds}s
     environment:
       - INSTANCE_NAME=${instance_name}
       - TZ=$TZ
@@ -2176,6 +2183,7 @@ perform_action_on_all_instances() {
 
 # Function to stop all instances
 stop_all_instances() {
+  local force_mode="${1:-false}"
   echo "Stopping all running instances..."
   
   # Get all running instances
@@ -2188,20 +2196,7 @@ stop_all_instances() {
   
   echo "Found ${#running_instances[@]} running instances to stop."
 
-  _save_instances_then_wait "Attempting quick saves on all running instances..." "Waiting %s seconds for save operations to complete..." "${running_instances[@]}"
-  
-  # Now stop all instances
-  echo "Now stopping all containers..."
-  for instance in "${running_instances[@]}"; do
-    echo "Stopping instance: $instance"
-    stop_instance "$instance" "skip_save" &
-  done
-  
-  # Wait for all stop operations to complete
-  wait
-  
-  echo "All instances have been stopped."
-  return 0
+  _verified_shutdown_instances "$force_mode" "${running_instances[@]}"
 }
 
 # Helper function to prompt for instance copy
@@ -2945,7 +2940,7 @@ _compose_env_value() {
 _sanitize_save_wait_seconds() {
   local raw_value="$1"
   local context="${2:-save wait}"
-  local sanitized_value=5
+  local sanitized_value=60
 
   if [[ -z "$raw_value" ]]; then
     echo "$sanitized_value"
@@ -2953,7 +2948,7 @@ _sanitize_save_wait_seconds() {
   fi
 
   if ! [[ "$raw_value" =~ ^[0-9]+$ ]]; then
-    echo "⚠️ WARNING: Invalid SAVE_WAIT_SECONDS value '$raw_value' for ${context}. Using default of 5 seconds." >&2
+    echo "⚠️ WARNING: Invalid SAVE_WAIT_SECONDS value '$raw_value' for ${context}. Using default of 60 seconds." >&2
     echo "$sanitized_value"
     return 0
   fi
@@ -2961,8 +2956,8 @@ _sanitize_save_wait_seconds() {
   sanitized_value="$raw_value"
   if [ "$sanitized_value" -lt 1 ]; then
     sanitized_value=1
-  elif [ "$sanitized_value" -gt 60 ]; then
-    sanitized_value=60
+  elif [ "$sanitized_value" -gt 900 ]; then
+    sanitized_value=900
   fi
 
   echo "$sanitized_value"
@@ -2974,7 +2969,7 @@ _get_compose_file_save_wait_seconds() {
   local raw_value
 
   if [ ! -f "$docker_compose_file" ]; then
-    echo "5"
+    echo "60"
     return 0
   fi
 
@@ -3438,18 +3433,59 @@ _start_instance_sync_api_logs_volume() {
 _start_instance_sync_save_wait_seconds_env() {
   local docker_compose_file="$1"
 
-  if grep -q '^[[:space:]]*-[[:space:]]*SAVE_WAIT_SECONDS=' "$docker_compose_file"; then
+  if ! grep -q '^[[:space:]]*-[[:space:]]*SAVE_WAIT_SECONDS=' "$docker_compose_file"; then
+    local tmp_file="${docker_compose_file}.tmp"
+    awk '
+      {
+        print
+
+        if (!inserted && $0 ~ /^[[:space:]]*environment:[[:space:]]*$/) {
+          match($0, /^[[:space:]]*/)
+          print substr($0, RSTART, RLENGTH) "  - SAVE_WAIT_SECONDS=60"
+          inserted=1
+        }
+      }
+    ' "$docker_compose_file" > "$tmp_file"
+
+    mv "$tmp_file" "$docker_compose_file"
+  fi
+
+  _sync_compose_stop_grace_period "$docker_compose_file"
+}
+
+_derived_stop_grace_seconds() {
+  local save_wait_seconds="$1"
+  save_wait_seconds=$(_sanitize_save_wait_seconds "$save_wait_seconds" "stop grace period")
+  echo $((2 * save_wait_seconds + 90))
+}
+
+_sync_compose_stop_grace_period() {
+  local docker_compose_file="$1"
+  local save_wait_seconds
+  local stop_grace_seconds
+  local tmp_file="${docker_compose_file}.tmp"
+  local has_stop_grace=false
+  local current_stop_grace=""
+
+  save_wait_seconds=$(_get_compose_file_save_wait_seconds "$docker_compose_file" "compose stop grace")
+  stop_grace_seconds=$(_derived_stop_grace_seconds "$save_wait_seconds")
+  grep -q '^[[:space:]]*stop_grace_period:' "$docker_compose_file" && has_stop_grace=true
+  current_stop_grace=$(grep -E '^[[:space:]]*stop_grace_period:' "$docker_compose_file" 2>/dev/null | head -1 | sed -E 's/.*stop_grace_period:[[:space:]]*//')
+  if [ "$current_stop_grace" = "${stop_grace_seconds}s" ]; then
     return 0
   fi
 
-  local tmp_file="${docker_compose_file}.tmp"
-  awk '
+  awk -v grace="${stop_grace_seconds}s" -v has_grace="$has_stop_grace" '
+    /^[[:space:]]*stop_grace_period:/ {
+      match($0, /^[[:space:]]*/)
+      print substr($0, RSTART, RLENGTH) "stop_grace_period: " grace
+      updated=1
+      next
+    }
     {
       print
-
-      if (!inserted && $0 ~ /^[[:space:]]*-[[:space:]]*RESTART_NOTICE_MINUTES=/) {
-        match($0, /^[[:space:]]*/)
-        print substr($0, RSTART, RLENGTH) "- SAVE_WAIT_SECONDS=5"
+      if (has_grace != "true" && !inserted && $0 ~ /^  asaserver:[[:space:]]*$/) {
+        print "    stop_grace_period: " grace
         inserted=1
       }
     }
@@ -3828,177 +3864,21 @@ _stop_instance_find_container_id() {
   echo "$container_id"
 }
 
-_dispatch_quick_save_command() {
-  local instance_name="$1"
-  local container_name="$2"
-
-  (
-    timeout 3s docker exec "$container_name" /bin/bash -c "/home/pok/scripts/rcon_interface.sh -saveworld" >/dev/null 2>&1
-    save_exit_code=$?
-    if [ $save_exit_code -eq 124 ]; then
-      echo "Save command timed out, continuing with container stop"
-    elif [ $save_exit_code -ne 0 ]; then
-      echo "Save command failed or not available, continuing with container stop"
-    else
-      echo "Save command sent successfully"
-    fi
-  ) &
-}
-
-_max_instance_save_wait_seconds() {
-  local max_wait=1
-  local instance_name
-  local save_wait
-
-  for instance_name in "$@"; do
-    save_wait=$(_get_instance_save_wait_seconds "$instance_name")
-    if [ "$save_wait" -gt "$max_wait" ]; then
-      max_wait="$save_wait"
-    fi
-  done
-
-  echo "$max_wait"
-}
-
-_save_instances_then_wait() {
-  local start_message="$1"
-  local wait_message_template="$2"
-  shift 2
-  local instances=("$@")
-  local instance_name
-  local wait_seconds
-  local elapsed=0
-  local pending_count=0
-  local save_policy
-  local save_action
-  local save_message
-  local docker_compose_file
-  local -A initial_log_lines=()
-  local -A pending_instances=()
-
-  [ ${#instances[@]} -gt 0 ] || return 0
-
-  echo "$start_message"
-  for instance_name in "${instances[@]}"; do
-    local container_name="asa_${instance_name}"
-    docker_compose_file="${BASE_DIR}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
-    save_policy=$(_instance_quick_save_policy "$instance_name" "$container_name" "$docker_compose_file")
-    save_action="${save_policy%%|*}"
-    save_message="${save_policy#*|}"
-
-    if [ "$save_action" != "attempt" ]; then
-      echo "  ${save_message}"
-      continue
-    fi
-
-    if [[ "$save_message" == Instance* ]]; then
-      echo "  ${save_message}"
-    fi
-
-    initial_log_lines["$instance_name"]=$(_instance_save_log_line_count "$instance_name")
-    pending_instances["$instance_name"]=1
-    echo "  Sending quick save command to ${instance_name}..."
-    (
-      timeout 3s docker exec "$container_name" /bin/bash -c "/home/pok/scripts/rcon_interface.sh -saveworld" >/dev/null 2>&1
-      save_exit_code=$?
-      if [ $save_exit_code -eq 0 ]; then
-        echo "  Save command sent successfully to ${instance_name}"
-      else
-        echo "  Save command failed or timed out for ${instance_name}, proceeding with stop"
-      fi
-    ) &
-  done
-
-  if [ "${#pending_instances[@]}" -eq 0 ]; then
-    echo "No instances are save-ready for a quick save. Proceeding with stop."
-    return 0
-  fi
-
-  local wait_instances=()
-  for instance_name in "${instances[@]}"; do
-    [ -n "${pending_instances[$instance_name]:-}" ] && wait_instances+=("$instance_name")
-  done
-
-  wait_seconds=$(_max_instance_save_wait_seconds "${wait_instances[@]}")
-  printf "$wait_message_template\n" "$wait_seconds"
-  pending_count=${#wait_instances[@]}
-
-  while [ "$elapsed" -lt "$wait_seconds" ] && [ "$pending_count" -gt 0 ]; do
-    for instance_name in "${instances[@]}"; do
-      [ -n "${pending_instances[$instance_name]:-}" ] || continue
-      if _save_completion_logged_since "$instance_name" "${initial_log_lines[$instance_name]}"; then
-        echo "  Save completion detected for ${instance_name}"
-        unset 'pending_instances[$instance_name]'
-        pending_count=$((pending_count - 1))
-      fi
-    done
-
-    [ "$pending_count" -eq 0 ] && break
-
-    sleep 1
-    elapsed=$((elapsed + 1))
-  done
-
-  if [ "$pending_count" -gt 0 ]; then
-    local pending_list=()
-    for instance_name in "${instances[@]}"; do
-      [ -n "${pending_instances[$instance_name]:-}" ] && pending_list+=("$instance_name")
-    done
-    echo "World Save Complete. Took: was not seen within ${wait_seconds} seconds for: ${pending_list[*]}. Stopping anyway. Recent progression may be lost."
-  fi
-}
-
-_stop_instance_attempt_quick_save() {
-  local instance_name="$1"
-  local container_id="$2"
-  local container_name="$3"
-  local docker_compose_file="$4"
-  local wait_seconds
-  local initial_line_count
-  local save_policy
-  local save_action
-  local save_message
-
-  if [ -z "$container_id" ]; then
-    echo "Container is not running, proceeding with stop."
-    return 0
-  fi
-
-  save_policy=$(_instance_quick_save_policy "$instance_name" "$container_name" "$docker_compose_file")
-  save_action="${save_policy%%|*}"
-  save_message="${save_policy#*|}"
-
-  if [ "$save_action" != "attempt" ]; then
-    echo "$save_message"
-    return 0
-  fi
-
-  if [[ "$save_message" == Instance* ]]; then
-    echo "$save_message"
-  fi
-
-  echo "Server is running. Attempting quick save before stopping..."
-  initial_line_count=$(_instance_save_log_line_count "$instance_name")
-  _dispatch_quick_save_command "$instance_name" "$container_name"
-  wait_seconds=$(_get_compose_file_save_wait_seconds "$docker_compose_file" "instance ${instance_name}")
-  echo "Waiting up to ${wait_seconds} seconds for save to complete..."
-  _wait_for_single_instance_save "$instance_name" "$wait_seconds" "$initial_line_count" || true
-}
-
 _stop_instance_stop_with_sudo() {
   local docker_compose_file="$1"
   local container_name="$2"
+  local stop_timeout="${3:-210}"
 
   if [ -f "$docker_compose_file" ]; then
-    sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down || {
+    sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down -t "$stop_timeout" || {
       echo "Warning: Error occurred while stopping the container using docker-compose down"
-      sudo docker stop "$container_name" || {
+      sudo docker stop -t "$stop_timeout" "$container_name" || {
         echo "Error: Failed to stop container using fallback method"
         return 1
       }
     }
   else
-    sudo docker stop "$container_name" || {
+    sudo docker stop -t "$stop_timeout" "$container_name" || {
       echo "Error: Failed to stop container"
       return 1
     }
@@ -4008,31 +3888,32 @@ _stop_instance_stop_with_sudo() {
 _stop_instance_stop_without_sudo() {
   local docker_compose_file="$1"
   local container_name="$2"
+  local stop_timeout="${3:-210}"
 
   if [ -f "$docker_compose_file" ]; then
-    $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down || {
+    $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down -t "$stop_timeout" || {
       local exit_code=$?
-      if [ $exit_code -eq 1 ] && [[ $($DOCKER_COMPOSE_CMD -f "$docker_compose_file" down 2>&1) =~ "permission denied" ]]; then
+      if [ $exit_code -eq 1 ] && [[ $($DOCKER_COMPOSE_CMD -f "$docker_compose_file" down -t "$stop_timeout" 2>&1) =~ "permission denied" ]]; then
         echo "Permission denied error occurred. Falling back to sudo..."
-        sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down || {
+        sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down -t "$stop_timeout" || {
           echo "Error: Failed to stop container even with sudo"
           return 1
         }
       else
         echo "Error: Failed to stop container with docker-compose"
         echo "Attempting fallback to docker stop..."
-        docker stop "$container_name" || sudo docker stop "$container_name" || {
+        docker stop -t "$stop_timeout" "$container_name" || sudo docker stop -t "$stop_timeout" "$container_name" || {
           echo "Error: All stop attempts failed"
           return 1
         }
       fi
     }
   else
-    docker stop "$container_name" || {
+    docker stop -t "$stop_timeout" "$container_name" || {
       local exit_code=$?
-      if [ $exit_code -eq 1 ] && [[ $(docker stop "$container_name" 2>&1) =~ "permission denied" ]]; then
+      if [ $exit_code -eq 1 ] && [[ $(docker stop -t "$stop_timeout" "$container_name" 2>&1) =~ "permission denied" ]]; then
         echo "Permission denied error occurred. Falling back to sudo..."
-        sudo docker stop "$container_name" || {
+        sudo docker stop -t "$stop_timeout" "$container_name" || {
           echo "Error: Failed to stop container even with sudo"
           return 1
         }
@@ -4048,14 +3929,18 @@ _stop_instance_stop_container() {
   local docker_compose_file="$1"
   local container_name="$2"
   local use_sudo
+  local save_wait_seconds
+  local stop_timeout
 
   use_sudo=$(get_docker_sudo_preference)
+  save_wait_seconds=$(_get_compose_file_save_wait_seconds "$docker_compose_file" "container stop")
+  stop_timeout=$(_derived_stop_grace_seconds "$save_wait_seconds")
   echo "Stopping container..."
 
   if [ "$use_sudo" = "true" ]; then
-    _stop_instance_stop_with_sudo "$docker_compose_file" "$container_name"
+    _stop_instance_stop_with_sudo "$docker_compose_file" "$container_name" "$stop_timeout"
   else
-    _stop_instance_stop_without_sudo "$docker_compose_file" "$container_name"
+    _stop_instance_stop_without_sudo "$docker_compose_file" "$container_name" "$stop_timeout"
   fi
 }
 
@@ -4103,25 +3988,204 @@ start_instance() {
   _start_instance_launch_container "$instance_name" "$docker_compose_file" "$image_tag" "$start_output_mode"
 }
 
+_instance_resolved_container_name() {
+  local instance_name="$1"
+  local container_name="asa_${instance_name}"
+  local instance_dir="${BASE_DIR}/Instance_${instance_name}"
+  local docker_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
+  local -a compose_files=()
+  local compose_container_name=""
+
+  if [ ! -f "$docker_compose_file" ]; then
+    compose_files=("${instance_dir}"/docker-compose-*.yaml)
+    if [ "${#compose_files[@]}" -eq 1 ] && [ -f "${compose_files[0]}" ]; then
+      docker_compose_file="${compose_files[0]}"
+    fi
+  fi
+
+  if [ -f "$docker_compose_file" ]; then
+    compose_container_name=$(_compose_full_container_name "$docker_compose_file")
+    [ -n "$compose_container_name" ] && container_name="$compose_container_name"
+  fi
+
+  echo "$container_name"
+}
+
+_instance_has_running_server_process() {
+  local instance_name="$1"
+  local container_name
+
+  container_name=$(_instance_resolved_container_name "$instance_name")
+
+  docker inspect --format '{{.State.Running}}' "$container_name" 2>/dev/null | grep -q '^true$' || return 1
+  docker exec "$container_name" /bin/bash -lc 'pgrep -f "AsaApiLoader.exe" >/dev/null 2>&1 || pgrep -f "ArkAscendedServer.exe" >/dev/null 2>&1' >/dev/null 2>&1
+}
+
+_run_parallel_shutdown_stage() {
+  local command="$1"
+  local stage_label="$2"
+  shift 2
+  local instances=("$@")
+  local result_dir
+  local instance
+  local status
+  local container_name
+  local stage_failed=false
+  local -A stage_pids=()
+
+  _SHUTDOWN_STAGE_FAILED_INSTANCES=()
+  [ "${#instances[@]}" -gt 0 ] || return 0
+  result_dir=$(mktemp -d "${TMPDIR:-/tmp}/pok-shutdown-stage.XXXXXX") || return 1
+
+  echo "$stage_label"
+  for instance in "${instances[@]}"; do
+    echo "  - Dispatching to ${instance}..."
+    container_name=$(_instance_resolved_container_name "$instance")
+    (
+      set +e
+      docker exec "$container_name" /bin/bash -lc "/home/pok/scripts/rcon_interface.sh ${command}" >"${result_dir}/${instance}.log" 2>&1
+      status=$?
+      printf '%s\n' "$status" >"${result_dir}/${instance}.status"
+      exit "$status"
+    ) &
+    stage_pids["$instance"]=$!
+  done
+
+  for instance in "${instances[@]}"; do
+    wait "${stage_pids[$instance]}" 2>/dev/null || true
+    status=$(cat "${result_dir}/${instance}.status" 2>/dev/null || echo 1)
+    if [ -s "${result_dir}/${instance}.log" ]; then
+      sed "s/^/  [${instance}] /" "${result_dir}/${instance}.log"
+    fi
+    if [ "$status" -ne 0 ]; then
+      stage_failed=true
+      _SHUTDOWN_STAGE_FAILED_INSTANCES+=("$instance")
+    fi
+  done
+
+  rm -rf "$result_dir"
+  [ "$stage_failed" = false ]
+}
+
+_wait_for_shutdown_server_processes() {
+  local max_wait="${1:-60}"
+  shift
+  local instances=("$@")
+  local elapsed=0
+  local instance
+  local running_count
+
+  while [ "$elapsed" -lt "$max_wait" ]; do
+    running_count=0
+    for instance in "${instances[@]}"; do
+      if _instance_has_running_server_process "$instance"; then
+        running_count=$((running_count + 1))
+      fi
+    done
+    [ "$running_count" -eq 0 ] && return 0
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+
+  for instance in "${instances[@]}"; do
+    if _instance_has_running_server_process "$instance"; then
+      echo "  ⚠️ ${instance}: ASA is still running after ${max_wait}s; both saves were verified, so container termination is data-safe."
+    fi
+  done
+  return 1
+}
+
+_stop_verified_containers_in_parallel() {
+  local instances=("$@")
+  local instance
+  local stop_failed=false
+  local -A stop_pids=()
+
+  echo "🛑 Removing verified containers in parallel..."
+  for instance in "${instances[@]}"; do
+    (stop_instance "$instance" "skip_save") &
+    stop_pids["$instance"]=$!
+  done
+
+  for instance in "${instances[@]}"; do
+    if ! wait "${stop_pids[$instance]}"; then
+      echo "  ❌ Failed to stop container for ${instance}."
+      stop_failed=true
+    fi
+  done
+
+  [ "$stop_failed" = false ]
+}
+
+_verified_shutdown_instances() {
+  local force_mode="${1:-false}"
+  shift
+  local instances=("$@")
+  local save_instances=()
+  local instance
+  local first_stage_failed=false
+  local second_stage_failed=false
+
+  [ "${#instances[@]}" -gt 0 ] || return 0
+
+  for instance in "${instances[@]}"; do
+    if _instance_has_running_server_process "$instance"; then
+      save_instances+=("$instance")
+    else
+      echo "  ${instance}: no running ASA process; no world save is required."
+    fi
+  done
+
+  if [ "${#save_instances[@]}" -gt 0 ]; then
+    _run_parallel_shutdown_stage "-verify-save" "💾 Stage 1/2: sending SaveWorld to all running servers..." "${save_instances[@]}" || first_stage_failed=true
+    if [ "$first_stage_failed" = true ]; then
+      echo "❌ Stage 1 save verification failed for: ${_SHUTDOWN_STAGE_FAILED_INSTANCES[*]}" >&2
+      if [ "$force_mode" != "true" ]; then
+        echo "No DoExit commands were sent and no containers were stopped. Fix RCON/save health or retry with --force." >&2
+        return 1
+      fi
+      echo "⚠️ --force requested: continuing despite unverified Stage 1 saves. DATA LOSS OR CORRUPTION IS POSSIBLE." >&2
+    fi
+
+    _run_parallel_shutdown_stage "-verify-doexit" "💾 Stage 2/2: sending DoExit and verifying its independent save..." "${save_instances[@]}" || second_stage_failed=true
+    if [ "$second_stage_failed" = true ]; then
+      echo "❌ Stage 2 DoExit save verification failed for: ${_SHUTDOWN_STAGE_FAILED_INSTANCES[*]}" >&2
+      if [ "$force_mode" != "true" ]; then
+        echo "Containers were left intact and POK will not send Docker stop. Some ASA processes may already have exited." >&2
+        return 1
+      fi
+      echo "⚠️ --force requested: removing containers with unverified DoExit saves. DATA LOSS OR CORRUPTION IS POSSIBLE." >&2
+    fi
+
+    echo "⏳ Waiting up to 60 seconds for ASA processes to exit..."
+    _wait_for_shutdown_server_processes 60 "${save_instances[@]}" || true
+  fi
+
+  _stop_verified_containers_in_parallel "${instances[@]}" || return 1
+  echo "✅ All targeted containers have been stopped after the two-stage save barrier."
+  return 0
+}
+
 # Function to stop an instance
 stop_instance() {
   local instance_name="$1"
   local save_mode="${2:-with_save}"
+  local force_mode="${3:-false}"
   local instance_dir="${BASE_DIR}/Instance_${instance_name}"
   local docker_compose_file="${instance_dir}/docker-compose-${instance_name}.yaml"
   local container_name="asa_${instance_name}"
   local found_instance_name=""
   local container_id
 
-  _stop_instance_resolve_compose_context "$instance_name" "$instance_dir" docker_compose_file container_name found_instance_name
-  container_id=$(_stop_instance_find_container_id "$instance_name" "$found_instance_name")
-
   echo "-----Stopping ${instance_name} Server-----"
-  
+
   if [ "$save_mode" != "skip_save" ]; then
-    _stop_instance_attempt_quick_save "$instance_name" "$container_id" "$container_name" "$docker_compose_file"
+    _verified_shutdown_instances "$force_mode" "$instance_name"
+    return $?
   fi
 
+  _stop_instance_resolve_compose_context "$instance_name" "$instance_dir" docker_compose_file container_name found_instance_name
+  container_id=$(_stop_instance_find_container_id "$instance_name" "$found_instance_name")
   _stop_instance_stop_container "$docker_compose_file" "$container_name" || return 1
   echo "Instance ${instance_name} stopped successfully."
   return 0
@@ -4582,6 +4646,7 @@ _rcon_run_single_instance_command() {
 execute_rcon_command() {
   local action="$1"
   local wait_time="${3:-1}"
+  local force_mode="${4:-false}"
   local target_all=false
   local instance_name=""
   local message=""
@@ -4599,7 +4664,11 @@ execute_rcon_command() {
     instance_name="$1"
     shift
   fi
-  message="$*"
+  if [[ "$action" == "-shutdown" || "$action" == "-restart" ]]; then
+    message="$wait_time"
+  else
+    message="$*"
+  fi
 
   _rcon_validate_message "$message" || return 1
 
@@ -4615,13 +4684,13 @@ execute_rcon_command() {
     -shutdown)
       _rcon_normalize_wait_time "$wait_time"
       echo "Using enhanced shutdown functionality for all instances..."
-      enhanced_shutdown_command "$_RCON_NORMALIZED_WAIT_TIME" "-all"
+      enhanced_shutdown_command "$_RCON_NORMALIZED_WAIT_TIME" "-all" "$force_mode"
       return
       ;;
     -restart)
       _rcon_warn_on_mixed_restart_modes_for_all
       echo "Using enhanced restart functionality for all instances..."
-      enhanced_restart_command "$message" "-all"
+      enhanced_restart_command "$message" "-all" "$force_mode"
       return
       ;;
     *)
@@ -4648,13 +4717,13 @@ execute_rcon_command() {
   -shutdown)
     _rcon_normalize_wait_time "$wait_time"
     echo "Using enhanced shutdown functionality for instance: $instance_name"
-    enhanced_shutdown_command "$_RCON_NORMALIZED_WAIT_TIME" "$instance_name"
+    enhanced_shutdown_command "$_RCON_NORMALIZED_WAIT_TIME" "$instance_name" "$force_mode"
     return
     ;;
   -restart)
     echo "Using enhanced restart functionality for instance: $instance_name"
     _rcon_warn_on_mixed_restart_modes_for_instance "$instance_name"
-    enhanced_restart_command "$message" "$instance_name"
+    enhanced_restart_command "$message" "$instance_name" "$force_mode"
     return
     ;;
   *)
@@ -5822,9 +5891,14 @@ _manage_service_requires_docker_permissions() {
 _manage_service_handle_all_instance_shortcut() {
   local action="$1"
   local instance_name="$2"
+  local force_mode="${3:-false}"
 
   if [[ "$action" == "-start" || "$action" == "-stop" ]] && [[ "${instance_name,,}" == "-all" ]]; then
-    perform_action_on_all_instances "$action"
+    if [ "$action" = "-stop" ]; then
+      stop_all_instances "$force_mode"
+    else
+      perform_action_on_all_instances "$action"
+    fi
     return 0
   fi
 
@@ -6143,6 +6217,17 @@ _manage_service_handle_fix() {
   done
 
   echo ""
+  echo "Step 7: Synchronizing verified-save and Docker shutdown grace settings..."
+  local shutdown_instance
+  local shutdown_compose_file
+  for shutdown_instance in $(list_instances); do
+    shutdown_compose_file="${BASE_DIR}/Instance_${shutdown_instance}/docker-compose-${shutdown_instance}.yaml"
+    if [ -f "$shutdown_compose_file" ]; then
+      _start_instance_sync_save_wait_seconds_env "$shutdown_compose_file"
+    fi
+  done
+
+  echo ""
   if [ "$fix_failed" = true ]; then
     echo "⚠️ Permission fix completed with warnings. Review the messages above for manual follow-up."
     echo "If issues persist, run: sudo ./POK-manager.sh -fix"
@@ -6381,7 +6466,7 @@ manage_service() {
     adjust_docker_permissions
   fi
 
-  if _manage_service_handle_all_instance_shortcut "$action" "$instance_name"; then
+  if _manage_service_handle_all_instance_shortcut "$action" "$instance_name" "${_MAIN_FORCE_MODE:-false}"; then
     return
   fi
 
@@ -6411,7 +6496,7 @@ manage_service() {
     restore_instance "$instance_name"
     ;;
   -stop)
-    stop_instance "$instance_name"
+    stop_instance "$instance_name" "with_save" "${_MAIN_FORCE_MODE:-false}"
     ;;
   -update)
     update_server_files_and_docker
@@ -6421,7 +6506,7 @@ manage_service() {
     _manage_service_handle_fix
     ;;
   -restart | -shutdown)
-    execute_rcon_command "$action" "$instance_name" "${additional_args[@]}"
+    execute_rcon_command "$action" "$instance_name" "${additional_args[@]}" "${_MAIN_FORCE_MODE:-false}"
     ;;
   -saveworld |-status)
     execute_rcon_command "$action" "$instance_name"
@@ -6473,13 +6558,13 @@ display_usage() {
   echo "  -setup                                    Perform initial setup tasks"
   echo "  -create <instance_name>                   Create a new instance"
   echo "  -start <instance_name|-all>               Start an instance or all instances"
-  echo "  -stop <instance_name|-all>                Stop an instance or all instances"
-  echo "  -shutdown [minutes] <instance_name|-all>  Shutdown an instance or all instances with an optional countdown"
+  echo "  -stop <instance_name|-all> [--force]      Stop after verifying SaveWorld and DoExit saves"
+  echo "  -shutdown <minutes> <instance|-all> [--force]  Verified shutdown with a countdown"
   echo "  -update                                   Check for server files & Docker image updates (doesn't modify the script itself)"
   echo "  -upgrade                                  Upgrade POK-manager.sh script to the latest version (requires confirmation)"
   echo "  -force-restore                            Force restore POK-manager.sh from backup in case of update failure"
   echo "  -status <instance_name|-all>              Show the status of an instance or all instances"
-  echo "  -restart [minutes] <instance_name|-all>   Restart an instance or all instances"
+  echo "  -restart <minutes> <instance|-all> [--force]   Verified restart with a countdown"
   echo "  -saveworld <instance_name|-all>           Save the world of an instance or all instances"
   echo "  -chat \"<message>\" <instance_name|-all>    Send a chat message to an instance or all instances"
   echo "  -custom <command> <instance_name|-all>    Execute a custom command on an instance or all instances"
@@ -7454,33 +7539,14 @@ _migration_collect_dirs_to_change() {
 
 _migration_stop_running_instances() {
   local running_instances=("$@")
-  local instance
-  local docker_compose_file
 
-  echo "Stopping all running instances..."
-  for instance in "${running_instances[@]}"; do
-    echo "Stopping instance: $instance"
-    docker_compose_file="${BASE_DIR}/Instance_${instance}/docker-compose-${instance}.yaml"
-
-    if [ -f "$docker_compose_file" ]; then
-      get_docker_compose_cmd
-      if is_sudo; then
-        $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down
-      else
-        sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down
-      fi
-    else
-      if is_sudo; then
-        docker stop -t 30 "asa_${instance}"
-      else
-        sudo docker stop -t 30 "asa_${instance}"
-      fi
-    fi
-    echo "Instance ${instance} stopped successfully."
-  done
-
-  echo "✅ All instances have been stopped successfully."
+  echo "Stopping all running instances through the verified two-stage save barrier..."
+  _verified_shutdown_instances false "${running_instances[@]}" || {
+    echo "Migration aborted because one or more instances could not be saved safely." >&2
+    return 1
+  }
   echo ""
+  return 0
 }
 
 _migration_print_dirs_to_change() {
@@ -7644,7 +7710,7 @@ migrate_file_ownership() {
       echo "Migration cancelled. Please stop all instances manually and try again."
       return 1
     fi
-    _migration_stop_running_instances "${running_instances[@]}"
+    _migration_stop_running_instances "${running_instances[@]}" || return 1
   else
     echo "No running instances detected. Proceeding with migration."
     echo ""
@@ -8209,11 +8275,34 @@ _main_handle_meta_action() {
 _MAIN_ACTION=""
 _MAIN_INSTANCE_NAME=""
 _MAIN_ADDITIONAL_ARGS_STRING=""
+_MAIN_FORCE_MODE=false
 _MAIN_PERMISSION_FIX_HANDLED=false
 _main_parse_cli_arguments() {
-  _MAIN_ACTION="${1:-}"
-  _MAIN_INSTANCE_NAME="${2:-}"
-  _MAIN_ADDITIONAL_ARGS_STRING="${*:3}"
+  local args=("$@")
+  local last_index=$((${#args[@]} - 1))
+
+  _MAIN_ACTION="${args[0]:-}"
+  _MAIN_FORCE_MODE=false
+
+  if [ "$last_index" -ge 1 ] && [ "${args[$last_index]}" = "--force" ]; then
+    case "$_MAIN_ACTION" in
+    -stop|-shutdown|-restart)
+      _MAIN_FORCE_MODE=true
+      unset 'args[$last_index]'
+      ;;
+    esac
+  fi
+
+  case "$_MAIN_ACTION" in
+  -shutdown|-restart)
+    _MAIN_ADDITIONAL_ARGS_STRING="${args[1]:-}"
+    _MAIN_INSTANCE_NAME="${args[2]:-}"
+    ;;
+  *)
+    _MAIN_INSTANCE_NAME="${args[1]:-}"
+    _MAIN_ADDITIONAL_ARGS_STRING="${args[*]:2}"
+    ;;
+  esac
 }
 
 _main_validate_and_normalize_dispatch_args() {
@@ -8232,16 +8321,10 @@ _main_validate_and_normalize_dispatch_args() {
       return 1
     fi
 
-    if [[ "$_MAIN_INSTANCE_NAME" =~ ^[0-9]+$ ]]; then
-      if [[ -z "$_MAIN_ADDITIONAL_ARGS_STRING" ]]; then
-        echo "Error: $action requires an instance name or -all after the timer."
-        echo "Usage: $0 $action <minutes> <instance_name|-all>"
-        return 1
-      fi
-
-      local timer="$_MAIN_INSTANCE_NAME"
-      _MAIN_INSTANCE_NAME="$_MAIN_ADDITIONAL_ARGS_STRING"
-      _MAIN_ADDITIONAL_ARGS_STRING="$timer"
+    if ! [[ "$_MAIN_ADDITIONAL_ARGS_STRING" =~ ^[0-9]+$ ]]; then
+      echo "Error: $action requires a timer in whole minutes before the instance name."
+      echo "Usage: $0 $action <minutes> <instance_name|-all> [--force]"
+      return 1
     fi
   fi
 
@@ -8955,47 +9038,6 @@ _restart_run_countdown() {
   _run_enhanced_countdown "$1" "Restarting" "_restart_countdown_notify" "🔄 Beginning coordinated restart process..."
 }
 
-_restart_save_instances() {
-  local status_color="\033[1;36m"
-  local reset_color="\033[0m"
-  local save_error=false
-  local instance
-
-  echo -e "${status_color}💾${reset_color} Saving world data for all instances..."
-  for instance in "${_RESTART_INSTANCES_TO_PROCESS[@]}"; do
-    echo "  - Saving world for ${instance}..."
-    if docker ps -q -f name=^/asa_${instance}$ > /dev/null; then
-      run_in_container "$instance" "-saveworld"
-    else
-      echo "  ⚠️ Warning: Container for ${instance} is not running, skipping save operation"
-      save_error=true
-    fi
-  done
-
-  if [ "$save_error" = "true" ]; then
-    echo -e "${status_color}⚠️${reset_color} Some instances couldn't be saved. Continuing with restart process..."
-  else
-    echo -e "${status_color}⏳${reset_color} Waiting for saves to complete (10 seconds)..."
-  fi
-  sleep 10
-}
-
-_restart_stop_instances() {
-  local status_color="\033[1;36m"
-  local reset_color="\033[0m"
-  local instance
-
-  echo -e "${status_color}🛑${reset_color} Stopping all instances..."
-  for instance in "${_RESTART_INSTANCES_TO_PROCESS[@]}"; do
-    echo "  - Stopping ${instance}..."
-    if docker ps -a -q -f name=^/asa_${instance}$ > /dev/null; then
-      stop_instance "$instance"
-    else
-      echo "  ⚠️ Warning: Container for ${instance} does not exist, skipping stop operation"
-    fi
-  done
-}
-
 _restart_maybe_update_server_files() {
   local status_color="\033[1;36m"
   local reset_color="\033[0m"
@@ -9052,9 +9094,9 @@ _restart_start_instances() {
 
 _restart_run_coordinated_sequence() {
   local skip_update="$1"
+  local force_mode="${2:-false}"
 
-  _restart_save_instances
-  _restart_stop_instances
+  _verified_shutdown_instances "$force_mode" "${_RESTART_INSTANCES_TO_PROCESS[@]}" || return 1
   _restart_maybe_update_server_files "$skip_update"
   _restart_start_instances
 }
@@ -9063,6 +9105,7 @@ _restart_run_coordinated_sequence() {
 enhanced_restart_command() {
   local minutes_arg="$1"
   local instance_arg="$2"
+  local force_mode="${3:-false}"
   local countdown_minutes="${minutes_arg:-5}"
 
   _restart_collect_instances_to_process "$instance_arg" || return 1
@@ -9070,7 +9113,7 @@ enhanced_restart_command() {
   _restart_set_mode_and_announce
   _restart_notify_initial_restart "$countdown_minutes"
   _restart_run_countdown "$countdown_minutes"
-  _restart_run_coordinated_sequence "$_RESTART_SKIP_UPDATE"
+  _restart_run_coordinated_sequence "$_RESTART_SKIP_UPDATE" "$force_mode" || return 1
   echo "🎮 Server restart operation completed for all instances."
   return 0
 }
@@ -9078,6 +9121,7 @@ enhanced_restart_command() {
 enhanced_shutdown_command() {
   local minutes_arg="$1"
   local instance_arg="$2"
+  local force_mode="${3:-false}"
   
   # Default to 1 minute if not specified
   local countdown_minutes="${minutes_arg:-1}"
@@ -9125,20 +9169,9 @@ enhanced_shutdown_command() {
     run_in_container_background "$instance" "-chat" "Server is shutting down NOW!" >/dev/null 2>&1
   done
   
-  echo "💾 Saving world data for all instances..."
-  _save_instances_then_wait "Attempting quick saves on all running instances..." "⏳ Waiting %s seconds for saves to complete..." "${instances_to_process[@]}"
-  
-  # Stop all instances
-  echo "🛑 Stopping all instances..."
-  for instance in "${instances_to_process[@]}"; do
-    echo "  - Stopping $instance..."
-    stop_instance "$instance" "skip_save"
-  done
-  
+  _verified_shutdown_instances "$force_mode" "${instances_to_process[@]}" || return 1
   echo "✅ All servers have been shut down successfully."
-  
-  # Exit gracefully
-  exit 0
+  return 0
 }
 
 # Function to display the changelog

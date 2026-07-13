@@ -322,7 +322,7 @@ EOF
   '
 
   assert_success
-  assert_output --partial "save_wait=12"
+  assert_output --partial "save_wait=90"
 }
 
 @test "_start_instance_sync_save_wait_seconds_env backfills SAVE_WAIT_SECONDS into existing managed compose files" {
@@ -341,10 +341,33 @@ EOF
     source "$REPO_ROOT/POK-manager.sh"
     _start_instance_sync_save_wait_seconds_env "$BASE_DIR/Instance_demo/docker-compose-demo.yaml"
     grep "SAVE_WAIT_SECONDS" "$BASE_DIR/Instance_demo/docker-compose-demo.yaml"
+    grep "stop_grace_period" "$BASE_DIR/Instance_demo/docker-compose-demo.yaml"
+  '
+
+  assert_success
+  assert_output --partial "SAVE_WAIT_SECONDS=60"
+  assert_output --partial "stop_grace_period: 210s"
+}
+
+@test "shutdown config sync preserves an existing five-second preference" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/save-wait-preserve" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    mkdir -p "$BASE_DIR/Instance_demo"
+    cat > "$BASE_DIR/Instance_demo/docker-compose-demo.yaml" <<'"'"'EOF'"'"'
+services:
+  asaserver:
+    restart: unless-stopped
+    environment:
+      - SAVE_WAIT_SECONDS=5
+EOF
+    source "$REPO_ROOT/POK-manager.sh"
+    _start_instance_sync_save_wait_seconds_env "$BASE_DIR/Instance_demo/docker-compose-demo.yaml"
+    grep -E "SAVE_WAIT_SECONDS|stop_grace_period" "$BASE_DIR/Instance_demo/docker-compose-demo.yaml"
   '
 
   assert_success
   assert_output --partial "SAVE_WAIT_SECONDS=5"
+  assert_output --partial "stop_grace_period: 100s"
 }
 
 @test "write_docker_compose_file writes SAVE_WAIT_SECONDS from config_values" {
@@ -389,10 +412,12 @@ EOF
     )
     write_docker_compose_file demo
     grep "SAVE_WAIT_SECONDS" "$BASE_DIR/Instance_demo/docker-compose-demo.yaml"
+    grep "stop_grace_period" "$BASE_DIR/Instance_demo/docker-compose-demo.yaml"
   '
 
   assert_success
   assert_output --partial "SAVE_WAIT_SECONDS=11"
+  assert_output --partial "stop_grace_period: 112s"
 }
 
 @test "add_steam_creds_to_compose writes YAML-safe quoted Steam credential lines and removes stale shared secrets" {

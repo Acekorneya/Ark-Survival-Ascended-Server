@@ -32,7 +32,7 @@ EOF
   assert_output --partial "found=other"
 }
 
-@test "stop_instance uses fallback instance lookup and compose down when a folder was renamed" {
+@test "stop_instance uses two verified stages and derived compose timeout when a folder was renamed" {
   run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/stop-renamed" POK_MANAGER_TEST_MODE=1 bash -lc '
     set -e
     mkdir -p "$BASE_DIR/Instance_demo"
@@ -53,9 +53,9 @@ EOF
         echo "container-123"
       fi
     }
-    _instance_quick_save_policy() { echo "attempt|ok: server ready and responding to rcon"; }
-    timeout() { shift; "$@"; }
-    sleep() { :; }
+    _instance_has_running_server_process() { return 0; }
+    _run_parallel_shutdown_stage() { echo "stage:$1:$2:${*:3}"; return 0; }
+    _wait_for_shutdown_server_processes() { return 0; }
     compose_cmd() { echo "compose:$*"; }
     docker() { echo "docker:$*"; }
     stop_instance demo
@@ -65,13 +65,13 @@ EOF
   assert_output --partial "Using the found docker-compose file"
   assert_output --partial "Using container name from docker-compose file: asa_other_custom"
   assert_output --partial "Found running container for 'other' instead of 'demo'"
-  assert_output --partial "Save command sent successfully"
-  assert_output --partial "Waiting up to 9 seconds for save to complete..."
-  assert_output --partial "compose:-f $BATS_TEST_TMPDIR/stop-renamed/Instance_demo/docker-compose-other.yaml down"
+  assert_output --partial "stage:-verify-save"
+  assert_output --partial "stage:-verify-doexit"
+  assert_output --partial "compose:-f $BATS_TEST_TMPDIR/stop-renamed/Instance_demo/docker-compose-other.yaml down -t 108"
   assert_output --partial "Instance demo stopped successfully."
 }
 
-@test "stop_all_instances waits once using the longest configured save wait and skips duplicate saves" {
+@test "stop_all_instances runs both save barriers once for all instances" {
   run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/stop-all-save-wait" POK_MANAGER_TEST_MODE=1 bash -lc '
     set -e
     mkdir -p "$BASE_DIR/Instance_alpha" "$BASE_DIR/Instance_beta"
@@ -93,25 +93,21 @@ services:
 EOF
     source "$REPO_ROOT/POK-manager.sh"
     list_running_instances() { echo "alpha beta"; }
-    _instance_quick_save_policy() { echo "attempt|ok: server ready and responding to rcon"; }
-    timeout() { shift; "$@"; }
-    docker() { echo "docker:$*"; }
-    _save_completion_logged_since() { return 0; }
-    sleep() { :; }
+    _instance_has_running_server_process() { return 0; }
+    _run_parallel_shutdown_stage() { echo "stage:$1:${*:3}"; return 0; }
+    _wait_for_shutdown_server_processes() { return 0; }
     stop_instance() { echo "stop:$1:$2"; }
     stop_all_instances
   '
 
   assert_success
-  assert_output --partial "Attempting quick saves on all running instances..."
-  assert_output --partial "Save command sent successfully to alpha"
-  assert_output --partial "Save command sent successfully to beta"
-  assert_output --partial "Waiting 7 seconds for save operations to complete..."
+  assert_output --partial "stage:-verify-save:alpha beta"
+  assert_output --partial "stage:-verify-doexit:alpha beta"
   assert_output --partial "stop:alpha:skip_save"
   assert_output --partial "stop:beta:skip_save"
 }
 
-@test "stop_all_instances skips save dispatch when servers have not reached startup yet" {
+@test "stop_all_instances skips save barriers when no ASA processes are running" {
   run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/stop-all-no-startup" POK_MANAGER_TEST_MODE=1 bash -lc '
     set -e
     mkdir -p "$BASE_DIR/Instance_alpha" "$BASE_DIR/Instance_beta"
@@ -133,16 +129,16 @@ services:
 EOF
     source "$REPO_ROOT/POK-manager.sh"
     list_running_instances() { echo "alpha beta"; }
-    _instance_quick_save_policy() { echo "skip|Skipping quick save for $1; server health is starting."; }
+    _instance_has_running_server_process() { return 1; }
+    _run_parallel_shutdown_stage() { echo "unexpected-stage"; return 1; }
     stop_instance() { echo "stop:$1:$2"; }
     stop_all_instances
   '
 
   assert_success
-  assert_output --partial "Skipping quick save for alpha; server health is starting."
-  assert_output --partial "Skipping quick save for beta; server health is starting."
-  assert_output --partial "No instances are save-ready for a quick save. Proceeding with stop."
-  refute_output --partial "Waiting "
+  assert_output --partial "alpha: no running ASA process; no world save is required."
+  assert_output --partial "beta: no running ASA process; no world save is required."
+  refute_output --partial "unexpected-stage"
   assert_output --partial "stop:alpha:skip_save"
   assert_output --partial "stop:beta:skip_save"
 }
@@ -183,10 +179,10 @@ EOF
   '
 
   assert_success
-  assert_output --partial "missing=5"
-  assert_output --partial "nonnumeric=5"
+  assert_output --partial "missing=60"
+  assert_output --partial "nonnumeric=60"
   assert_output --partial "low=1"
-  assert_output --partial "high=60"
+  assert_output --partial "high=90"
 }
 
 @test "_stop_instance_stop_without_sudo falls back to sudo on compose permission errors" {
@@ -239,7 +235,7 @@ EOF
   assert_output --partial "stopped:$BATS_TEST_TMPDIR/stop-skip-save/Instance_demo/docker-compose-demo.yaml:asa_demo"
 }
 
-@test "stop_instance skips quick save when startup is not complete yet" {
+@test "stop_instance removes a container without save stages when ASA is not running" {
   run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/stop-not-ready" POK_MANAGER_TEST_MODE=1 bash -lc '
     set -e
     mkdir -p "$BASE_DIR/Instance_demo"
@@ -252,15 +248,15 @@ services:
 EOF
     source "$REPO_ROOT/POK-manager.sh"
     get_instance_container_id() { echo "container-123"; }
-    _instance_quick_save_policy() { echo "skip|Skipping quick save for demo; server health is starting."; }
-    _dispatch_quick_save_command() { echo "unexpected-dispatch"; }
+    _instance_has_running_server_process() { return 1; }
+    _run_parallel_shutdown_stage() { echo "unexpected-stage"; }
     _stop_instance_stop_container() { echo "stopped:$1:$2"; }
     stop_instance demo
   '
 
   assert_success
-  assert_output --partial "Skipping quick save for demo; server health is starting."
-  refute_output --partial "unexpected-dispatch"
+  assert_output --partial "demo: no running ASA process; no world save is required."
+  refute_output --partial "unexpected-stage"
   assert_output --partial "stopped:$BATS_TEST_TMPDIR/stop-not-ready/Instance_demo/docker-compose-demo.yaml:asa_demo"
 }
 
@@ -287,4 +283,78 @@ EOF
 
   assert_success
   assert_output --partial "attempt|Instance demo is degraded; attempting quick save anyway before stop."
+}
+
+@test "two-stage shutdown aborts every container when any Stage 1 save fails" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/stage-one-abort" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    source "$REPO_ROOT/POK-manager.sh"
+    _instance_has_running_server_process() { return 0; }
+    _run_parallel_shutdown_stage() {
+      _SHUTDOWN_STAGE_FAILED_INSTANCES=(beta)
+      echo "stage:$1:${*:3}"
+      [ "$1" != "-verify-save" ]
+    }
+    _stop_verified_containers_in_parallel() { echo "unexpected-stop"; }
+    if _verified_shutdown_instances false alpha beta; then
+      echo "result=success"
+    else
+      echo "result=failed"
+    fi
+  '
+
+  assert_success
+  assert_output --partial "stage:-verify-save:alpha beta"
+  assert_output --partial "No DoExit commands were sent and no containers were stopped."
+  assert_output --partial "result=failed"
+  refute_output --partial "-verify-doexit"
+  refute_output --partial "unexpected-stop"
+}
+
+@test "two-stage shutdown leaves containers intact when DoExit save verification fails" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/stage-two-abort" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    source "$REPO_ROOT/POK-manager.sh"
+    _instance_has_running_server_process() { return 0; }
+    _run_parallel_shutdown_stage() {
+      echo "stage:$1:${*:3}"
+      if [ "$1" = "-verify-doexit" ]; then
+        _SHUTDOWN_STAGE_FAILED_INSTANCES=(alpha)
+        return 1
+      fi
+      return 0
+    }
+    _stop_verified_containers_in_parallel() { echo "unexpected-stop"; }
+    if _verified_shutdown_instances false alpha beta; then
+      echo "result=success"
+    else
+      echo "result=failed"
+    fi
+  '
+
+  assert_success
+  assert_output --partial "stage:-verify-doexit:alpha beta"
+  assert_output --partial "Containers were left intact"
+  assert_output --partial "result=failed"
+  refute_output --partial "unexpected-stop"
+}
+
+@test "--force continues through failed verification with a data-loss warning" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/force-stop" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    source "$REPO_ROOT/POK-manager.sh"
+    _instance_has_running_server_process() { return 0; }
+    _run_parallel_shutdown_stage() {
+      _SHUTDOWN_STAGE_FAILED_INSTANCES=(beta)
+      echo "stage:$1:${*:3}"
+      return 1
+    }
+    _wait_for_shutdown_server_processes() { return 0; }
+    _stop_verified_containers_in_parallel() { echo "stopped:$*"; }
+    _verified_shutdown_instances true alpha beta
+  '
+
+  assert_success
+  assert_output --partial "--force requested"
+  assert_output --partial "stopped:alpha beta"
 }

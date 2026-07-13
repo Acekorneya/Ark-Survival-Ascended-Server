@@ -10,6 +10,8 @@ source "${POK_SCRIPTS_DIR}/common.sh"
 source "${POK_SCRIPTS_DIR}/rcon_commands.sh"
 # shellcheck source=/dev/null
 source "${POK_SCRIPTS_DIR}/update_coordination.sh"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/shutdown_server.sh"
 
 LOCK_HELD=false
 TEMP_DOWNLOAD_DIR=""
@@ -204,59 +206,14 @@ notify_players_of_update() {
 # Function to prepare for container exit and restart
 shutdown_server_for_update() {
   echo "[INFO] Preparing server for update/restart..."
-  
-  # Send RCON commands to save world and shut down the server
-  echo "[INFO] Sending SaveWorld command to server..."
-  if send_rcon_command "SaveWorld"; then
-    echo "[SUCCESS] World save command sent. Waiting for completion..."
-    # Allow time for the save to complete
-    sleep 10
-    
-    # Now send the exit command to properly shut down the server
-    echo "[INFO] Sending DoExit command to server..."
-    send_rcon_command "DoExit"
-    echo "[INFO] DoExit command sent. Waiting for server to shut down..."
-    
-    # Wait for server process to exit
-    local timeout=60
-    local elapsed=0
-    local is_server_down=false
-    
-    echo "[INFO] Waiting for server to shut down (timeout: $timeout seconds)..."
-    while [ $elapsed -lt $timeout ]; do
-      # Check if server processes are still running
-      if ! pgrep -f "ArkAscendedServer.exe" >/dev/null 2>&1 && ! pgrep -f "AsaApiLoader.exe" >/dev/null 2>&1; then
-        echo "[SUCCESS] Server has shut down properly."
-        is_server_down=true
-        break
-      fi
-      
-      # Wait and increment counter
-      sleep 5
-      elapsed=$((elapsed + 5))
-      echo "[INFO] Still waiting for server shutdown... ($elapsed/$timeout seconds)"
-    done
-    
-    # If server didn't shut down gracefully, force kill it
-    if [ "$is_server_down" != "true" ]; then
-      echo "[WARNING] Server didn't shut down gracefully within timeout. Force killing processes..."
-      pkill -9 -f "ArkAscendedServer.exe" >/dev/null 2>&1 || true
-      pkill -9 -f "AsaApiLoader.exe" >/dev/null 2>&1 || true
-      pkill -9 -f "wine" >/dev/null 2>&1 || true
-      pkill -9 -f "wineserver" >/dev/null 2>&1 || true
-      sleep 2
-    fi
-  else
-    echo "[WARNING] Failed to send SaveWorld command. Server might not be running or RCON might be unavailable."
-    echo "[INFO] Will attempt to force stop any running server processes..."
-    pkill -9 -f "ArkAscendedServer.exe" >/dev/null 2>&1 || true
-    pkill -9 -f "AsaApiLoader.exe" >/dev/null 2>&1 || true
-    pkill -9 -f "wine" >/dev/null 2>&1 || true
-    pkill -9 -f "wineserver" >/dev/null 2>&1 || true
-    sleep 2
+
+  if ! safe_container_stop; then
+    echo "[ERROR] Update/restart aborted: SaveWorld and DoExit saves were not both verified." >&2
+    return 1
   fi
-  
-  echo "[INFO] Server processes stopped. Ready for staging update"
+
+  echo "[INFO] Both save stages verified. Ready for staging update."
+  return 0
 }
 
 trigger_container_restart() {
@@ -277,8 +234,8 @@ trigger_container_restart() {
 
   sync
   sleep 1
-  kill -9 1
-  exit 1
+  kill -TERM 1
+  return 0
 }
 
 main() {
@@ -311,7 +268,7 @@ main() {
       notify_players_of_update $dirty_restart_notice
 
       echo "[INFO] Countdown completed. Preparing server for restart..."
-      shutdown_server_for_update
+      shutdown_server_for_update || return 1
       trigger_container_restart "DIRTY_RESTART" "$current_build_id"
     elif update_coordination_enabled; then
       # Coordinated multi-instance path. The configured master is the only
@@ -330,7 +287,7 @@ main() {
         notify_players_of_update $update_notice_minutes
 
         echo "[INFO] Countdown completed. Stopping server for update..."
-        shutdown_server_for_update
+        shutdown_server_for_update || return 1
         echo "[INFO] Server shutdown confirmed. Update will be applied during container startup."
         trigger_container_restart "UPDATE_RESTART" "$current_build_id"
       else
@@ -349,7 +306,7 @@ main() {
         notify_players_of_update $follower_notice_minutes
 
         echo "[INFO] Countdown completed. Preparing follower for coordinated restart..."
-        shutdown_server_for_update
+        shutdown_server_for_update || return 1
         trigger_container_restart "FOLLOWER_COORDINATION_RESTART" "$current_build_id"
       fi
     else
@@ -388,7 +345,7 @@ main() {
       notify_players_of_update $update_notice_minutes
 
       echo "[INFO] Countdown completed. Stopping server for update..."
-      shutdown_server_for_update
+      shutdown_server_for_update || return 1
 
       echo "[INFO] Server shutdown confirmed. Update will be applied during container startup."
 

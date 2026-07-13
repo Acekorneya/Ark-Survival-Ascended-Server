@@ -394,13 +394,13 @@ This approach provides better security while ensuring permissions are automatica
 - `-setup`: Performs the initial setup tasks required for running server instances.
 - `-create <instance_name>`: Creates a new server instance.
 - `-start <instance_name|-all>`: Starts a specific server instance or all instances.
-- `-stop <instance_name|-all>`: Stops a specific server instance or all instances.
-- `-shutdown [minutes] <instance_name|-all>`: Shuts down a specific server instance or all instances with an optional countdown in minutes.
+- `-stop <instance_name|-all> [--force]`: Stops one or all instances after verifying both the explicit `SaveWorld` and the save performed by `DoExit`.
+- `-shutdown <minutes> <instance_name|-all> [--force]`: Performs the same verified two-stage stop after a countdown.
 - `-update`: Checks for server files & Docker image updates (doesn't modify the script itself).
 - `-upgrade`: Upgrades POK-manager.sh script to the latest version (requires confirmation).
 - `-force-restore`: Forces restoration of POK-manager.sh from backup in case of update failure.
 - `-status <instance_name|-all>`: Shows the status of a specific server instance or all instances. The first successful run now needs Steam credentials so the container can obtain an EOS user token for the matchmaking query.
-- `-restart [minutes] <instance_name|-all>`: Restarts a specific server instance or all instances with an optional countdown in minutes.
+- `-restart <minutes> <instance_name|-all> [--force]`: Restarts one or all instances after the verified two-stage save barrier.
 - `-saveworld <instance_name|-all>`: Saves the world of a specific server instance or all instances.
 - `-chat "<message>" <instance_name|-all>`: Sends a chat message to a specific server instance or all instances.
 - `-custom <command> <instance_name|-all>`: Executes a custom command on a specific server instance or all instances.
@@ -449,7 +449,10 @@ Important notes:
 ```bash
 ./POK-manager.sh -start my_instance
 ./POK-manager.sh -stop my_instance
+./POK-manager.sh -stop -all
 ```
+
+For `-all`, POK sends each stage to every running instance concurrently. It verifies every `SaveWorld` before sending any `DoExit`, then verifies every `DoExit` save before stopping any container. If one instance fails either stage, no containers are removed and the command returns a failure for cron. Use trailing `--force` only when you intentionally accept possible data loss or corruption.
 
 #### Sending Chat Messages
 ```bash
@@ -675,10 +678,11 @@ When creating a new server instance using POK-manager.sh, a Docker Compose confi
 | `UPDATE_WINDOW_MINIMUM_TIME`  | `12:00 AM`        | Defines the minimum time, relative to server time, when an update check should run        |
 | `UPDATE_WINDOW_MAXIMUM_TIME`  | `11:59 PM`        | Defines the maximum time, relative to server time, when an update check should run        |
 | `RESTART_NOTICE_MINUTES`      | `30`              | Duration in minutes for notifying players before a server restart due to updates          |
+| `SAVE_WAIT_SECONDS`           | `60`              | Maximum time for each save-verification stage (1-900); existing custom values are preserved |
 | `ENABLE_MOTD`                 | `FALSE`           | Enable or disable Message of the Day                                                      |
 | `MOTD`                        |                   | Message of the Day                                                                        |
 | `MOTD_DURATION`               | `30`              | Duration for the Message of the Day                                                       |
-| `MAP_NAME`                    | `TheIsland`       | The map name (`TheIsland') Or Custom Map Name Can Be Enter aswell                         |
+| `MAP_NAME`                    | `TheIsland`       | Official, future, or modded map name; save discovery uses this value without an allowlist  |
 | `SESSION_NAME`                | `Server_name`     | The session name for the server                                                           |
 | `SERVER_ADMIN_PASSWORD`       | `MyPassword`      | The admin password for the server                                                         |
 | `STEAM_USERNAME`              |                   | Optional: Steam account name used only by `-status` to obtain an EOS user token           |
@@ -726,6 +730,7 @@ services:
     image: acekorneya/asa_server:2_0_latest
     container_name: asa_my_instance
     restart: unless-stopped
+    stop_grace_period: 210s              # Derived as (2 × SAVE_WAIT_SECONDS) + 90 seconds
     environment:
       - INSTANCE_NAME=my_instance            # The name of the instance
       - TZ=America/Los_Angeles               # Timezone setting: Change this to your local timezone. Ex.America/New_York, Europe/Berlin, Asia/Tokyo
@@ -744,10 +749,11 @@ services:
       - UPDATE_WINDOW_MINIMUM_TIME=12:00 AM  # Defines the minimum time, relative to server time, when an update check should run
       - UPDATE_WINDOW_MAXIMUM_TIME=11:59 PM  # Defines the maximum time, relative to server time, when an update 
       - RESTART_NOTICE_MINUTES=30            # Duration in minutes for notifying players before a server restart due to updates
+      - SAVE_WAIT_SECONDS=60                 # Maximum time for each verified save stage (1-900)
       - ENABLE_MOTD=FALSE                    # Enable or disable Message of the Day
       - MOTD=                                # Message of the Day
       - MOTD_DURATION=30                     # Duration for the Message of the Day
-      - MAP_NAME=TheIsland                   # TheIsland, ScorchedEarth, TheCenter, Aberration / TheIsland_WP, ScorchedEarth_WP, TheCenter_WP, Aberration_WP / Are the current official maps available
+      - MAP_NAME=TheIsland                   # Official, future, or modded map name; save verification uses this value directly
       - SESSION_NAME=Server_name             # The name of the server session
       - SERVER_ADMIN_PASSWORD=MyPassword     # The admin password for the server 
       - STEAM_USERNAME=                      # Optional: used only by -status to obtain an EOS user token

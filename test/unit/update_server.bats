@@ -70,3 +70,20 @@ load '../test_helper/project.bash'
   assert_output --partial "msg=ServerChat 5..."
   assert_output --partial "msg=ServerChat Server restarting NOW!"
 }
+
+@test "shutdown_server_for_update aborts when the shared two-stage stop fails" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    source "$REPO_ROOT/scripts/update_server.sh"
+    safe_container_stop() { echo "verified-stop=failed"; return 1; }
+    if shutdown_server_for_update; then
+      echo "result=unexpected-success"
+    else
+      echo "result=failed"
+    fi
+  '
+
+  assert_success
+  assert_output --partial "verified-stop=failed"
+  assert_output --partial "result=failed"
+  refute_output --partial "result=unexpected-success"
+}
