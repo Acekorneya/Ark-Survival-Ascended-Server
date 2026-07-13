@@ -3470,7 +3470,7 @@ _sync_compose_stop_grace_period() {
   save_wait_seconds=$(_get_compose_file_save_wait_seconds "$docker_compose_file" "compose stop grace")
   stop_grace_seconds=$(_derived_stop_grace_seconds "$save_wait_seconds")
   grep -q '^[[:space:]]*stop_grace_period:' "$docker_compose_file" && has_stop_grace=true
-  current_stop_grace=$(grep -E '^[[:space:]]*stop_grace_period:' "$docker_compose_file" 2>/dev/null | head -1 | sed -E 's/.*stop_grace_period:[[:space:]]*//')
+  current_stop_grace=$(grep -E '^[[:space:]]*stop_grace_period:' "$docker_compose_file" 2>/dev/null | head -1 | sed -E 's/.*stop_grace_period:[[:space:]]*//' || true)
   if [ "$current_stop_grace" = "${stop_grace_seconds}s" ]; then
     return 0
   fi
