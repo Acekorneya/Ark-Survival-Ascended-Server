@@ -786,6 +786,7 @@ steamcmd_download_to_dir() {
 
   /opt/steamcmd/steamcmd.sh \
     +force_install_dir "$target_dir" \
+    +@sSteamCmdForcePlatformType "windows" \
     +login "$USERNAME" \
     +app_update $update_args \
     +quit
