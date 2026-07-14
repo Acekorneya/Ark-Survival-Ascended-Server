@@ -657,8 +657,9 @@ if [ "${API}" = "TRUE" ]; then
   echo ""
   echo "🔌 Initializing AsaApi plugin system..."
   
-  # Install the API with extra verification for container mode
-  install_ark_server_api
+  # Install the selected API source and prepare its cache before any Wine
+  # invocation, including the loader preflight below.
+  ensure_ark_server_api_ready
   
   # Verify the installation
   if [ -f "${ASA_DIR}/ShooterGame/Binaries/Win64/AsaApiLoader.exe" ]; then

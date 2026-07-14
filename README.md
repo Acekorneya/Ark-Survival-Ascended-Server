@@ -822,11 +822,25 @@ To enable AsaApi on your server:
 
 When you enable the API feature:
 
-1. The container will automatically download the latest version of AsaApi from the official GitHub repository (https://github.com/ArkServerApi/AsaApi/releases/latest)
-2. The API will be installed to the correct location in your server files
-3. The Visual C++ 2019 Redistributable (required by AsaApi) will be automatically installed in the Proton environment
-4. The server will start using AsaApiLoader.exe instead of ArkAscendedServer.exe
-5. On subsequent starts, the container will check for AsaApi updates and install them if available
+1. POK-manager installs the tested AsaApi 2.01 release and verifies its official SHA-256 checksum.
+2. The verified release archive is retained in the shared server files for reliable reinstalls and custom-version rollback.
+3. Before Wine starts, native Linux `curl` downloads the cache matching the SHA-256 of `ArkAscendedServer.exe`.
+4. POK validates the archive and both serialized cache maps, then installs the cache atomically. AsaApi's Windows HTTPS downloader is disabled only after that validation succeeds.
+5. If a new ARK build does not have a usable cache yet, the API-enabled server remains in a visible `starting: waiting for AsaApi cache` state and retries every 60 seconds. It never silently starts without the requested API plugins.
+6. Multiple instances share a filesystem lock and reuse the same verified release and cache instead of downloading them concurrently.
+7. The server starts with `AsaApiLoader.exe`, and managed API instances are not considered healthy until the API log contains `API was successfully loaded`.
+
+### Using a Custom AsaApi Version
+
+Advanced users can override the tested release by extracting a complete AsaApi release into:
+
+```text
+./ServerFiles/arkserver/ShooterGame/Binaries/Win64/AsaApi_Custom/
+```
+
+The directory must contain the release root, including `AsaApiLoader.exe`, `ArkApi/AsaApi.dll`, and `config.json`. While the directory exists, POK uses those files without overwriting them and leaves that version's cache behavior unchanged. Custom releases are unsupported and may fail under Wine.
+
+Remove `AsaApi_Custom` and restart the instance to restore the checksum-verified AsaApi 2.01 release automatically.
 
 ### Special Handling for API Mode Restarts
 
@@ -936,6 +950,8 @@ If you encounter issues with AsaApi or plugins:
    - Missing Visual C++ Redistributable: The system will try to install it automatically
    - Wine/Proton configuration: Try manually updating the docker image with `./POK-manager.sh -update`
    - Plugin compatibility: Some plugins may not work with our Linux/Proton setup or with the current version of ARK
+   - `starting: waiting for AsaApi cache`: POK is safely retrying the native cache download for the current ARK executable. Check container network access and `cdn.pelayori.com`; the server will start automatically after a valid cache is available.
+   - Invalid custom override: Ensure `AsaApi_Custom` contains the complete release root and is readable by container UID/GID 7777, or remove the directory to restore managed 2.01.
 
 5. If the API still doesn't work, try reinstalling it:
    ```bash

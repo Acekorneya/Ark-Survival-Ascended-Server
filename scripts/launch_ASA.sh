@@ -136,6 +136,13 @@ setup_arkserverapi() {
     local ASA_PLUGIN_BINARY_NAME="AsaApiLoader.exe"
     local ASA_PLUGIN_BINARY_PATH="$ASA_BINARY_DIR/$ASA_PLUGIN_BINARY_NAME"
     local ASA_PLUGIN_LOADER_ARCHIVE_NAME=$(basename $ASA_BINARY_DIR/AsaApi_*.zip 2>/dev/null)
+
+    # Prepare the selected API source and its executable-specific cache before
+    # Wine starts. This deliberately bypasses AsaApi's Windows HTTPS client.
+    if ! ensure_ark_server_api_ready; then
+      echo "ERROR: AsaApi source or cache preparation did not complete."
+      return 1
+    fi
     
     # Make sure the directory exists
     mkdir -p "$ASA_BINARY_DIR"
@@ -335,6 +342,13 @@ start_server() {
   
   # Change to the binary directory
   cd "${ASA_DIR}/ShooterGame/Binaries/Win64"
+
+  # Health checks use this timestamp to reject an API success message left by
+  # an earlier server process. The API log must be updated after this launch
+  # checkpoint before managed AsaApi can be reported healthy.
+  if [ "$LAUNCH_BINARY_NAME" = "AsaApiLoader.exe" ]; then
+    : > "${ASAAPI_LAUNCH_MARKER:-/tmp/pok_asaapi_launch_started}"
+  fi
 
   # Defensive cleanup: Remove problematic Steam DLL files that interfere with Proton/Wine
   echo "[INFO] Performing pre-launch Steam DLL cleanup..."
@@ -865,7 +879,7 @@ start_server() {
     if [ "${API}" = "TRUE" ]; then
       echo "🔍 Looking for AsaApi logs (API is enabled)..."
       while [ $api_elapsed -lt $max_wait ]; do
-        api_log="$(find "$api_log_dir" \( -name "ArkApi_*.log" -o -name "AsaApi.log" \) -type f -printf "%T@ %p\n" 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2-)"
+        api_log="$(find "$api_log_dir" \( -name "ArkApi_*.log" -o -name "ArkApi.log" -o -name "AsaApi.log" \) -type f -printf "%T@ %p\n" 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2-)"
         if [ -n "$api_log" ] && [ -f "$api_log" ]; then
           echo ""
           echo "✅ Found AsaApi logs: $(basename "$api_log")"

@@ -34,6 +34,10 @@ common_init() {
   RCON_PATH="/usr/local/bin/rcon-cli"
   EOS_DEPLOYMENT_ID="ad9a8feffb3b4b2ca315546f038c3ae2"
   EOS_MATCHMAKING_BASE="https://api.epicgames.dev/wildcard/matchmaking/v1"
+  ASAAPI_MANAGER_PATH="${POK_SCRIPTS_DIR:-/home/pok/scripts}/helpers/asaapi_manager.py"
+  ASAAPI_STATE_DIR="${ASA_DIR}/.pok-manager/asaapi"
+  ASAAPI_WAIT_MARKER="/tmp/pok_asaapi_waiting"
+  ASAAPI_LAUNCH_MARKER="/tmp/pok_asaapi_launch_started"
   export STEAM_COMPAT_DATA_PATH=${STEAM_COMPAT_DATA_PATH}
   export STEAM_COMPAT_CLIENT_INSTALL_PATH=${STEAM_COMPAT_CLIENT_INSTALL_PATH}
 }
@@ -1224,8 +1228,9 @@ cleanup_all_flags() {
   cleanup_legacy_locks "aggressive"
 }
 
-# Function to install ArkServerAPI
-install_ark_server_api() {
+# Legacy installer retained temporarily for source compatibility. The managed
+# installer below is the only implementation used by the runtime.
+_legacy_install_ark_server_api() {
   if [ "${API}" != "TRUE" ]; then
     echo "AsaApi installation skipped (API is not set to TRUE)"
     return 0
@@ -1521,6 +1526,94 @@ install_ark_server_api() {
     
     return 1
   fi
+}
+
+# Install the pinned AsaApi release or an explicit AsaApi_Custom override.
+install_ark_server_api() {
+  local bin_dir="${ASA_DIR}/ShooterGame/Binaries/Win64"
+
+  if [ "${API}" != "TRUE" ]; then
+    echo "AsaApi installation skipped (API is not set to TRUE)"
+    return 0
+  fi
+
+  echo "---- Installing/Verifying AsaApi ----"
+
+  if [ ! -f "${STEAM_COMPAT_DATA_PATH}/tracked_files" ] || [ ! -d "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c" ]; then
+    echo "Proton environment not fully initialized. Initializing before AsaApi installation..."
+    initialize_proton_prefix
+  fi
+
+  if [ ! -f "$ASAAPI_MANAGER_PATH" ]; then
+    echo "ERROR: AsaApi manager helper was not found at $ASAAPI_MANAGER_PATH"
+    return 1
+  fi
+
+  mkdir -p "$bin_dir" "$ASAAPI_STATE_DIR" "${bin_dir}/logs"
+  if ! python3 -B "$ASAAPI_MANAGER_PATH" install \
+      --bin-dir "$bin_dir" \
+      --state-dir "$ASAAPI_STATE_DIR"; then
+    return 1
+  fi
+
+  if [ ! -f "${bin_dir}/AsaApiLoader.exe" ] || [ ! -f "${bin_dir}/ArkApi/AsaApi.dll" ]; then
+    echo "ERROR: AsaApi source preparation completed without the required loader files."
+    return 1
+  fi
+
+  chmod +x "${bin_dir}/AsaApiLoader.exe" 2>/dev/null || true
+  echo "✅ AsaApi source files are ready."
+  return 0
+}
+
+asaapi_source_is_custom() {
+  [ -f "${ASAAPI_STATE_DIR}/source.json" ] || return 1
+  [ "$(jq -r '.source // empty' "${ASAAPI_STATE_DIR}/source.json" 2>/dev/null)" = "custom" ]
+}
+
+prepare_ark_server_api_cache() {
+  local bin_dir="${ASA_DIR}/ShooterGame/Binaries/Win64"
+  local server_exe="${bin_dir}/ArkAscendedServer.exe"
+
+  python3 -B "$ASAAPI_MANAGER_PATH" prepare-cache \
+    --bin-dir "$bin_dir" \
+    --state-dir "$ASAAPI_STATE_DIR" \
+    --server-exe "$server_exe"
+}
+
+ensure_ark_server_api_ready() {
+  local retry_seconds="${ASAAPI_CACHE_RETRY_SECONDS:-60}"
+  local wait_message="starting: waiting for AsaApi cache"
+
+  if ! [[ "$retry_seconds" =~ ^[0-9]+$ ]] || [ "$retry_seconds" -lt 5 ]; then
+    retry_seconds=60
+  fi
+
+  while true; do
+    if [ -e "${ASA_DIR}/ShooterGame/Binaries/Win64/AsaApi_Custom" ]; then
+      wait_message="starting: waiting for a valid AsaApi_Custom override"
+    else
+      wait_message="starting: waiting for AsaApi cache"
+    fi
+    printf '%s\n' "$wait_message" > "$ASAAPI_WAIT_MARKER"
+
+    if install_ark_server_api; then
+      if asaapi_source_is_custom; then
+        rm -f "$ASAAPI_WAIT_MARKER"
+        echo "⚠️ AsaApi_Custom is active; POK cache management is intentionally bypassed."
+        return 0
+      fi
+
+      if prepare_ark_server_api_cache; then
+        rm -f "$ASAAPI_WAIT_MARKER"
+        echo "✅ Managed AsaApi cache is verified and ready."
+        return 0
+      fi
+    fi
+
+    echo "⚠️ $wait_message. Retrying in ${retry_seconds} seconds."
+    sleep "$retry_seconds"
+  done
 }
 
 # Function to ensure dosdevices are properly set up
