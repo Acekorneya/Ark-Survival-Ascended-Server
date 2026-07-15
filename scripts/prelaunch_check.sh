@@ -220,7 +220,8 @@ check_wine_environment() {
   touch "${STEAM_COMPAT_DATA_PATH}/tracked_files" 2>/dev/null || true
   
   # Force correct permissions
-  chmod -R 755 "$PREFIX_PATH"
+  find "$PREFIX_PATH" -type d ! -perm 755 -exec chmod 755 {} +
+  find "$PREFIX_PATH" -type f ! -perm 644 -exec chmod 644 {} +
   
   # Create Visual C++ Redistributable directory structure for AsaApi
   if [ "${API}" = "TRUE" ]; then
