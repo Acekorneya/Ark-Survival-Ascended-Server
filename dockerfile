@@ -7,7 +7,7 @@ FROM ubuntu:22.04
 # Host file ownership MUST match these values to avoid permission issues
 ARG PUID=7777
 ARG PGID=7777
-ARG PROTON_VERSION=GE-Proton10-32
+ARG PROTON_VERSION=GE-Proton10-33
 
 # Set a default timezone, can be overridden at runtime
 ENV TZ=UTC
@@ -84,16 +84,21 @@ RUN set -ex; \
     else \
     DOWNLOAD_URL="https://github.com/GloriousEggroll/proton-ge-custom/releases/download/${PROTON_VERSION}/${PROTON_VERSION}.tar.gz"; \
     fi; \
-    curl -sL "$DOWNLOAD_URL" -o /tmp/proton.tar.gz; \
+    ARCHIVE_NAME="${DOWNLOAD_URL##*/}"; \
+    CHECKSUM_URL="${DOWNLOAD_URL%.tar.gz}.sha512sum"; \
+    CHECKSUM_NAME="${CHECKSUM_URL##*/}"; \
+    curl -fsSL "$DOWNLOAD_URL" -o "/tmp/$ARCHIVE_NAME"; \
+    curl -fsSL "$CHECKSUM_URL" -o "/tmp/$CHECKSUM_NAME"; \
+    (cd /tmp && sha512sum -c "$CHECKSUM_NAME"); \
     mkdir -p /tmp/proton-extract; \
     mkdir -p /home/pok/.steam/steam/compatibilitytools.d; \
-    tar -xzf /tmp/proton.tar.gz -C /tmp/proton-extract; \
+    tar -xzf "/tmp/$ARCHIVE_NAME" -C /tmp/proton-extract; \
     ACTUAL_VERSION=$(basename "$(find /tmp/proton-extract -maxdepth 1 -mindepth 1 -type d | head -n 1)"); \
     mv /tmp/proton-extract/* /home/pok/.steam/steam/compatibilitytools.d/; \
     ln -sf /home/pok/.steam/steam/compatibilitytools.d/$ACTUAL_VERSION /home/pok/.steam/steam/compatibilitytools.d/GE-Proton-Current; \
     ln -sf /home/pok/.steam/steam/compatibilitytools.d/$ACTUAL_VERSION /home/pok/.steam/steam/compatibilitytools.d/GE-Proton8-21; \
     ln -sf /home/pok/.steam/steam/compatibilitytools.d/$ACTUAL_VERSION /home/pok/.steam/steam/compatibilitytools.d/GE-Proton9-25; \
-    rm -rf /tmp/proton-extract /tmp/proton.tar.gz
+    rm -rf /tmp/proton-extract "/tmp/$ARCHIVE_NAME" "/tmp/$CHECKSUM_NAME"
 
 # Setup machine-id for Proton
 RUN set -ex; \
