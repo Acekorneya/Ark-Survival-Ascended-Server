@@ -20,6 +20,20 @@ check_create_directory() {
   return 0
 }
 
+# Repair only prefix entries that lack the minimum access Proton/Wine needs.
+# Avoid recursively rewriting already-correct metadata on large persisted prefixes.
+repair_proton_prefix_permissions() {
+  local prefix_path="$1"
+
+  if [[ ! -d "$prefix_path" ]]; then
+    echo "ERROR: Proton prefix directory not found: $prefix_path"
+    return 1
+  fi
+
+  find "$prefix_path" -type d ! -perm -755 -exec chmod u+rwx,go+rx -- {} +
+  find "$prefix_path" -type f ! -perm -644 -exec chmod u+rw,go+r -- {} +
+}
+
 # Function to check for critical files
 check_critical_file() {
   local file_path="$1"
@@ -164,8 +178,9 @@ check_wine_environment() {
   # Make sure tracked_files exists
   touch "${STEAM_COMPAT_DATA_PATH}/tracked_files" 2>/dev/null || true
   
-  # Force correct permissions
-  chmod -R 755 "$PREFIX_PATH"
+  # Repair only entries that are missing required access bits. This avoids
+  # expensive metadata rewrites across an already-correct persisted prefix.
+  repair_proton_prefix_permissions "$PREFIX_PATH"
   
   # Create Visual C++ Redistributable directory structure for AsaApi
   if [ "${API}" = "TRUE" ]; then
