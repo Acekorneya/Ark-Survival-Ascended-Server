@@ -116,7 +116,7 @@ rollback_retry_is_available() {
 
   failed_hash=$(deployment_state_field active failed_executable_sha256 || true)
   failed_timestamp=$(deployment_state_field active failed_cache_last_modified || true)
-  [ -n "$failed_hash" ] || return 1
+  [ -n "$failed_hash" ] && [ -n "$failed_timestamp" ] || return 1
   remote_timestamp=$(python3 -B "$ASAAPI_MANAGER_PATH" cache-timestamp \
     --bin-dir "$bin_dir" --executable-hash "$failed_hash" 2>/dev/null) || return 1
   if [ -n "$remote_timestamp" ] && [ "$remote_timestamp" != "$failed_timestamp" ]; then

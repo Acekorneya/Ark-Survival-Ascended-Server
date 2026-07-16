@@ -93,6 +93,16 @@ class ServerDeploymentManagerTests(unittest.TestCase):
         self.assertEqual(active["failed_build_id"], "24226775")
         self.assertFalse((self.state_dir / "rollback_transaction.json").exists())
 
+        self.assertEqual(deployment.update_failure(types.SimpleNamespace(
+            state_dir=self.state_dir,
+            failed_build_id="24230000",
+            executable_hash="d" * 64,
+            failed_cache_last_modified="failed-v2",
+        )), 0)
+        updated = json.loads((self.state_dir / "active_rollback.json").read_text(encoding="utf-8"))
+        self.assertEqual(updated["failed_build_id"], "24230000")
+        self.assertEqual(updated["failed_cache_last_modified"], "failed-v2")
+
     def test_record_success_uses_active_manifest_and_bounds_history(self) -> None:
         server_exe = self.root / "ArkAscendedServer.exe"
         server_exe.write_bytes(b"known-good")

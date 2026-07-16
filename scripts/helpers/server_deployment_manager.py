@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import hashlib
 import json
 import os
@@ -73,6 +75,17 @@ def read_object(path: Path, *, required: bool = False) -> dict:
     return value
 
 
+@contextlib.contextmanager
+def state_lock(state_dir: Path):
+    state_dir.mkdir(parents=True, exist_ok=True)
+    with (state_dir / "deployment.lock").open("a+b") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def require_digits(label: str, value: str) -> str:
     if not value or not value.isdecimal():
         raise DeploymentError(f"{label} must contain only digits")
@@ -131,54 +144,59 @@ def begin(args: argparse.Namespace) -> int:
         "started_at": int(time.time()),
         "status": "staged",
     }
-    atomic_json(args.state_dir / "rollback_transaction.json", value)
+    with state_lock(args.state_dir):
+        atomic_json(args.state_dir / "rollback_transaction.json", value)
     return 0
 
 
 def activate(args: argparse.Namespace) -> int:
-    transaction_path = args.state_dir / "rollback_transaction.json"
-    transaction = read_object(transaction_path, required=True)
     manifest = require_digits("Depot manifest", args.manifest)
-    if transaction.get("status") != "staged" or transaction.get("depot_manifest") != manifest:
-        raise DeploymentError("Rollback transaction does not match the requested manifest")
     if not args.server_exe.is_file():
         raise DeploymentError(f"Activated server executable is missing: {args.server_exe}")
     actual_hash = sha256_file(args.server_exe)
-    if actual_hash != transaction.get("executable_sha256"):
-        raise DeploymentError("Activated server executable does not match the staged transaction")
-    transaction["status"] = "active"
-    transaction["activated_at"] = int(time.time())
-    atomic_json(args.state_dir / "active_rollback.json", transaction)
-    transaction_path.unlink(missing_ok=True)
-    fsync_directory(args.state_dir)
+    with state_lock(args.state_dir):
+        transaction_path = args.state_dir / "rollback_transaction.json"
+        transaction = read_object(transaction_path, required=True)
+        if transaction.get("status") != "staged" or transaction.get("depot_manifest") != manifest:
+            raise DeploymentError("Rollback transaction does not match the requested manifest")
+        if actual_hash != transaction.get("executable_sha256"):
+            raise DeploymentError("Activated server executable does not match the staged transaction")
+        transaction["status"] = "active"
+        transaction["activated_at"] = int(time.time())
+        atomic_json(args.state_dir / "active_rollback.json", transaction)
+        transaction_path.unlink(missing_ok=True)
+        fsync_directory(args.state_dir)
     return 0
 
 
 def abort(args: argparse.Namespace) -> int:
-    (args.state_dir / "rollback_transaction.json").unlink(missing_ok=True)
-    fsync_directory(args.state_dir)
+    with state_lock(args.state_dir):
+        (args.state_dir / "rollback_transaction.json").unlink(missing_ok=True)
+        fsync_directory(args.state_dir)
     return 0
 
 
 def clear_active(args: argparse.Namespace) -> int:
-    (args.state_dir / "active_rollback.json").unlink(missing_ok=True)
-    fsync_directory(args.state_dir)
+    with state_lock(args.state_dir):
+        (args.state_dir / "active_rollback.json").unlink(missing_ok=True)
+        fsync_directory(args.state_dir)
     return 0
 
 
 def update_failure(args: argparse.Namespace) -> int:
-    path = args.state_dir / "active_rollback.json"
-    value = active_state(args.state_dir)
-    if not value:
-        raise DeploymentError("No active rollback state exists")
     executable_hash = args.executable_hash.lower()
     if not re.fullmatch(r"[0-9a-f]{64}", executable_hash):
         raise DeploymentError("Failed candidate executable SHA-256 is invalid")
-    value["failed_build_id"] = args.failed_build_id if args.failed_build_id.isdecimal() else ""
-    value["failed_executable_sha256"] = executable_hash
-    value["failed_cache_last_modified"] = args.failed_cache_last_modified
-    value["last_failed_preflight_at"] = int(time.time())
-    atomic_json(path, value)
+    with state_lock(args.state_dir):
+        path = args.state_dir / "active_rollback.json"
+        value = active_state(args.state_dir)
+        if not value:
+            raise DeploymentError("No active rollback state exists")
+        value["failed_build_id"] = args.failed_build_id if args.failed_build_id.isdecimal() else ""
+        value["failed_executable_sha256"] = executable_hash
+        value["failed_cache_last_modified"] = args.failed_cache_last_modified
+        value["last_failed_preflight_at"] = int(time.time())
+        atomic_json(path, value)
     return 0
 
 
@@ -228,17 +246,18 @@ def record_success(args: argparse.Namespace) -> int:
         "instance_name": args.instance_name,
         "recorded_at": int(time.time()),
     }
-    history_path = args.state_dir / "known_good.json"
-    history = read_object(history_path).get("deployments", [])
-    if not isinstance(history, list):
-        history = []
-    kept = [
-        value for value in history
-        if isinstance(value, dict)
-        and value.get("depot_manifest") != manifest
-        and value.get("executable_sha256") != executable_hash
-    ]
-    atomic_json(history_path, {"version": 1, "deployments": [entry, *kept][:MAX_HISTORY]})
+    with state_lock(args.state_dir):
+        history_path = args.state_dir / "known_good.json"
+        history = read_object(history_path).get("deployments", [])
+        if not isinstance(history, list):
+            history = []
+        kept = [
+            value for value in history
+            if isinstance(value, dict)
+            and value.get("depot_manifest") != manifest
+            and value.get("executable_sha256") != executable_hash
+        ]
+        atomic_json(history_path, {"version": 1, "deployments": [entry, *kept][:MAX_HISTORY]})
     print(manifest)
     return 0
 
