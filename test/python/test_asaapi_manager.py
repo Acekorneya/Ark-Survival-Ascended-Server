@@ -54,12 +54,13 @@ def serialized_map(value_size: int, entries: tuple[tuple[bytes, bytes], ...]) ->
 
 
 def cache_archive(path: Path, *, extra: str | None = None) -> None:
-    offsets = serialized_map(8, ((b"offset-key", b"\x01" * 8),))
+    required = next(iter(asaapi_manager.REQUIRED_CORE_OFFSETS)).encode("utf-8")
+    offsets = serialized_map(8, ((b"offset-key", b"\x01" * 8), (required, b"\x03" * 8)))
     bitfields = serialized_map(32, ((b"bitfield-key", b"\x02" * 32),))
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("cached_offsets.cache", offsets)
         archive.writestr("cached_bitfields.cache", bitfields)
-        archive.writestr("cached_offsets.txt", "offset-key\n")
+        archive.writestr("cached_offsets.txt", f"offset-key\n{required.decode()}\n")
         if extra is not None:
             archive.writestr(extra, b"unexpected")
 
@@ -174,6 +175,7 @@ class AsaApiManagerTests(unittest.TestCase):
         self.assertEqual(metadata["last_modified"], "fixture-v1")
         self.assertTrue((generation / "cached_offsets.cache").is_file())
         self.assertTrue((generation / "cached_bitfields.cache").is_file())
+        self.assertTrue((generation / "cached_offsets.txt").is_file())
         self.assertFalse(config["settings"]["AutomaticCacheDownload"]["Enable"])
 
         with mock.patch.object(asaapi_manager, "remote_last_modified", return_value=None), \
@@ -190,6 +192,63 @@ class AsaApiManagerTests(unittest.TestCase):
         cache_archive(traversal, extra="../cached_key.cache")
         with self.assertRaises(asaapi_manager.InvalidError):
             asaapi_manager.validate_cache_archive(traversal)
+
+    def test_cache_missing_required_core_offset_is_rejected(self) -> None:
+        archive_path = self.root / "missing-core-offset.zip"
+        offsets = serialized_map(8, ((b"offset-key", b"\x01" * 8),))
+        bitfields = serialized_map(32, ((b"bitfield-key", b"\x02" * 32),))
+        with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("cached_offsets.cache", offsets)
+            archive.writestr("cached_bitfields.cache", bitfields)
+            archive.writestr("cached_offsets.txt", "offset-key\n")
+
+        cache_root = self.bin_dir / "ArkApi/Cache"
+        cache_root.mkdir(parents=True)
+        with self.assertRaisesRegex(
+            asaapi_manager.InvalidError,
+            "AShooterGameMode.Logout",
+        ):
+            asaapi_manager.extract_and_validate_cache(archive_path, cache_root, "a" * 64)
+
+    def test_incompatible_cache_is_not_downloaded_again_until_remote_changes(self) -> None:
+        self.install_managed()
+        server_exe = self.bin_dir / "ArkAscendedServer.exe"
+        server_exe.write_bytes(b"server-build-incompatible")
+        executable_hash = hashlib.sha256(server_exe.read_bytes()).hexdigest()
+        bad_archive = self.root / "bad.zip"
+        offsets = serialized_map(8, ((b"offset-key", b"\x01" * 8),))
+        bitfields = serialized_map(32, ((b"bitfield-key", b"\x02" * 32),))
+        with zipfile.ZipFile(bad_archive, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("cached_offsets.cache", offsets)
+            archive.writestr("cached_bitfields.cache", bitfields)
+
+        good_archive = self.root / "good.zip"
+        cache_archive(good_archive)
+
+        def download_bad(_url: str, destination: Path, header_path: Path | None = None) -> None:
+            shutil.copy2(bad_archive, destination)
+            if header_path is not None:
+                header_path.write_text("Last-Modified: fixture-v1\n", encoding="ascii")
+
+        with mock.patch.object(asaapi_manager, "remote_last_modified", return_value="fixture-v1"), \
+                mock.patch.object(asaapi_manager, "download_file", side_effect=download_bad):
+            with self.assertRaisesRegex(asaapi_manager.InvalidError, executable_hash):
+                asaapi_manager.prepare_cache(self.prepare_args(server_exe))
+
+        with mock.patch.object(asaapi_manager, "remote_last_modified", return_value="fixture-v1"), \
+                mock.patch.object(asaapi_manager, "download_file", side_effect=AssertionError("downloaded")):
+            with self.assertRaisesRegex(asaapi_manager.InvalidError, "remains unusable"):
+                asaapi_manager.prepare_cache(self.prepare_args(server_exe))
+
+        def download_good(_url: str, destination: Path, header_path: Path | None = None) -> None:
+            shutil.copy2(good_archive, destination)
+            if header_path is not None:
+                header_path.write_text("Last-Modified: fixture-v2\n", encoding="ascii")
+
+        with mock.patch.object(asaapi_manager, "remote_last_modified", return_value="fixture-v2"), \
+                mock.patch.object(asaapi_manager, "download_file", side_effect=download_good):
+            self.assertEqual(asaapi_manager.prepare_cache(self.prepare_args(server_exe)), 0)
+        self.assertFalse((self.bin_dir / "ArkApi/Cache/incompatible_cache.json").exists())
 
     def test_serialized_cache_validation_rejects_duplicate_and_truncated_entries(self) -> None:
         duplicate = self.root / "duplicate.cache"

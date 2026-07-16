@@ -60,6 +60,15 @@ refresh_build_ids() {
 install_required() {
   refresh_build_ids
 
+  if rollback_state_is_active; then
+    if rollback_retry_is_available "$current_build_id"; then
+      echo "[INFO] A rollback-protected candidate is eligible for staged compatibility preflight"
+      return 0
+    fi
+    echo "[INFO] Rollback protection remains active; keeping the known-good server files"
+    return 1
+  fi
+
   if [ -z "$current_build_id" ] || [[ "$current_build_id" == error* ]]; then
     echo "[WARNING] Current build ID unavailable; proceeding with staged download as precaution"
     return 0

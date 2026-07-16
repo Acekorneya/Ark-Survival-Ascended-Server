@@ -14,6 +14,7 @@
 /scripts/helpers/package-lock.json
 !/scripts/health_probe.sh
 !/scripts/health_server.py
+!/scripts/rollback_server.sh
 !/scripts/monitor_health.sh
 !/scripts/update_coordination.sh
 !/require_files/

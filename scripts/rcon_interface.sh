@@ -164,6 +164,7 @@ usage() {
   echo "  -saveworld                - Save the game world."
   echo "  -verify-save              - Save and wait for fresh completion evidence."
   echo "  -verify-doexit            - Send DoExit and verify its save independently."
+  echo "  -terminate-verified       - Terminate lingering ASA only after verified DoExit."
   echo "  -restart <minutes>        - Schedule a server restart with countdown."
   echo "  -shutdown <minutes>       - Schedule a server shutdown with countdown."
   echo "  -stop                     - Safely stop the server, ensuring world save completion."
@@ -190,6 +191,9 @@ main() {
     ;;
   -verify-doexit)
     verified_doexit_save
+    ;;
+  -terminate-verified)
+    shutdown_terminate_lingering_processes
     ;;
   -restart)
     if [ -z "$1" ]; then

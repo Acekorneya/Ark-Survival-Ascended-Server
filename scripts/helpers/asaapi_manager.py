@@ -44,6 +44,9 @@ REQUIRED_CACHE_FILES = {
     "cached_offsets.cache": 8,
     "cached_bitfields.cache": 32,
 }
+REQUIRED_CORE_OFFSETS = frozenset({
+    "AShooterGameMode.Logout(AController*)",
+})
 ALLOWED_CACHE_FILES = set(REQUIRED_CACHE_FILES) | {
     "cached_offsets.txt",
     "cached_key.cache",
@@ -405,7 +408,11 @@ def install_source(args: argparse.Namespace) -> int:
         return 0
 
 
-def validate_serialized_map(path: Path, value_size: int) -> None:
+def validate_serialized_map(
+    path: Path,
+    value_size: int,
+    required_keys: frozenset[str] = frozenset(),
+) -> None:
     try:
         file_size = path.stat().st_size
     except OSError as error:
@@ -416,6 +423,8 @@ def validate_serialized_map(path: Path, value_size: int) -> None:
     remaining = file_size
     entry_count = 0
     keys: set[bytes] = set()
+    required_bytes = {key.encode("utf-8"): key for key in required_keys}
+    found_required: set[bytes] = set()
     try:
         with path.open("rb") as handle:
             while remaining:
@@ -431,6 +440,8 @@ def validate_serialized_map(path: Path, value_size: int) -> None:
                 if len(key) != key_size or key in keys:
                     raise InvalidError(f"Unreadable or duplicate cache key in {path}")
                 keys.add(key)
+                if key in required_bytes:
+                    found_required.add(key)
                 value = handle.read(value_size)
                 if len(value) != value_size:
                     raise InvalidError(f"Truncated cache value in {path}")
@@ -442,6 +453,11 @@ def validate_serialized_map(path: Path, value_size: int) -> None:
         raise InvalidError(f"Unable to read cache map {path}: {error}") from error
     if entry_count == 0:
         raise InvalidError(f"Cache map contains no entries: {path}")
+    missing = [required_bytes[key] for key in required_bytes.keys() - found_required]
+    if missing:
+        raise InvalidError(
+            "Cache map is missing required AsaApi offsets: " + ", ".join(sorted(missing))
+        )
 
 
 def safe_generation_relative(value: str) -> bool:
@@ -474,7 +490,8 @@ def inspect_local_cache(cache_root: Path, executable_hash: str) -> tuple[dict, P
     generation = cache_root / PurePosixPath(relative)
     try:
         for filename, value_size in REQUIRED_CACHE_FILES.items():
-            validate_serialized_map(generation / filename, value_size)
+            required_keys = REQUIRED_CORE_OFFSETS if filename == "cached_offsets.cache" else frozenset()
+            validate_serialized_map(generation / filename, value_size, required_keys)
     except InvalidError:
         return None
     return metadata, generation
@@ -498,6 +515,8 @@ def validate_cache_archive(archive_path: Path) -> dict[str, zipfile.ZipInfo]:
                     raise InvalidError(f"Unexpected cache archive entry: {name}")
                 if name in seen:
                     raise InvalidError(f"Duplicate cache archive entry: {name}")
+                if member.file_size <= 0:
+                    raise InvalidError(f"Cache archive entry is empty: {name}")
                 if member.file_size > MAX_CACHE_ENTRY_SIZE:
                     raise InvalidError(f"Cache archive entry is too large: {name}")
                 total_size += member.file_size
@@ -527,7 +546,14 @@ def extract_and_validate_cache(archive_path: Path, cache_root: Path, executable_
                     shutil.copyfileobj(source, destination, 1024 * 1024)
                     destination.flush()
                     os.fsync(destination.fileno())
-                validate_serialized_map(target, value_size)
+                required_keys = REQUIRED_CORE_OFFSETS if filename == "cached_offsets.cache" else frozenset()
+                validate_serialized_map(target, value_size, required_keys)
+            if "cached_offsets.txt" in members:
+                target = generation / "cached_offsets.txt"
+                with archive.open(members["cached_offsets.txt"]) as source, target.open("wb") as destination:
+                    shutil.copyfileobj(source, destination, 1024 * 1024)
+                    destination.flush()
+                    os.fsync(destination.fileno())
         fsync_directory(generation)
         fsync_directory(generations)
         return generation
@@ -562,6 +588,21 @@ def cache_download_url(config_path: Path, executable_hash: str) -> tuple[str, st
     return base_url, f"{base_url}{executable_hash}.zip"
 
 
+def inspect_incompatible_cache(cache_root: Path, executable_hash: str) -> dict | None:
+    marker_path = cache_root / "incompatible_cache.json"
+    try:
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(marker, dict) or marker.get("version") != 1:
+        return None
+    if str(marker.get("executable_hash", "")).lower() != executable_hash:
+        return None
+    if not isinstance(marker.get("last_modified"), str) or not isinstance(marker.get("error"), str):
+        return None
+    return marker
+
+
 def prepare_cache(args: argparse.Namespace) -> int:
     bin_dir = args.bin_dir.resolve()
     state_dir = args.state_dir.resolve()
@@ -583,6 +624,15 @@ def prepare_cache(args: argparse.Namespace) -> int:
         config_path = bin_dir / "config.json"
         base_url, download_url = cache_download_url(config_path, executable_hash)
         local_cache = inspect_local_cache(cache_root, executable_hash)
+        incompatible_cache = inspect_incompatible_cache(cache_root, executable_hash)
+
+        if local_cache is None and incompatible_cache is not None:
+            remote_timestamp = remote_last_modified(download_url)
+            if not remote_timestamp or remote_timestamp == incompatible_cache["last_modified"]:
+                raise InvalidError(
+                    f"AsaApi cache for ARK executable {executable_hash} remains unusable: "
+                    f"{incompatible_cache['error']}"
+                )
 
         if local_cache is not None:
             metadata, _ = local_cache
@@ -619,7 +669,18 @@ def prepare_cache(args: argparse.Namespace) -> int:
             if not downloaded_timestamp:
                 downloaded_timestamp = remote_timestamp or ""
 
-            generation = extract_and_validate_cache(archive_path, cache_root, executable_hash)
+            try:
+                generation = extract_and_validate_cache(archive_path, cache_root, executable_hash)
+            except InvalidError as error:
+                atomic_write_json(cache_root / "incompatible_cache.json", {
+                    "version": 1,
+                    "executable_hash": executable_hash,
+                    "last_modified": downloaded_timestamp,
+                    "error": str(error),
+                })
+                raise InvalidError(
+                    f"AsaApi cache for ARK executable {executable_hash} is unusable: {error}"
+                ) from error
             relative_generation = generation.relative_to(cache_root).as_posix()
             metadata = {
                 "version": 1,
@@ -628,6 +689,7 @@ def prepare_cache(args: argparse.Namespace) -> int:
                 "cache_directory": relative_generation,
             }
             atomic_write_json(cache_root / "cached_key.cache", metadata)
+            (cache_root / "incompatible_cache.json").unlink(missing_ok=True)
             disable_internal_downloader(config_path, base_url)
             log("INFO", f"Verified AsaApi cache installed for {executable_hash}")
             return 0
@@ -640,6 +702,19 @@ def show_status(args: argparse.Namespace) -> int:
     state = read_state(args.state_dir.resolve())
     print(json.dumps(state, sort_keys=True))
     return 0 if state else 1
+
+
+def show_cache_timestamp(args: argparse.Namespace) -> int:
+    """Print the remote cache timestamp for an executable hash."""
+    executable_hash = args.executable_hash.lower()
+    if len(executable_hash) != 64 or any(character not in "0123456789abcdef" for character in executable_hash):
+        raise InvalidError("Executable hash must be a SHA-256 value")
+    _base_url, download_url = cache_download_url(args.bin_dir.resolve() / "config.json", executable_hash)
+    timestamp = remote_last_modified(download_url)
+    if timestamp is None:
+        raise RetryableError("Unable to read the remote AsaApi cache timestamp")
+    print(timestamp)
+    return 0
 
 
 def parser() -> argparse.ArgumentParser:
@@ -663,6 +738,11 @@ def parser() -> argparse.ArgumentParser:
     status = subparsers.add_parser("status", help="print the selected AsaApi source state")
     status.add_argument("--state-dir", type=Path, required=True)
     status.set_defaults(handler=show_status)
+
+    timestamp = subparsers.add_parser("cache-timestamp", help="print remote cache Last-Modified")
+    timestamp.add_argument("--bin-dir", type=Path, required=True)
+    timestamp.add_argument("--executable-hash", required=True)
+    timestamp.set_defaults(handler=show_cache_timestamp)
     return root
 
 

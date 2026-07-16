@@ -76,10 +76,133 @@ common_init() {
   EOS_MATCHMAKING_BASE="https://api.epicgames.dev/wildcard/matchmaking/v1"
   ASAAPI_MANAGER_PATH="${POK_SCRIPTS_DIR:-/home/pok/scripts}/helpers/asaapi_manager.py"
   ASAAPI_STATE_DIR="${ASA_DIR}/.pok-manager/asaapi"
+  DEPLOYMENT_MANAGER_PATH="${POK_SCRIPTS_DIR:-/home/pok/scripts}/helpers/server_deployment_manager.py"
+  DEPLOYMENT_STATE_DIR="${ASA_DIR}/.pok-manager/deployments"
+  ROLLBACK_STAGING_DIR="${ASA_DIR}/.pok-manager/rollback/staging"
   ASAAPI_WAIT_MARKER="/tmp/pok_asaapi_waiting"
   ASAAPI_LAUNCH_MARKER="/tmp/pok_asaapi_launch_started"
   export STEAM_COMPAT_DATA_PATH=${STEAM_COMPAT_DATA_PATH}
   export STEAM_COMPAT_CLIENT_INSTALL_PATH=${STEAM_COMPAT_CLIENT_INSTALL_PATH}
+}
+
+rollback_state_is_active() {
+  [ -f "${DEPLOYMENT_STATE_DIR}/active_rollback.json" ]
+}
+
+deployment_state_field() {
+  local source="$1"
+  local name="$2"
+
+  python3 -B "$DEPLOYMENT_MANAGER_PATH" field \
+    --state-dir "$DEPLOYMENT_STATE_DIR" \
+    --source "$source" \
+    --name "$name" 2>/dev/null
+}
+
+rollback_retry_is_available() {
+  local public_build_id="$1"
+  local failed_build_id
+  local failed_hash
+  local failed_timestamp
+  local remote_timestamp
+  local bin_dir="${ASA_DIR}/ShooterGame/Binaries/Win64"
+
+  rollback_state_is_active || return 1
+  failed_build_id=$(deployment_state_field active failed_build_id || true)
+  if [ -n "$public_build_id" ] && [ "$public_build_id" != "$failed_build_id" ]; then
+    echo "[INFO] A newer Steam build is available while rollback protection is active."
+    return 0
+  fi
+
+  failed_hash=$(deployment_state_field active failed_executable_sha256 || true)
+  failed_timestamp=$(deployment_state_field active failed_cache_last_modified || true)
+  [ -n "$failed_hash" ] || return 1
+  remote_timestamp=$(python3 -B "$ASAAPI_MANAGER_PATH" cache-timestamp \
+    --bin-dir "$bin_dir" --executable-hash "$failed_hash" 2>/dev/null) || return 1
+  if [ -n "$remote_timestamp" ] && [ "$remote_timestamp" != "$failed_timestamp" ]; then
+    echo "[INFO] AsaApi published a changed cache for the failed Steam build."
+    return 0
+  fi
+  return 1
+}
+
+prepare_staged_asaapi_cache() {
+  local staged_server_dir="$1"
+  local staged_bin="${staged_server_dir}/ShooterGame/Binaries/Win64"
+  local live_bin="${ASA_DIR}/ShooterGame/Binaries/Win64"
+
+  [ -f "${staged_bin}/ArkAscendedServer.exe" ] || {
+    echo "[ERROR] Staged ARK server executable is missing."
+    return 1
+  }
+  if [ ! -f "${ASAAPI_STATE_DIR}/source.json" ] || \
+      [ "$(jq -r '.source // empty' "${ASAAPI_STATE_DIR}/source.json" 2>/dev/null)" != "managed" ]; then
+    echo "[ERROR] Rollback preflight requires the managed AsaApi release; AsaApi_Custom is unsupported."
+    return 1
+  fi
+  mkdir -p "$staged_bin"
+  if [ -f "${live_bin}/config.json" ]; then
+    cp "${live_bin}/config.json" "${staged_bin}/config.json" || return 1
+  else
+    echo "[ERROR] Managed AsaApi config.json is missing from the live server files."
+    return 1
+  fi
+  echo "[INFO] Validating an executable-specific AsaApi cache before changing live files..."
+  python3 -B "$ASAAPI_MANAGER_PATH" prepare-cache \
+    --bin-dir "$staged_bin" \
+    --state-dir "$ASAAPI_STATE_DIR" \
+    --server-exe "${staged_bin}/ArkAscendedServer.exe"
+}
+
+record_failed_rollback_retry() {
+  local staged_server_dir="$1"
+  local staged_bin="${staged_server_dir}/ShooterGame/Binaries/Win64"
+  local staged_exe="${staged_bin}/ArkAscendedServer.exe"
+  local incompatible_marker="${staged_bin}/ArkApi/Cache/incompatible_cache.json"
+  local executable_hash=""
+  local build_id=""
+  local cache_timestamp=""
+
+  rollback_state_is_active || return 0
+  [ -f "$staged_exe" ] || return 0
+  executable_hash=$(sha256sum "$staged_exe" | awk '{print $1}')
+  build_id=$(get_current_build_id 2>/dev/null || true)
+  if [ -f "$incompatible_marker" ] && \
+      [ "$(jq -r '.executable_hash // empty' "$incompatible_marker" 2>/dev/null)" = "$executable_hash" ]; then
+    cache_timestamp=$(jq -r '.last_modified // empty' "$incompatible_marker" 2>/dev/null)
+  fi
+  python3 -B "$DEPLOYMENT_MANAGER_PATH" update-failure \
+    --state-dir "$DEPLOYMENT_STATE_DIR" \
+    --failed-build-id "$build_id" \
+    --executable-hash "$executable_hash" \
+    --failed-cache-last-modified "$cache_timestamp" || true
+}
+
+record_successful_api_deployment() {
+  local api_log_dir="${ASA_DIR}/ShooterGame/Binaries/Win64/logs"
+  local api_log=""
+  local bin_dir="${ASA_DIR}/ShooterGame/Binaries/Win64"
+
+  [ "${API}" = "TRUE" ] || return 0
+  [ -f "$ASAAPI_LAUNCH_MARKER" ] || return 0
+  api_log=$(find "$api_log_dir" -name 'ArkApi_*.log' -type f -newer "$ASAAPI_LAUNCH_MARKER" \
+    -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2-)
+  if [ -z "$api_log" ] || ! grep -q "API was successfully loaded" "$api_log" || \
+      ! grep -q "Loaded all plugins" "$api_log"; then
+    echo "[WARNING] AsaApi startup was not recorded as known-good because fresh plugin-load evidence is incomplete."
+    return 0
+  fi
+  if python3 -B "$DEPLOYMENT_MANAGER_PATH" record-success \
+      --state-dir "$DEPLOYMENT_STATE_DIR" \
+      --server-exe "${bin_dir}/ArkAscendedServer.exe" \
+      --appmanifest "$PERSISTENT_ACF_FILE" \
+      --api-source "${ASAAPI_STATE_DIR}/source.json" \
+      --cache-metadata "${bin_dir}/ArkApi/Cache/cached_key.cache" \
+      --instance-name "${INSTANCE_NAME:-default}" >/dev/null; then
+    echo "[INFO] Recorded this fully started AsaApi deployment as rollback-compatible."
+  else
+    echo "[WARNING] Unable to record this startup as a known-good deployment."
+  fi
 }
 
 prepare_runtime_env() {
@@ -972,6 +1095,15 @@ perform_staged_server_download() {
     return 1
   fi
 
+  if rollback_state_is_active; then
+    echo "[INFO] Rollback protection is active; preflighting the candidate latest build with AsaApi."
+    if ! prepare_staged_asaapi_cache "$temp_dir"; then
+      record_failed_rollback_retry "$temp_dir"
+      echo "[ERROR] Candidate latest build is still incompatible with the managed AsaApi cache."
+      return 1
+    fi
+  fi
+
   if ! sync_temp_into_live_dir "$temp_dir" "$ASA_DIR"; then
     echo "[ERROR] Failed to sync temporary download into live server directory"
     return 1
@@ -985,6 +1117,14 @@ perform_staged_server_download() {
   ensure_server_file_permissions "$ASA_DIR"
 
   cleanup_steam_dlls "$ASA_DIR"
+
+  if rollback_state_is_active; then
+    python3 -B "$DEPLOYMENT_MANAGER_PATH" clear-active --state-dir "$DEPLOYMENT_STATE_DIR" || {
+      echo "[ERROR] Latest files were installed but rollback protection state could not be cleared."
+      return 1
+    }
+    echo "[SUCCESS] Compatible latest build installed; rollback protection was cleared."
+  fi
 
   sync
   sleep 2
@@ -1108,6 +1248,15 @@ server_needs_update_or_restart() {
   if ! [[ "$saved_build_id" =~ ^[0-9]+$ ]]; then
     echo "[WARNING] Saved build ID has invalid format: '$saved_build_id'. Will attempt update."
     return 0  # Force update
+  fi
+
+  if rollback_state_is_active; then
+    if rollback_retry_is_available "$current_build_id"; then
+      echo "[INFO] Rollback protection permits a preflighted retry of the latest server files."
+      return 0
+    fi
+    echo "[INFO] Holding the known-good rollback deployment; the failed Steam build and AsaApi cache are unchanged."
+    return 1
   fi
   
   # Strip whitespace
@@ -1599,6 +1748,8 @@ prepare_ark_server_api_cache() {
 ensure_ark_server_api_ready() {
   local retry_seconds="${ASAAPI_CACHE_RETRY_SECONDS:-60}"
   local wait_message="starting: waiting for AsaApi cache"
+  local cache_output=""
+  local cache_error=""
 
   if ! [[ "$retry_seconds" =~ ^[0-9]+$ ]] || [ "$retry_seconds" -lt 5 ]; then
     retry_seconds=60
@@ -1619,13 +1770,21 @@ ensure_ark_server_api_ready() {
         return 0
       fi
 
-      if prepare_ark_server_api_cache; then
+      if cache_output=$(prepare_ark_server_api_cache 2>&1); then
+        [ -n "$cache_output" ] && printf '%s\n' "$cache_output"
         rm -f "$ASAAPI_WAIT_MARKER"
         echo "✅ Managed AsaApi cache is verified and ready."
         return 0
       fi
+
+      [ -n "$cache_output" ] && printf '%s\n' "$cache_output"
+      cache_error=$(printf '%s\n' "$cache_output" | sed -n 's/^\[ERROR\] //p' | tail -n 1)
+      if [ -n "$cache_error" ]; then
+        wait_message="starting: ${cache_error}"
+      fi
     fi
 
+    printf '%s\n' "$wait_message" > "$ASAAPI_WAIT_MARKER"
     echo "⚠️ $wait_message. Retrying in ${retry_seconds} seconds."
     sleep "$retry_seconds"
   done

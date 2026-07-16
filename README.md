@@ -395,6 +395,7 @@ This approach provides better security while ensuring permissions are automatica
 - `-create <instance_name>`: Creates a new server instance.
 - `-start <instance_name|-all>`: Starts a specific server instance or all instances.
 - `-stop <instance_name|-all> [--force]`: Stops one or all instances after verifying both the explicit `SaveWorld` and the save performed by `DoExit`.
+- `-rollback <instance_name|-all> [--force]`: Stages an AsaApi-compatible ASA depot, safely stops every instance sharing the server files, activates it once, and restarts only instances that were running.
 - `-shutdown <minutes> <instance_name|-all> [--force]`: Performs the same verified two-stage stop after a countdown.
 - `-update`: Checks for server files & Docker image updates (doesn't modify the script itself).
 - `-upgrade`: Upgrades POK-manager.sh script to the latest version (requires confirmation).
@@ -454,7 +455,7 @@ Important notes:
 
 For `-all`, POK sends each stage to every running instance concurrently. It verifies every `SaveWorld` before sending any `DoExit`, then verifies every `DoExit` save before stopping any container. If one instance fails either stage, no containers are removed and the command returns a failure for cron. Use trailing `--force` only when you intentionally accept possible data loss or corruption.
 
-After both saves are verified, POK allows ASA up to 60 seconds to exit normally. If the Windows process remains stuck, POK terminates the lingering Proton/Wine server process only after that verified grace period. Automatic update and recovery paths then persist their restart state and exit the container so `restart: unless-stopped` can start it again; operator `-stop` and `-shutdown` commands remain stopped. Passwords embedded in ASA's `Commandline:` log entry are redacted from the container's mirrored console output.
+After both saves are verified, POK allows ASA five seconds to exit normally, then asks each still-running container to terminate its lingering Proton/Wine server process in parallel. The verified termination command refuses to act without a fresh `DoExit` save marker. If termination itself fails, POK retains the remainder of the original 60-second safety wait before Docker removes the container. Automatic update and recovery paths persist their restart state and exit the container so `restart: unless-stopped` can start it again; operator `-stop` and `-shutdown` commands remain stopped. Passwords embedded in ASA's `Commandline:` log entry are redacted from the container's mirrored console output.
 
 #### Sending Chat Messages
 ```bash
@@ -829,10 +830,22 @@ When you enable the API feature:
 1. POK-manager installs the tested AsaApi 2.01 release and verifies its official SHA-256 checksum.
 2. The verified release archive is retained in the shared server files for reliable reinstalls and custom-version rollback.
 3. Before Wine starts, native Linux `curl` downloads the cache matching the SHA-256 of `ArkAscendedServer.exe`.
-4. POK validates the archive and both serialized cache maps, then installs the cache atomically. AsaApi's Windows HTTPS downloader is disabled only after that validation succeeds.
-5. If a new ARK build does not have a usable cache yet, the API-enabled server remains in a visible `starting: waiting for AsaApi cache` state and retries every 60 seconds. It never silently starts without the requested API plugins.
+4. POK validates the archive, both serialized cache maps, and the core offsets required by the tested AsaApi release, then installs the cache atomically. The optional `cached_offsets.txt` diagnostic index is retained with the selected cache generation. AsaApi's Windows HTTPS downloader is disabled only after validation succeeds.
+5. If a new ARK build removes an offset required by the tested AsaApi release, the API-enabled server remains in a visible `starting` state that names the executable hash and missing symbol. POK checks the CDN every 60 seconds and downloads the archive again only after its `Last-Modified` value changes. It never launches a known-incompatible API or silently starts without the requested plugins.
 6. Multiple instances share a filesystem lock and reuse the same verified release and cache instead of downloading them concurrently.
 7. The server starts with `AsaApiLoader.exe`, and managed API instances are not considered healthy until the API log contains `API was successfully loaded`.
+
+### Rolling Back an Incompatible ARK Build
+
+When a new ARK build is missing an offset required by managed AsaApi, run:
+
+```bash
+./POK-manager.sh -rollback -all
+```
+
+POK first downloads the selected Windows depot with anonymous SteamCMD and validates its executable-specific AsaApi cache while the existing servers remain online. Only after that preflight succeeds does it run the normal two-stage verified save barrier across every running instance that shares `ServerFiles/arkserver`, activate the shared files once, and restart exactly those instances. A named-instance rollback prompts before affecting the shared installation; non-interactive jobs must use `-all`. `--force` only overrides failed save verification and never bypasses file or cache validation.
+
+The first rollback uses depot `2430931` manifest `681058914540629286`. Afterward, POK records up to five deployments that reached fresh game startup, `API was successfully loaded`, and `Loaded all plugins`, and prefers the newest distinct verified deployment. Rollback state prevents the normal updater from immediately reinstalling the known-bad build. A retry is allowed only after Steam publishes another build or the failed AsaApi cache timestamp changes, and that candidate is again cache-validated before it replaces live files. Proton, saves, plugins, and instance configuration are not downgraded.
 
 ### Using a Custom AsaApi Version
 
@@ -954,7 +967,8 @@ If you encounter issues with AsaApi or plugins:
    - Missing Visual C++ Redistributable: The system will try to install it automatically
    - Wine/Proton configuration: Try manually updating the docker image with `./POK-manager.sh -update`
    - Plugin compatibility: Some plugins may not work with our Linux/Proton setup or with the current version of ARK
-   - `starting: waiting for AsaApi cache`: POK is safely retrying the native cache download for the current ARK executable. Check container network access and `cdn.pelayori.com`; the server will start automatically after a valid cache is available.
+   - `starting: waiting for AsaApi cache`: POK is safely checking the native cache for the current ARK executable. A detailed `starting: AsaApi cache ... is unusable` message identifies an executable-specific missing core offset; the server will start automatically only after the CDN publishes a compatible cache. Network-only failures should be investigated against `cdn.pelayori.com`.
+   - Missing core offset after an ARK update: use `./POK-manager.sh -rollback -all` to stage and validate the last known-good server depot before the shared verified restart.
    - Invalid custom override: Ensure `AsaApi_Custom` contains the complete release root and is readable by container UID/GID 7777, or remove the directory to restore managed 2.01.
 
 5. If the API still doesn't work, try reinstalling it:

@@ -2199,6 +2199,110 @@ stop_all_instances() {
   _verified_shutdown_instances "$force_mode" "${running_instances[@]}"
 }
 
+_rollback_compose_run() {
+  local instance_name="$1"
+  local rollback_action="$2"
+  local manifest="${3:-}"
+  local compose_file="${BASE_DIR}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
+  local -a command_args=(-f "$compose_file" run --rm --no-deps -T \
+    --entrypoint /home/pok/scripts/rollback_server.sh asaserver "$rollback_action")
+
+  [ -f "$compose_file" ] || {
+    echo "Rollback worker compose file was not found for instance '${instance_name}'." >&2
+    return 1
+  }
+  [ -n "$manifest" ] && command_args+=("$manifest")
+
+  if is_sudo; then
+    sudo $DOCKER_COMPOSE_CMD "${command_args[@]}"
+  else
+    $DOCKER_COMPOSE_CMD "${command_args[@]}"
+  fi
+}
+
+_rollback_confirm_shared_scope() {
+  local requested_instance="$1"
+  shift
+  local all_instances=("$@")
+  local response=""
+
+  [ "$requested_instance" != "-all" ] || return 0
+  [ "${#all_instances[@]}" -gt 1 ] || return 0
+  if [ ! -t 0 ]; then
+    echo "Rollback of one named instance affects all shared instances. Use '-rollback -all' for non-interactive operation." >&2
+    return 1
+  fi
+  echo "⚠️ All ${#all_instances[@]} managed instances share the same ASA server files."
+  read -r -p "Rollback the shared server files for every instance? [y/N] " response
+  [[ "$response" =~ ^[Yy]$ ]]
+}
+
+rollback_shared_server_files() {
+  local requested_instance="$1"
+  local force_mode="${2:-false}"
+  local all_instances=()
+  local running_instances=()
+  local worker_instance=""
+  local manifest=""
+  local select_output=""
+
+  read -r -a all_instances <<< "$(list_instances)"
+  [ "${#all_instances[@]}" -gt 0 ] || {
+    echo "No managed instances were found." >&2
+    return 1
+  }
+  if [ "$requested_instance" != "-all" ]; then
+    validate_instance "$requested_instance" || return 1
+    worker_instance="$requested_instance"
+  else
+    worker_instance="${all_instances[0]}"
+  fi
+  _rollback_confirm_shared_scope "$requested_instance" "${all_instances[@]}" || {
+    echo "Rollback cancelled."
+    return 1
+  }
+
+  echo "⚠️ Rolling back ASA can temporarily prevent newer game clients from joining."
+  echo "[INFO] Proton, the container image, saves, and instance configuration will not be downgraded."
+  select_output=$(_rollback_compose_run "$worker_instance" select) || return 1
+  manifest=$(printf '%s\n' "$select_output" | tail -1 | tr -d '\r')
+  [[ "$manifest" =~ ^[0-9]+$ ]] || {
+    echo "Unable to select a valid known-good rollback manifest." >&2
+    return 1
+  }
+  echo "[INFO] Selected ASA depot 2430931 manifest ${manifest}."
+
+  # Download and validate first so a bad manifest never creates server downtime.
+  _rollback_compose_run "$worker_instance" stage "$manifest" || {
+    echo "Rollback staging failed; live files and running containers were left unchanged." >&2
+    return 1
+  }
+
+  read -r -a running_instances <<< "$(list_running_instances)"
+  if [ "${#running_instances[@]}" -gt 0 ]; then
+    echo "[INFO] Staging passed. Saving and stopping all running instances before shared activation..."
+    if ! _verified_shutdown_instances "$force_mode" "${running_instances[@]}"; then
+      _rollback_compose_run "$worker_instance" abort >/dev/null 2>&1 || true
+      echo "Rollback aborted because the shared verified shutdown barrier did not complete." >&2
+      return 1
+    fi
+  fi
+
+  if ! _rollback_compose_run "$worker_instance" activate "$manifest"; then
+    echo "Rollback activation failed. Instances remain stopped to protect the shared server files." >&2
+    return 1
+  fi
+
+  if [ "${#running_instances[@]}" -gt 0 ]; then
+    echo "[INFO] Restarting only the instances that were running before rollback..."
+    _coordination_start_instance_subset "standard" "coordinated_subset" "${running_instances[@]}" || {
+      echo "Rollback is active, but one or more previous instances did not restart successfully." >&2
+      return 1
+    }
+  fi
+  echo "✅ Shared ASA rollback manifest ${manifest} is active."
+}
+
 # Helper function to prompt for instance copy
 prompt_for_instance_copy() {
   local instance_name="$1"
@@ -4157,8 +4261,20 @@ _verified_shutdown_instances() {
       echo "⚠️ --force requested: removing containers with unverified DoExit saves. DATA LOSS OR CORRUPTION IS POSSIBLE." >&2
     fi
 
-    echo "⏳ Waiting up to 60 seconds for ASA processes to exit..."
-    _wait_for_shutdown_server_processes 60 "${save_instances[@]}" || true
+    if [ "$first_stage_failed" = false ] && [ "$second_stage_failed" = false ]; then
+      echo "⏳ Allowing up to 5 seconds for ASA processes to exit cleanly..."
+      if ! _wait_for_shutdown_server_processes 5 "${save_instances[@]}"; then
+        echo "🧹 Terminating lingering ASA processes after both saves were verified..."
+        if ! _run_parallel_shutdown_stage "-terminate-verified" \
+            "Running verified termination in parallel..." "${save_instances[@]}"; then
+          echo "⚠️ Verified termination did not complete for every instance; retaining the remaining safety wait."
+          _wait_for_shutdown_server_processes 55 "${save_instances[@]}" || true
+        fi
+      fi
+    else
+      echo "⏳ Forced stop has unverified save stages; waiting up to 60 seconds without verified process termination..."
+      _wait_for_shutdown_server_processes 60 "${save_instances[@]}" || true
+    fi
   fi
 
   _stop_verified_containers_in_parallel "${instances[@]}" || return 1
@@ -5880,7 +5996,7 @@ _manage_service_requires_docker_permissions() {
   local action="$1"
 
   case "$action" in
-  -start | -stop | -update | -create | -edit | -restore | -logs | -backup | -delete | -restart | -shutdown | -status | -chat | -saveworld | -fix)
+  -start | -stop | -rollback | -update | -create | -edit | -restore | -logs | -backup | -delete | -restart | -shutdown | -status | -chat | -saveworld | -fix)
     return 0
     ;;
   esac
@@ -6498,6 +6614,9 @@ manage_service() {
   -stop)
     stop_instance "$instance_name" "with_save" "${_MAIN_FORCE_MODE:-false}"
     ;;
+  -rollback)
+    rollback_shared_server_files "$instance_name" "${_MAIN_FORCE_MODE:-false}"
+    ;;
   -update)
     update_server_files_and_docker
     exit 0
@@ -6547,7 +6666,7 @@ manage_service() {
 }
 # Define valid actions
 declare -a valid_actions
-valid_actions=("-create" "-start" "-stop" "-saveworld" "-shutdown" "-restart" "-status" "-update" "-list" "-beta" "-stable" "-version" "-upgrade" "-logs" "-backup" "-delete" "-restore" "-migrate" "-setup" "-edit" "-custom" "-chat" "-clearupdateflag" "-API" "-validate_update" "-force-restore" "-emergency-restore" "-fix" "-api-recovery" "-changelog" "-rename")
+valid_actions=("-create" "-start" "-stop" "-rollback" "-saveworld" "-shutdown" "-restart" "-status" "-update" "-list" "-beta" "-stable" "-version" "-upgrade" "-logs" "-backup" "-delete" "-restore" "-migrate" "-setup" "-edit" "-custom" "-chat" "-clearupdateflag" "-API" "-validate_update" "-force-restore" "-emergency-restore" "-fix" "-api-recovery" "-changelog" "-rename")
 
 display_usage() {
   echo "Usage: $0 {action} [instance_name|-all] [additional_args...]"
@@ -6559,6 +6678,7 @@ display_usage() {
   echo "  -create <instance_name>                   Create a new instance"
   echo "  -start <instance_name|-all>               Start an instance or all instances"
   echo "  -stop <instance_name|-all> [--force]      Stop after verifying SaveWorld and DoExit saves"
+  echo "  -rollback <instance_name|-all> [--force]  Restore the shared ASA files to a known AsaApi-compatible depot"
   echo "  -shutdown <minutes> <instance|-all> [--force]  Verified shutdown with a countdown"
   echo "  -update                                   Check for server files & Docker image updates (doesn't modify the script itself)"
   echo "  -upgrade                                  Upgrade POK-manager.sh script to the latest version (requires confirmation)"
@@ -8286,7 +8406,7 @@ _main_parse_cli_arguments() {
 
   if [ "$last_index" -ge 1 ] && [ "${args[$last_index]}" = "--force" ]; then
     case "$_MAIN_ACTION" in
-    -stop|-shutdown|-restart)
+    -stop|-rollback|-shutdown|-restart)
       _MAIN_FORCE_MODE=true
       unset 'args[$last_index]'
       ;;
@@ -8308,7 +8428,7 @@ _main_parse_cli_arguments() {
 _main_validate_and_normalize_dispatch_args() {
   local action="$1"
 
-  if [[ "$action" =~ ^(-start|-stop|-saveworld|-status)$ ]] && [[ -z "$_MAIN_INSTANCE_NAME" ]]; then
+  if [[ "$action" =~ ^(-start|-stop|-rollback|-saveworld|-status)$ ]] && [[ -z "$_MAIN_INSTANCE_NAME" ]]; then
     echo "Error: $action requires an instance name or -all."
     echo "Usage: $0 $action <instance_name|-all>"
     return 1

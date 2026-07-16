@@ -260,6 +260,62 @@ EOF
   assert_output --partial "stopped:$BATS_TEST_TMPDIR/stop-not-ready/Instance_demo/docker-compose-demo.yaml:asa_demo"
 }
 
+@test "rollback stages before the shared save barrier and restarts only previous instances" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/rollback-manager" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    mkdir -p "$BASE_DIR/Instance_alpha" "$BASE_DIR/Instance_beta"
+    touch "$BASE_DIR/Instance_alpha/docker-compose-alpha.yaml"
+    touch "$BASE_DIR/Instance_beta/docker-compose-beta.yaml"
+    source "$REPO_ROOT/POK-manager.sh"
+    list_instances() { echo "alpha beta"; }
+    list_running_instances() { echo "alpha"; }
+    _rollback_compose_run() {
+      echo "worker:$1:$2:${3:-}" >&2
+      [ "$2" = select ] && echo 681058914540629286
+      return 0
+    }
+    _verified_shutdown_instances() { echo "barrier:$*"; }
+    _coordination_start_instance_subset() { echo "restart:$*"; }
+    rollback_shared_server_files -all false
+  '
+
+  assert_success
+  assert_output --partial "worker:alpha:stage:681058914540629286"
+  assert_output --partial "barrier:false alpha"
+  assert_output --partial "worker:alpha:activate:681058914540629286"
+  assert_output --partial "restart:standard coordinated_subset alpha"
+  assert_output --partial "Shared ASA rollback manifest 681058914540629286 is active."
+}
+
+@test "named rollback refuses noninteractive shared mutation when multiple instances exist" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/rollback-confirm" POK_MANAGER_TEST_MODE=1 bash -lc '
+    mkdir -p "$BASE_DIR/Instance_alpha" "$BASE_DIR/Instance_beta"
+    touch "$BASE_DIR/Instance_alpha/docker-compose-alpha.yaml"
+    touch "$BASE_DIR/Instance_beta/docker-compose-beta.yaml"
+    source "$REPO_ROOT/POK-manager.sh"
+    list_instances() { echo "alpha beta"; }
+    validate_instance() { return 0; }
+    rollback_shared_server_files alpha false
+  '
+
+  assert_failure
+  assert_output --partial "-rollback -all"
+  assert_output --partial "Rollback cancelled."
+}
+
+@test "rollback is a valid force-aware manager action" {
+  run env REPO_ROOT="$PROJECT_ROOT" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    source "$REPO_ROOT/POK-manager.sh"
+    _main_parse_cli_arguments -rollback -all --force
+    printf "action=%s target=%s force=%s\n" "$_MAIN_ACTION" "$_MAIN_INSTANCE_NAME" "$_MAIN_FORCE_MODE"
+    _main_action_is_valid "$_MAIN_ACTION"
+  '
+
+  assert_success
+  assert_output --partial "action=-rollback target=-all force=true"
+}
+
 @test "_instance_quick_save_policy skips save when health is ok but RCON is disabled" {
   run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/stop-rcon-disabled" POK_MANAGER_TEST_MODE=1 bash -lc '
     set -e
@@ -337,6 +393,47 @@ EOF
   assert_output --partial "Containers were left intact"
   assert_output --partial "result=failed"
   refute_output --partial "unexpected-stop"
+}
+
+@test "verified shutdown terminates lingering instances after five-second clean-exit window" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/verified-fast-termination" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    source "$REPO_ROOT/POK-manager.sh"
+    _instance_has_running_server_process() { return 0; }
+    _run_parallel_shutdown_stage() { echo "stage:$1:${*:3}"; return 0; }
+    _wait_for_shutdown_server_processes() {
+      echo "wait:$1:${*:2}"
+      [ "$1" != 5 ]
+    }
+    _stop_verified_containers_in_parallel() { echo "stopped:$*"; }
+    _verified_shutdown_instances false alpha beta
+  '
+
+  assert_success
+  assert_output --partial "wait:5:alpha beta"
+  assert_output --partial "stage:-terminate-verified:alpha beta"
+  assert_output --partial "stopped:alpha beta"
+  refute_output --partial "wait:55"
+}
+
+@test "failed verified termination retains the remaining safety wait" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/verified-termination-fallback" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    source "$REPO_ROOT/POK-manager.sh"
+    _instance_has_running_server_process() { return 0; }
+    _run_parallel_shutdown_stage() {
+      echo "stage:$1:${*:3}"
+      [ "$1" != "-terminate-verified" ]
+    }
+    _wait_for_shutdown_server_processes() { echo "wait:$1:${*:2}"; return 1; }
+    _stop_verified_containers_in_parallel() { echo "stopped:$*"; }
+    _verified_shutdown_instances false alpha beta
+  '
+
+  assert_success
+  assert_output --partial "stage:-terminate-verified:alpha beta"
+  assert_output --partial "wait:55:alpha beta"
+  assert_output --partial "stopped:alpha beta"
 }
 
 @test "--force continues through failed verification with a data-loss warning" {

@@ -51,6 +51,41 @@ load '../test_helper/project.bash'
   assert_output --partial "status=0"
 }
 
+@test "install_required holds an unchanged rollback deployment" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/install_server.sh"
+    get_build_id_from_acf() { echo 12345; }
+    get_current_build_id() { echo 12345; }
+    rollback_state_is_active() { return 0; }
+    rollback_retry_is_available() { return 1; }
+    set +e
+    install_required
+    status=$?
+    set -e
+    printf "status=%s\n" "$status"
+  '
+
+  assert_success
+  assert_output --partial "Rollback protection remains active"
+  assert_output --partial "status=1"
+}
+
+@test "install_required forces staging when rollback retry becomes eligible" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/install_server.sh"
+    get_build_id_from_acf() { echo 12345; }
+    get_current_build_id() { echo 12346; }
+    rollback_state_is_active() { return 0; }
+    rollback_retry_is_available() { return 0; }
+    install_required
+  '
+
+  assert_success
+  assert_output --partial "rollback-protected candidate is eligible"
+}
+
 @test "wait_for_other_install_if_needed exits early when another instance finished the update" {
   run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
     set -e

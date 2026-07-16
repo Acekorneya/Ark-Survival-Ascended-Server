@@ -41,6 +41,19 @@ load '../test_helper/project.bash'
   assert_output --partial "chat=hello survivors"
 }
 
+@test "main dispatches verified lingering-process termination" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/rcon_interface.sh"
+    prepare_runtime_env() { :; }
+    shutdown_terminate_lingering_processes() { echo "verified-termination-called"; }
+    main -terminate-verified
+  '
+
+  assert_success
+  assert_output --partial "verified-termination-called"
+}
+
 @test "main rejects unknown commands with usage output" {
   run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
     set -e

@@ -757,7 +757,8 @@ MONITOR_PID=$!
 RESTART_MONITOR_PID=$!
 
 # Launch the update monitor in background if API mode is not enabled
-if env_value_is_truthy "${UPDATE_SERVER:-FALSE}" && [ "${API}" != "TRUE" ]; then
+if env_value_is_truthy "${UPDATE_SERVER:-FALSE}" && \
+    { [ "${API}" != "TRUE" ] || rollback_state_is_active; }; then
   echo "[INFO] Starting update monitor in background..."
   # Remove residual stop flag from previous container run before launching monitor
   rm -f /home/pok/stop_monitor.flag 2>/dev/null || true

@@ -907,6 +907,10 @@ start_server() {
           
           # Maintain backward compatibility
           touch "/home/pok/.first_launch_completed"
+
+          # A rollback candidate is trusted only after both the game and every
+          # managed AsaApi plugin completed this launch successfully.
+          record_successful_api_deployment || true
         fi
         
         # Double verify correct PID file
