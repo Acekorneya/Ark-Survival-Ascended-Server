@@ -21,8 +21,8 @@ services:
       - API=FALSE                            # Set to TRUE to install and use ArkServerAPI, FALSE to disable ArkServerAPI
       - RCON_ENABLED=TRUE                    # Needed for Graceful Shutdown / Updates / Server Notifications
       - DISPLAY_POK_MONITOR_MESSAGE=FALSE    # Or TRUE to Show the Server Monitor Messages / Update Monitor 
-      - UPDATE_SERVER=TRUE                   # Enable or disable update checks
-      # Only used when more than one instance has UPDATE_SERVER=TRUE.
+      - UPDATE_SERVER=TRUE                   # Automatic updates require TRUE and API=FALSE on every configured shared instance
+      # Only used when the manager confirms the whole shared installation is auto-update eligible.
       # POK-manager writes these automatically for managed multi-instance setups.
       - UPDATE_COORDINATION_ROLE=MASTER      # MASTER or FOLLOWER
       - UPDATE_COORDINATION_PRIORITY=1       # Lower number = earlier failover priority

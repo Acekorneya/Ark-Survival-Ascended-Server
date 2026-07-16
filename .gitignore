@@ -17,6 +17,7 @@
 !/scripts/rollback_server.sh
 !/scripts/monitor_health.sh
 !/scripts/update_coordination.sh
+!/scripts/update_notice_monitor.sh
 !/require_files/
 !/require_files/*
 !/logo/

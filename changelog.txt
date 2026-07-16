@@ -1,4 +1,6 @@
 ## Version 2.1.81 (Latest)
+- Made automatic ARK updates a shared-installation policy: any configured `API=TRUE` or `UPDATE_SERVER=FALSE` instance now blocks automatic file replacement for every instance sharing `ServerFiles/arkserver`, while a read-only notifier reports pending manual maintenance.
+- Added a coordinated pre-update barrier that snapshots running instances, honors each server's restart notice, verifies both save stages, and prevents the leader from changing shared files until every participant is safely stopped. Direct `-update` also refuses to mutate files beneath running servers.
 - Reduced persisted Proton-prefix startup delays by repairing permissions only on entries missing required access, while preserving executable and additional permission bits on already-valid files.
 - Restored the beta container pin to GE-Proton10-33 after GE-Proton11-1 required GLIBC 2.38 and could not load `ntdll.so` on the Ubuntu 22.04 image, including for normal `API=FALSE` servers. The image continues to verify the official SHA-512 checksum before installation.
 - Updated the beta container from GE-Proton10-32 to GE-Proton10-33 for AsaApi plugin compatibility testing, including CrossChat 1.7.1, and added build-time verification against the official release's SHA-512 checksum.

@@ -2429,6 +2429,8 @@ edit_instance() {
       local docker_compose_file="./Instance_$instance/docker-compose-$instance.yaml"
       echo "Opening $docker_compose_file for editing with $editor..."
       $editor "$docker_compose_file"
+      normalize_update_coordination_assignments
+      print_shared_update_policy_warning
       break
     else
       echo "Invalid selection."
@@ -2517,6 +2519,235 @@ _coordination_compose_has_auto_updates() {
   grep -Eq '^[[:space:]]*-[[:space:]]*UPDATE_SERVER=(TRUE|YES|1)$' "$compose_file"
 }
 
+_shared_update_policy_compose_has_api() {
+  local compose_file="$1"
+  grep -Eq '^[[:space:]]*-[[:space:]]*API=(TRUE|YES|1)$' "$compose_file"
+}
+
+_shared_update_policy_notice_minutes() {
+  local compose_file="$1"
+  local value=""
+
+  value=$(grep -E '^[[:space:]]*-[[:space:]]*RESTART_NOTICE_MINUTES=' "$compose_file" 2>/dev/null | head -1 | sed 's/.*=//')
+  if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+    value=30
+  fi
+  echo "$value"
+}
+
+shared_update_policy_file() {
+  echo "${BASE_DIR}/ServerFiles/arkserver/.pok-manager/shared_update_policy.env"
+}
+
+_shared_update_policy_write_compose_env() {
+  local compose_file="$1"
+  local allowed="$2"
+  local blockers="$3"
+  local configured_count="$4"
+  local max_notice="$5"
+  local tmp_file="${compose_file}.shared-policy.tmp"
+
+  awk -v allowed="$allowed" -v blockers="$blockers" -v count="$configured_count" -v max_notice="$max_notice" '
+    $0 ~ /^[[:space:]]*-[[:space:]]*POK_SHARED_AUTOMATIC_UPDATES=/ { next }
+    $0 ~ /^[[:space:]]*-[[:space:]]*POK_SHARED_BLOCKING_INSTANCES=/ { next }
+    $0 ~ /^[[:space:]]*-[[:space:]]*POK_SHARED_CONFIGURED_INSTANCE_COUNT=/ { next }
+    $0 ~ /^[[:space:]]*-[[:space:]]*POK_SHARED_MAX_RESTART_NOTICE_MINUTES=/ { next }
+    {
+      print
+      if (!inserted && $0 ~ /^[[:space:]]*-[[:space:]]*TZ=/) {
+        match($0, /^[[:space:]]*/)
+        indent=substr($0, RSTART, RLENGTH)
+        print indent "- POK_SHARED_AUTOMATIC_UPDATES=" allowed
+        print indent "- POK_SHARED_BLOCKING_INSTANCES=" blockers
+        print indent "- POK_SHARED_CONFIGURED_INSTANCE_COUNT=" count
+        print indent "- POK_SHARED_MAX_RESTART_NOTICE_MINUTES=" max_notice
+        inserted=1
+      }
+    }
+  ' "$compose_file" > "$tmp_file" && mv "$tmp_file" "$compose_file"
+}
+
+publish_shared_update_policy() {
+  local policy_file=""
+  local policy_dir=""
+  local tmp_file=""
+  local compose_file=""
+  local instance_name=""
+  local api_enabled="FALSE"
+  local update_enabled="FALSE"
+  local notice_minutes=30
+  local max_notice_minutes=0
+  local configured_instances=""
+  local blocking_instances=""
+  local automatic_updates_allowed="TRUE"
+  local configured_count=0
+  local -a compose_files=()
+
+  policy_file=$(shared_update_policy_file)
+  policy_dir=$(dirname "$policy_file")
+  tmp_file="${policy_file}.tmp.$$"
+
+  while IFS= read -r compose_file; do
+    [ -n "$compose_file" ] || continue
+    compose_files+=("$compose_file")
+    instance_name=$(_coordination_get_instance_name_from_compose "$compose_file")
+    api_enabled="FALSE"
+    update_enabled="FALSE"
+    _shared_update_policy_compose_has_api "$compose_file" && api_enabled="TRUE"
+    _coordination_compose_has_auto_updates "$compose_file" && update_enabled="TRUE"
+    notice_minutes=$(_shared_update_policy_notice_minutes "$compose_file")
+    configured_count=$((configured_count + 1))
+
+    [ -z "$configured_instances" ] || configured_instances+=","
+    configured_instances+="$instance_name"
+    if [ "$notice_minutes" -gt "$max_notice_minutes" ]; then
+      max_notice_minutes="$notice_minutes"
+    fi
+
+    if [ "$api_enabled" = "TRUE" ] || [ "$update_enabled" != "TRUE" ]; then
+      automatic_updates_allowed="FALSE"
+      [ -z "$blocking_instances" ] || blocking_instances+=","
+      blocking_instances+="${instance_name}:"
+      if [ "$api_enabled" = "TRUE" ]; then
+        blocking_instances+="API_TRUE"
+      fi
+      if [ "$update_enabled" != "TRUE" ]; then
+        [ "$api_enabled" != "TRUE" ] || blocking_instances+="+"
+        blocking_instances+="UPDATE_SERVER_FALSE"
+      fi
+    fi
+  done < <(_coordination_get_compose_files)
+
+  if [ "$configured_count" -eq 0 ]; then
+    automatic_updates_allowed="FALSE"
+  fi
+
+  SHARED_UPDATE_POLICY_ALLOWED="$automatic_updates_allowed"
+  SHARED_UPDATE_POLICY_BLOCKERS="$blocking_instances"
+
+  for compose_file in "${compose_files[@]}"; do
+    _shared_update_policy_write_compose_env "$compose_file" "$automatic_updates_allowed" \
+      "$blocking_instances" "$configured_count" "$max_notice_minutes" || return 1
+  done
+
+  if ! mkdir -p "$policy_dir" 2>/dev/null; then
+    return 0
+  fi
+
+  {
+    printf 'POLICY_VERSION=1\n'
+    printf 'AUTOMATIC_UPDATES_ALLOWED=%q\n' "$automatic_updates_allowed"
+    printf 'CONFIGURED_INSTANCE_COUNT=%q\n' "$configured_count"
+    printf 'CONFIGURED_INSTANCES=%q\n' "$configured_instances"
+    printf 'BLOCKING_INSTANCES=%q\n' "$blocking_instances"
+    printf 'MAX_RESTART_NOTICE_MINUTES=%q\n' "$max_notice_minutes"
+    printf 'UPDATED_AT=%q\n' "$(date +%s)"
+  } > "$tmp_file" 2>/dev/null || {
+    rm -f "$tmp_file"
+    return 0
+  }
+
+  mv "$tmp_file" "$policy_file" 2>/dev/null || rm -f "$tmp_file"
+}
+
+print_shared_update_policy_warning() {
+  local policy_file=""
+  local AUTOMATIC_UPDATES_ALLOWED=""
+  local BLOCKING_INSTANCES=""
+
+  if [ -n "${SHARED_UPDATE_POLICY_ALLOWED:-}" ]; then
+    AUTOMATIC_UPDATES_ALLOWED="$SHARED_UPDATE_POLICY_ALLOWED"
+    BLOCKING_INSTANCES="${SHARED_UPDATE_POLICY_BLOCKERS:-}"
+  else
+    policy_file=$(shared_update_policy_file)
+    [ -f "$policy_file" ] || return 0
+    # shellcheck disable=SC1090
+    source "$policy_file"
+  fi
+  [ "${AUTOMATIC_UPDATES_ALLOWED:-FALSE}" != "TRUE" ] || return 0
+
+  echo "⚠️ Automatic ARK file updates are disabled for this shared installation."
+  echo "   Blocking instance settings: ${BLOCKING_INSTANCES:-unknown}"
+  echo "   All configured instances share ServerFiles/arkserver, so one container cannot safely update it"
+  echo "   while an API-enabled or update-disabled instance expects the current files."
+  echo "   Servers will keep running. Stop all instances and use './POK-manager.sh -update' for manual maintenance."
+}
+
+publish_running_update_participants() {
+  local presence_dir="${BASE_DIR}/ServerFiles/arkserver/update_coordination/instances"
+  local instance_name=""
+  local compose_file=""
+  local notice_minutes=30
+  local now=""
+  local presence_file=""
+  local tmp_file=""
+  local container_name=""
+  local use_sudo="false"
+
+  now=$(date +%s)
+  use_sudo=$(get_docker_sudo_preference 2>/dev/null || echo false)
+
+  for instance_name in $(list_running_instances); do
+    compose_file=$(_coordination_instance_compose_file "$instance_name")
+    [ -f "$compose_file" ] || continue
+    notice_minutes=$(_shared_update_policy_notice_minutes "$compose_file")
+    presence_file="${presence_dir}/${instance_name}.env"
+    tmp_file="${presence_file}.tmp.$$"
+
+    if mkdir -p "$presence_dir" 2>/dev/null && {
+      printf 'INSTANCE_NAME=%q\n' "$instance_name"
+      printf 'UPDATED_AT=%q\n' "$now"
+      printf 'RESTART_NOTICE_MINUTES=%q\n' "$notice_minutes"
+    } > "$tmp_file" 2>/dev/null; then
+      mv "$tmp_file" "$presence_file" 2>/dev/null || rm -f "$tmp_file"
+      continue
+    fi
+    rm -f "$tmp_file" 2>/dev/null || true
+
+    # Compatibility path for peers still running an older image: write through
+    # the peer container as its fixed runtime user into the shared bind mount.
+    container_name="asa_${instance_name}"
+    local -a exec_command=(docker exec
+      -e "POK_PRESENCE_INSTANCE=${instance_name}"
+      -e "POK_PRESENCE_TIMESTAMP=${now}"
+      -e "POK_PRESENCE_NOTICE=${notice_minutes}"
+      "$container_name" bash -c '
+        dir=/home/pok/arkserver/update_coordination/instances
+        file="$dir/${POK_PRESENCE_INSTANCE}.env"
+        tmp="${file}.tmp.$$"
+        mkdir -p "$dir" || exit 1
+        printf "INSTANCE_NAME=%q\nUPDATED_AT=%q\nRESTART_NOTICE_MINUTES=%q\n" \
+          "$POK_PRESENCE_INSTANCE" "$POK_PRESENCE_TIMESTAMP" "$POK_PRESENCE_NOTICE" > "$tmp" && mv "$tmp" "$file"
+      ')
+    if [ "$use_sudo" = "true" ]; then
+      sudo "${exec_command[@]}" >/dev/null 2>&1 || true
+    else
+      "${exec_command[@]}" >/dev/null 2>&1 || true
+    fi
+  done
+}
+
+shared_update_policy_allows_automatic_updates() {
+  local policy_file=""
+  local AUTOMATIC_UPDATES_ALLOWED="FALSE"
+
+  if [ -n "${POK_SHARED_AUTOMATIC_UPDATES:-}" ]; then
+    [ "${POK_SHARED_AUTOMATIC_UPDATES}" = "TRUE" ]
+    return $?
+  fi
+
+  if [ -n "${SHARED_UPDATE_POLICY_ALLOWED:-}" ]; then
+    [ "$SHARED_UPDATE_POLICY_ALLOWED" = "TRUE" ]
+    return $?
+  fi
+
+  policy_file=$(shared_update_policy_file)
+  [ -f "$policy_file" ] || return 1
+  # shellcheck disable=SC1090
+  source "$policy_file"
+  [ "${AUTOMATIC_UPDATES_ALLOWED:-FALSE}" = "TRUE" ]
+}
+
 _coordination_compose_role() {
   local compose_file="$1"
   local value=""
@@ -2594,6 +2825,14 @@ normalize_update_coordination_assignments() {
     [ -n "$compose_file" ] || continue
     all_compose_files+=("$compose_file")
   done < <(_coordination_get_compose_files)
+
+  publish_shared_update_policy
+  if ! shared_update_policy_allows_automatic_updates; then
+    for compose_file in "${all_compose_files[@]}"; do
+      _coordination_write_env_keys "$compose_file" "" ""
+    done
+    return 0
+  fi
 
   for compose_file in "${all_compose_files[@]}"; do
     if _coordination_compose_has_auto_updates "$compose_file"; then
@@ -4157,6 +4396,9 @@ start_instance() {
   _start_instance_sync_save_wait_seconds_env "$docker_compose_file"
   _start_instance_sync_api_logs_volume "$instance_name" "$docker_compose_file" "$image_tag"
   _start_instance_handle_api_compatibility "$instance_name" "$docker_compose_file" image_tag
+  normalize_update_coordination_assignments "$instance_name"
+  print_shared_update_policy_warning
+  publish_running_update_participants
   _start_instance_validate_image_permissions "$instance_name" "$image_tag"
   update_docker_compose_image_tag "$docker_compose_file" "$image_tag"
   _start_instance_warn_on_local_permission_mismatch "$instance_name" "$docker_compose_file"
@@ -4867,6 +5109,19 @@ _run_status_with_guard_retry() {
   done
 }
 
+_print_pending_manual_update_status() {
+  local pending_file="${BASE_DIR}/ServerFiles/arkserver/.pok-manager/pending_manual_update.env"
+  local INSTALLED_BUILD_ID=""
+  local AVAILABLE_BUILD_ID=""
+  local BLOCKING_INSTANCES=""
+
+  [ -f "$pending_file" ] || return 0
+  # shellcheck disable=SC1090
+  source "$pending_file"
+  echo "⚠️ Manual ARK update pending: installed build ${INSTALLED_BUILD_ID:-unknown}, available build ${AVAILABLE_BUILD_ID:-unknown}."
+  echo "   Automatic shared-file updates are blocked by: ${BLOCKING_INSTANCES:-the effective shared update policy}."
+}
+
 _rcon_process_all_running_instances() {
   local action="$1"
   local message="$2"
@@ -4934,6 +5189,10 @@ _rcon_process_all_running_instances() {
     return 1
   fi
 
+  if [[ "$action" == "-status" ]]; then
+    _print_pending_manual_update_status
+  fi
+
   echo "----- All running instances processed with $action command. -----"
 }
 
@@ -4977,9 +5236,11 @@ _rcon_run_single_instance_command() {
     _prompt_optional_steam_guard_code "$instance_name"
     if _run_status_with_guard_retry "$instance_name"; then
       printf '%s\n' "$RUN_STATUS_OUTPUT"
+      _print_pending_manual_update_status
       return 0
     fi
     printf '%s\n' "$RUN_STATUS_OUTPUT"
+    _print_pending_manual_update_status
     return 1
   fi
 
@@ -7610,6 +7871,27 @@ force_restore_from_backup() {
 # Function to update server files and Docker images (but not the script itself)
 # This is called by the -update command
 update_server_files_and_docker() {
+  local running_instances=()
+
+  normalize_update_coordination_assignments
+  mapfile -t running_instances < <(_rcon_print_running_instances)
+  if [ "${#running_instances[@]}" -gt 0 ]; then
+    print_shared_update_policy_warning
+    echo "❌ Shared-file update refused while managed instances are running: ${running_instances[*]}"
+    echo "   Use './POK-manager.sh -restart <minutes> -all' for a coordinated player notice and verified restart,"
+    echo "   or stop every instance before running './POK-manager.sh -update'."
+    return 1
+  fi
+
+  if ! shared_update_policy_allows_automatic_updates; then
+    print_shared_update_policy_warning
+    echo "[INFO] All managed instances are stopped; proceeding with the administrator-requested shared-file update."
+    if [[ "${SHARED_UPDATE_POLICY_BLOCKERS:-}" == *"API_TRUE"* ]]; then
+      echo "⚠️ The new ARK executable may require a matching AsaApi cache."
+      echo "   After the update, verify API startup and plugin loading; use './POK-manager.sh -rollback -all' if compatibility fails."
+    fi
+  fi
+
   echo "===== CHECKING FOR UPDATES ====="
   echo "----- Checking for POK-manager.sh script updates -----"
   local update_info_file="${BASE_DIR}/config/POK-manager/update_available"
@@ -7652,6 +7934,7 @@ update_server_files_and_docker() {
     "-e" "TZ=UTC"
     "-e" "INSTANCE_NAME=pok_update_temp"
     "-e" "UPDATE_MODE=TRUE"
+    "-e" "POK_MANUAL_SHARED_UPDATE=TRUE"
   )
   
   remove_temp_update_container_if_exists() {

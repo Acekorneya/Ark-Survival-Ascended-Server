@@ -202,3 +202,38 @@ load '../test_helper/project.bash'
   assert_output --partial "safely-rejected"
   refute_output --partial "unexpected-sync"
 }
+
+@test "shared update policy blocks automatic updates from manager-written aggregate env" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    source "$REPO_ROOT/scripts/common.sh"
+    UPDATE_SERVER=TRUE
+    API=FALSE
+    POK_SHARED_AUTOMATIC_UPDATES=FALSE
+    POK_SHARED_BLOCKING_INSTANCES="api_server:API_TRUE,manual:UPDATE_SERVER_FALSE"
+    if shared_update_policy_allows_automatic_updates; then
+      echo "result=unexpected-allowed"
+    else
+      echo "result=blocked"
+    fi
+    shared_update_policy_load
+    echo "blockers=$SHARED_POLICY_BLOCKING_INSTANCES"
+  '
+
+  assert_success
+  assert_output --partial "result=blocked"
+  assert_output --partial "blockers=api_server:API_TRUE,manual:UPDATE_SERVER_FALSE"
+}
+
+@test "explicit manual shared update overrides the aggregate automatic policy" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    source "$REPO_ROOT/scripts/common.sh"
+    POK_SHARED_AUTOMATIC_UPDATES=FALSE
+    POK_MANUAL_SHARED_UPDATE=TRUE
+    if shared_update_policy_allows_automatic_updates; then
+      echo "result=allowed"
+    fi
+  '
+
+  assert_success
+  assert_output --partial "result=allowed"
+}

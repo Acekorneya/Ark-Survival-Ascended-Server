@@ -620,6 +620,11 @@ fi
 
 prepare_runtime_env
 monitor_health_load_state
+monitor_cleanup_presence() {
+  update_coordination_remove_instance_presence || true
+}
+trap monitor_cleanup_presence EXIT
+trap 'monitor_cleanup_presence; exit 0' INT TERM
 
 NO_RESTART_FLAG="/home/pok/shutdown.flag"
 RESTART_FLAG="/home/pok/restart.flag"
@@ -635,6 +640,13 @@ if ! env_value_is_truthy "${UPDATE_SERVER:-FALSE}"; then
   exit 0
 fi
 
+SHARED_AUTOMATIC_UPDATES_ENABLED=true
+if ! shared_update_policy_allows_automatic_updates; then
+  shared_update_policy_print_block
+  echo "[INFO] Automatic update actions are disabled; runtime health monitoring will continue."
+  SHARED_AUTOMATIC_UPDATES_ENABLED=false
+fi
+
 # Clear stale stop flag so the monitor stays active after restarts
 if [ -f "/home/pok/stop_monitor.flag" ]; then
   rm -f "/home/pok/stop_monitor.flag"
@@ -645,6 +657,7 @@ UPDATE_WINDOW_MINIMUM_TIME=${UPDATE_WINDOW_MINIMUM_TIME:-12:00 AM} # Default to 
 UPDATE_WINDOW_MAXIMUM_TIME=${UPDATE_WINDOW_MAXIMUM_TIME:-11:59 PM} # Default to "11:59 PM" if not set
 
 # Wait for the initial startup before monitoring
+update_coordination_touch_instance_presence || true
 sleep $INITIAL_STARTUP_DELAY
 
 # Clean up any legacy locks from previous system usage
@@ -665,6 +678,8 @@ fi
 
 # Monitoring loop
 while true; do
+  update_coordination_touch_instance_presence || true
+
   # Check for restart timeout (nuclear option for stuck restarts)
   check_restart_timeout
 
@@ -682,6 +697,24 @@ while true; do
     # Remove the flag so it doesn't affect next container start
     rm -f "/home/pok/stop_monitor.flag"
     exit 0
+  fi
+
+  # A master may discover an update while another instance is being started.
+  # Join that already-created cycle immediately instead of waiting for this
+  # instance's next Steam polling interval or update window.
+  if update_coordination_has_active_cycle && \
+      [ "${UPDATE_COORDINATION_STATE_PHASE:-}" = "pending_restart" ]; then
+    cycle_marker="/tmp/pok_update_cycle_${UPDATE_COORDINATION_STATE_CYCLE_ID}"
+    if { update_coordination_is_active_leader || update_coordination_instance_is_participant; } && \
+        [ ! -f "$cycle_marker" ]; then
+      touch "$cycle_marker"
+      display_monitor_status "A coordinated shared-file update is pending; starting this instance's configured restart notice." "WARNING" "true"
+      export API_CONTAINER_RESTART="TRUE"
+      export RESTART_NOTICE_MINUTES="${RESTART_NOTICE_MINUTES:-30}"
+      if ! /home/pok/scripts/update_server.sh; then
+        display_monitor_status "Coordinated update preparation failed; leaving the server running for administrator review." "ERROR" "true"
+      fi
+    fi
   fi
 
   # Check for restart coordination flags
@@ -757,7 +790,7 @@ while true; do
     continue
   fi
   
-  if [ "${UPDATE_SERVER^^}" = "TRUE" ]; then
+  if [ "${UPDATE_SERVER^^}" = "TRUE" ] && [ "$SHARED_AUTOMATIC_UPDATES_ENABLED" = true ]; then
     # Check for updates at the interval specified by CHECK_FOR_UPDATE_INTERVAL
     current_time=$(TZ="${TZ}" date +%s)
     last_update_check_time=${last_update_check_time:-0}

@@ -13,6 +13,7 @@ source "${POK_SCRIPTS_DIR}/update_coordination.sh"
 LOCK_HELD=false
 TEMP_DOWNLOAD_DIR=""
 COORDINATION_LEADER=false
+COORDINATION_CYCLE_CREATED_NOW=false
 
 cleanup() {
   local exit_code=$?
@@ -155,6 +156,10 @@ install_server_wait_for_coordination_release() {
       echo "[WARNING] Promoted this follower to coordination leader for the current cycle"
       return 0
       ;;
+    3)
+      echo "[WARNING] The coordinated update was cancelled before shared files changed; continuing with the installed build."
+      return 3
+      ;;
     *)
       echo "[ERROR] Coordination cycle failed before this follower was released"
       return 1
@@ -170,6 +175,13 @@ main() {
 
   echo "[INFO] Starting server installation/update process"
 
+  if [ -f "${ASA_DIR}/ShooterGame/Binaries/Win64/ArkAscendedServer.exe" ] && \
+      ! shared_update_policy_allows_automatic_updates; then
+    shared_update_policy_print_block
+    echo "[INFO] Installation not required by the effective shared-update policy"
+    exit 0
+  fi
+
   # Coordinated multi-instance path: one leader updates shared files, followers
   # wait for the leader to finish its first startup before proceeding.
   if update_coordination_enabled && update_coordination_has_active_cycle; then
@@ -184,6 +196,9 @@ main() {
         2)
           exit 0
           ;;
+        3)
+          exit 0
+          ;;
         *)
           exit 1
           ;;
@@ -193,6 +208,10 @@ main() {
 
   if ! install_required; then
     echo "[INFO] Installation not required"
+    if has_dirty_flag; then
+      echo "[INFO] Clearing this instance's stale dirty flag because startup will load the installed shared files."
+      clear_dirty_flag
+    fi
     if [ "$COORDINATION_LEADER" = true ]; then
       update_coordination_mark_leader_starting || true
     fi
@@ -204,6 +223,7 @@ main() {
       echo "[INFO] MASTER starting startup-install coordination cycle for shared server files"
       if update_coordination_begin_cycle "${current_build_id:-$saved_build_id}"; then
         COORDINATION_LEADER=true
+        COORDINATION_CYCLE_CREATED_NOW=true
       elif update_coordination_has_active_cycle && ! update_coordination_is_active_leader; then
         echo "[INFO] Another coordination cycle already exists. Waiting for that leader before touching shared server files..."
         install_server_wait_for_coordination_release "${current_build_id:-$saved_build_id}"
@@ -211,6 +231,9 @@ main() {
           0)
             ;;
           2)
+            exit 0
+            ;;
+          3)
             exit 0
             ;;
           *)
@@ -229,6 +252,9 @@ main() {
         2)
           exit 0
           ;;
+        3)
+          exit 0
+          ;;
         *)
           exit 1
           ;;
@@ -237,6 +263,25 @@ main() {
   fi
 
   if [ "$COORDINATION_LEADER" = true ]; then
+    if update_coordination_refresh_state && \
+        [ "${UPDATE_COORDINATION_STATE_PHASE:-}" = "pending_restart" ] && \
+        [ "$(update_coordination_participant_count)" -gt 0 ]; then
+      if [ "$COORDINATION_CYCLE_CREATED_NOW" = true ]; then
+        echo "[INFO] Running peers were detected. Deferring the shared-file update until every peer completes its restart notice and verified shutdown."
+        echo "[INFO] This instance will start on the installed build and join the coordinated cycle through its monitor."
+        exit 0
+      fi
+
+      update_coordination_start_heartbeat
+      if ! update_coordination_wait_for_shutdown_barrier; then
+        update_coordination_stop_heartbeat
+        echo "[ERROR] Shared-file update aborted because the verified shutdown barrier was not satisfied."
+        echo "[WARNING] Continuing startup with the unchanged installed build."
+        exit 0
+      fi
+      update_coordination_stop_heartbeat
+    fi
+
     echo "[INFO] Running shared server-file update as the active coordination leader"
     update_coordination_set_phase "leader_updating"
     update_coordination_start_heartbeat

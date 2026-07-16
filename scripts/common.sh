@@ -17,6 +17,72 @@ env_value_is_truthy() {
   esac
 }
 
+shared_update_policy_file() {
+  echo "${SHARED_UPDATE_POLICY_FILE:-${ASA_DIR:-/home/pok/arkserver}/.pok-manager/shared_update_policy.env}"
+}
+
+shared_update_policy_load() {
+  local policy_file=""
+
+  SHARED_POLICY_AUTOMATIC_UPDATES_ALLOWED=""
+  SHARED_POLICY_CONFIGURED_INSTANCE_COUNT=0
+  SHARED_POLICY_CONFIGURED_INSTANCES=""
+  SHARED_POLICY_BLOCKING_INSTANCES=""
+  SHARED_POLICY_MAX_RESTART_NOTICE_MINUTES=0
+
+  if [ -n "${POK_SHARED_AUTOMATIC_UPDATES:-}" ]; then
+    SHARED_POLICY_AUTOMATIC_UPDATES_ALLOWED="${POK_SHARED_AUTOMATIC_UPDATES}"
+    SHARED_POLICY_CONFIGURED_INSTANCE_COUNT="${POK_SHARED_CONFIGURED_INSTANCE_COUNT:-0}"
+    SHARED_POLICY_BLOCKING_INSTANCES="${POK_SHARED_BLOCKING_INSTANCES:-}"
+    SHARED_POLICY_MAX_RESTART_NOTICE_MINUTES="${POK_SHARED_MAX_RESTART_NOTICE_MINUTES:-0}"
+    return 0
+  fi
+  policy_file=$(shared_update_policy_file)
+  [ -f "$policy_file" ] || return 1
+
+  # This file is written atomically by POK-manager.sh and contains only shell-escaped
+  # scalar assignments. Keep the loaded names separate from runtime environment names.
+  local AUTOMATIC_UPDATES_ALLOWED=""
+  local CONFIGURED_INSTANCE_COUNT=0
+  local CONFIGURED_INSTANCES=""
+  local BLOCKING_INSTANCES=""
+  local MAX_RESTART_NOTICE_MINUTES=0
+  # shellcheck disable=SC1090
+  source "$policy_file"
+
+  SHARED_POLICY_AUTOMATIC_UPDATES_ALLOWED="${AUTOMATIC_UPDATES_ALLOWED:-FALSE}"
+  SHARED_POLICY_CONFIGURED_INSTANCE_COUNT="${CONFIGURED_INSTANCE_COUNT:-0}"
+  SHARED_POLICY_CONFIGURED_INSTANCES="${CONFIGURED_INSTANCES:-}"
+  SHARED_POLICY_BLOCKING_INSTANCES="${BLOCKING_INSTANCES:-}"
+  SHARED_POLICY_MAX_RESTART_NOTICE_MINUTES="${MAX_RESTART_NOTICE_MINUTES:-0}"
+  return 0
+}
+
+shared_update_policy_allows_automatic_updates() {
+  env_value_is_truthy "${POK_MANUAL_SHARED_UPDATE:-FALSE}" && return 0
+
+  if shared_update_policy_load; then
+    env_value_is_truthy "$SHARED_POLICY_AUTOMATIC_UPDATES_ALLOWED"
+    return $?
+  fi
+
+  # Backward-compatible single-container fallback. Managed multi-instance starts
+  # publish the authoritative aggregate policy before Docker is launched.
+  ! env_value_is_truthy "${API:-FALSE}" && env_value_is_truthy "${UPDATE_SERVER:-FALSE}"
+}
+
+shared_update_policy_print_block() {
+  shared_update_policy_load || true
+  echo "[WARNING] Automatic ARK file updates are disabled for this shared installation."
+  if [ -n "${SHARED_POLICY_BLOCKING_INSTANCES:-}" ]; then
+    echo "[WARNING] Blocking instance settings: ${SHARED_POLICY_BLOCKING_INSTANCES}"
+  else
+    echo "[WARNING] This instance has API=TRUE or UPDATE_SERVER=FALSE."
+  fi
+  echo "[WARNING] Existing server files will remain unchanged and the current installed build will start."
+  echo "[WARNING] Stop all managed instances and run ./POK-manager.sh -update for manual maintenance."
+}
+
 resolve_pinned_proton() {
   local proton_base="${POK_PROTON_BASE_DIR:-/home/pok/.steam/steam/compatibilitytools.d}"
   local canonical_path="${proton_base}/GE-Proton-Current"
@@ -79,6 +145,7 @@ common_init() {
   DEPLOYMENT_MANAGER_PATH="${POK_SCRIPTS_DIR:-/home/pok/scripts}/helpers/server_deployment_manager.py"
   DEPLOYMENT_STATE_DIR="${ASA_DIR}/.pok-manager/deployments"
   ROLLBACK_STAGING_DIR="${ASA_DIR}/.pok-manager/rollback/staging"
+  SHARED_UPDATE_POLICY_FILE="${ASA_DIR}/.pok-manager/shared_update_policy.env"
   ASAAPI_WAIT_MARKER="/tmp/pok_asaapi_waiting"
   ASAAPI_LAUNCH_MARKER="/tmp/pok_asaapi_launch_started"
   export STEAM_COMPAT_DATA_PATH=${STEAM_COMPAT_DATA_PATH}

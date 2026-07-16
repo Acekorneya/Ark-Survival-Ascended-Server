@@ -198,3 +198,54 @@ load '../test_helper/project.bash'
   assert_output --partial "clear-waiting"
   assert_output --partial "status=1"
 }
+
+@test "startup leader defers live file changes when running participants were snapshotted" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    source "$REPO_ROOT/scripts/install_server.sh"
+    prepare_runtime_env() { ASA_DIR="$BATS_TEST_TMPDIR/asa"; mkdir -p "$ASA_DIR"; }
+    update_coordination_clear_waiting() { :; }
+    update_coordination_cleanup() { :; }
+    update_coordination_stop_heartbeat() { :; }
+    shared_update_policy_allows_automatic_updates() { return 0; }
+    update_coordination_enabled() { return 0; }
+    update_coordination_has_active_cycle() { return 1; }
+    update_coordination_is_master_role() { return 0; }
+    update_coordination_begin_cycle() { echo "cycle=created"; return 0; }
+    update_coordination_refresh_state() { UPDATE_COORDINATION_STATE_PHASE=pending_restart; return 0; }
+    update_coordination_participant_count() { echo 2; }
+    install_required() { return 0; }
+    perform_staged_server_download() { echo "unexpected-live-sync"; }
+    main
+  '
+
+  assert_success
+  assert_output --partial "cycle=created"
+  assert_output --partial "Deferring the shared-file update"
+  refute_output --partial "unexpected-live-sync"
+}
+
+@test "leader leaves installed files unchanged when the shutdown barrier fails" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    source "$REPO_ROOT/scripts/install_server.sh"
+    prepare_runtime_env() { ASA_DIR="$BATS_TEST_TMPDIR/asa"; mkdir -p "$ASA_DIR"; }
+    update_coordination_clear_waiting() { :; }
+    update_coordination_cleanup() { :; }
+    update_coordination_stop_heartbeat() { :; }
+    update_coordination_start_heartbeat() { :; }
+    shared_update_policy_allows_automatic_updates() { return 0; }
+    update_coordination_enabled() { return 0; }
+    update_coordination_has_active_cycle() { return 0; }
+    update_coordination_is_active_leader() { return 0; }
+    update_coordination_refresh_state() { UPDATE_COORDINATION_STATE_PHASE=pending_restart; return 0; }
+    update_coordination_participant_count() { echo 2; }
+    update_coordination_wait_for_shutdown_barrier() { echo "barrier=failed"; return 1; }
+    install_required() { return 0; }
+    perform_staged_server_download() { echo "unexpected-live-sync"; }
+    main
+  '
+
+  assert_success
+  assert_output --partial "barrier=failed"
+  assert_output --partial "update aborted"
+  refute_output --partial "unexpected-live-sync"
+}

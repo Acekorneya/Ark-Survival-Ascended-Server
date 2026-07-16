@@ -24,6 +24,7 @@ cleanup() {
   local exit_code=$?
   
   echo "[INFO] Update script cleanup triggered (exit code: $exit_code)"
+  update_coordination_stop_heartbeat || true
   
   if [ "$LOCK_HELD" = true ]; then
     # Use the proper lock release function from common.sh if available
@@ -213,6 +214,13 @@ shutdown_server_for_update() {
   fi
 
   echo "[INFO] Both save stages verified. Ready for staging update."
+  if update_coordination_has_active_cycle && update_coordination_instance_is_participant; then
+    if ! update_coordination_mark_shutdown_ready; then
+      echo "[ERROR] Saves were verified, but this instance could not acknowledge the shared pre-update barrier." >&2
+      return 1
+    fi
+    echo "[INFO] This instance acknowledged the coordinated verified-shutdown barrier."
+  fi
   return 0
 }
 
@@ -273,6 +281,12 @@ main() {
     exit 0
   fi
 
+  if ! shared_update_policy_allows_automatic_updates; then
+    shared_update_policy_print_block
+    echo "[INFO] No countdown, shutdown, file update, or container restart will be performed."
+    exit 0
+  fi
+
   trap cleanup EXIT INT TERM
 
   echo "[INFO] Checking for ARK server updates..."
@@ -314,6 +328,7 @@ main() {
         fi
 
         echo "[INFO] This instance is the configured coordination master and will lead the shared update cycle"
+        update_coordination_start_heartbeat
 
         local update_notice_minutes
         update_notice_minutes=${RESTART_NOTICE_MINUTES:-30}

@@ -667,7 +667,7 @@ EOF
   assert_output --partial "review_session=LoadedSession"
 }
 
-@test "normalize_update_coordination_assignments picks the oldest auto-updating instance as master" {
+@test "normalize_update_coordination_assignments disables shared auto updates when any configured instance opts out" {
   run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/coord-normalize" POK_MANAGER_TEST_MODE=1 bash -lc '
     set -e
     mkdir -p "$BASE_DIR/Instance_alpha" "$BASE_DIR/Instance_beta" "$BASE_DIR/Instance_gamma"
@@ -703,23 +703,23 @@ services:
 EOF
     source "$REPO_ROOT/POK-manager.sh"
     normalize_update_coordination_assignments
-    echo "alpha=$(grep UPDATE_COORDINATION_ROLE "$BASE_DIR/Instance_alpha/docker-compose-alpha.yaml" | head -1)"
-    echo "beta=$(grep UPDATE_COORDINATION_ROLE "$BASE_DIR/Instance_beta/docker-compose-beta.yaml" | head -1)"
-    echo "alpha_priority=$(grep UPDATE_COORDINATION_PRIORITY "$BASE_DIR/Instance_alpha/docker-compose-alpha.yaml" | head -1)"
-    echo "beta_priority=$(grep UPDATE_COORDINATION_PRIORITY "$BASE_DIR/Instance_beta/docker-compose-beta.yaml" | head -1)"
-    if grep -q UPDATE_COORDINATION_ROLE "$BASE_DIR/Instance_gamma/docker-compose-gamma.yaml"; then
-      echo "gamma_role=present"
-    else
-      echo "gamma_role=absent"
-    fi
+    for instance in alpha beta gamma; do
+      if grep -q UPDATE_COORDINATION_ROLE "$BASE_DIR/Instance_${instance}/docker-compose-${instance}.yaml"; then
+        echo "${instance}_role=present"
+      else
+        echo "${instance}_role=absent"
+      fi
+    done
+    echo "policy=$(grep POK_SHARED_AUTOMATIC_UPDATES "$BASE_DIR/Instance_alpha/docker-compose-alpha.yaml" | head -1 | sed "s/.*=//")"
+    echo "blockers=$(grep POK_SHARED_BLOCKING_INSTANCES "$BASE_DIR/Instance_alpha/docker-compose-alpha.yaml" | head -1 | sed "s/.*=//")"
   '
 
   assert_success
-  assert_output --partial "alpha=      - UPDATE_COORDINATION_ROLE=MASTER"
-  assert_output --partial "beta=      - UPDATE_COORDINATION_ROLE=FOLLOWER"
-  assert_output --partial "alpha_priority=      - UPDATE_COORDINATION_PRIORITY=1"
-  assert_output --partial "beta_priority=      - UPDATE_COORDINATION_PRIORITY=2"
+  assert_output --partial "alpha_role=absent"
+  assert_output --partial "beta_role=absent"
   assert_output --partial "gamma_role=absent"
+  assert_output --partial "policy=FALSE"
+  assert_output --partial "blockers=gamma:UPDATE_SERVER_FALSE"
 }
 
 @test "normalize_update_coordination_assignments strips coordination envs when only one auto-updating instance exists" {

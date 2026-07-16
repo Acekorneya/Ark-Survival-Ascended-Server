@@ -676,7 +676,7 @@ When creating a new server instance using POK-manager.sh, a Docker Compose confi
 | `RCON_ENABLED`                | `TRUE`            | Needed for Graceful Shutdown                                                              |
 | `DISPLAY_POK_MONITOR_MESSAGE` | `FALSE`           | TRUE to Show the Server Monitor Messages / Update Monitor Shutdown                        |
 | `CPU_OPTIMIZATION`            | `FALSE`           | Set to TRUE to enable CPU optimization helps reduce high CPU usage on some systems, FALSE to disable |
-| `UPDATE_SERVER`               | `TRUE`            | Enable or disable update checks                                                           |
+| `UPDATE_SERVER`               | `TRUE`            | Enable shared automatic updates; if any configured instance disables this, automatic updates are disabled for the shared installation |
 | `UPDATE_COORDINATION_ROLE`    | auto-assigned     | Only written for multi-instance auto-update setups; one instance becomes `MASTER`, others become `FOLLOWER` |
 | `UPDATE_COORDINATION_PRIORITY`| auto-assigned     | Only written for multi-instance auto-update setups; lower number means earlier failover priority |
 | `CHECK_FOR_UPDATE_INTERVAL`   | `24`              | Check for Updates interval in hours                                                       |
@@ -702,13 +702,16 @@ When creating a new server instance using POK-manager.sh, a Docker Compose confi
 | `MOD_IDS`                     | `123456`          | Add your mod IDs here, separated by commas, e.g., 123456789,987654321                     |
 | `CUSTOM_SERVER_ARGS`          |                   | If You need to add more Custom Args -ForceRespawnDinos -ForceAllowCaveFlyers              |
 
-**Multi-instance auto-update coordination**
+**Shared update safety and multi-instance coordination**
 
-- Coordination is only enabled when more than one managed instance has `UPDATE_SERVER=TRUE`.
+- Every managed instance uses the same `ServerFiles/arkserver` tree. Automatic updates are therefore enabled only when **all configured instances** have `API=FALSE` and `UPDATE_SERVER=TRUE`, including instances that are currently stopped.
+- If any instance has `API=TRUE` or `UPDATE_SERVER=FALSE`, POK leaves the installed files and running containers unchanged, reports the blocking instance settings, and runs only a read-only update notifier. Schedule maintenance by stopping every instance and running `./POK-manager.sh -update`, or use the verified all-instance restart workflow.
+- Direct `-update` refuses to modify shared files while any managed instance is running. This prevents SteamCMD from replacing binaries underneath a live Proton/ARK process.
+- Coordination is enabled when the shared policy permits automatic updates and more than one managed instance exists.
 - POK-manager auto-assigns one `MASTER` and ordered `FOLLOWER`s. The master is the only instance allowed to update shared server files and perform the first post-update startup.
+- Before the master changes files, every running instance receives its own `RESTART_NOTICE_MINUTES` countdown and must acknowledge a verified `SaveWorld` plus `DoExit` shutdown. The update is cancelled if any snapshotted participant does not reach that barrier.
 - Followers wait until the master reaches a startup-ready marker (`Full Startup:` or `Server has completed startup and is now advertising for join`), then start automatically with a short stagger.
 - `-start -all` and `-restart -all` both bring up the leader first, wait for leader readiness, and then continue with followers so shared server-file and mod startup work happens only once.
-- Instances with `UPDATE_SERVER=FALSE` are excluded from this automation and remain manual-update instances.
 - If `UPDATE_COORDINATION_ROLE` and `UPDATE_COORDINATION_PRIORITY` are absent, the container stays on the legacy lock-based update path. This is the supported fallback for Kubernetes and other external orchestrators that do not use POK-manager.
 - If a compose file still says `FOLLOWER` and you start it manually, the container will refuse to continue until a master-led cycle exists. Use `POK-manager.sh` for managed promotion/ordering, or change the intended leader instance to `MASTER` before starting it yourself.
 
@@ -745,7 +748,7 @@ services:
       - RCON_ENABLED=TRUE                    # Needed for Graceful Shutdown / Updates / Server Notifications
       - CPU_OPTIMIZATION=FALSE               # Set to TRUE to enable CPU optimization helps reduce high CPU usage on some systems, FALSE to disable
       - DISPLAY_POK_MONITOR_MESSAGE=FALSE    # Or TRUE to Show the Server Monitor Messages / Update Monitor 
-      - UPDATE_SERVER=TRUE                   # Enable or disable update checks
+      - UPDATE_SERVER=TRUE                   # Automatic updates require TRUE on every configured shared instance
       # Only used when more than one instance has UPDATE_SERVER=TRUE.
       # POK-manager writes these automatically for managed multi-instance setups.
       - UPDATE_COORDINATION_ROLE=MASTER      # MASTER or FOLLOWER

@@ -88,6 +88,22 @@ load '../test_helper/project.bash'
   refute_output --partial "result=unexpected-success"
 }
 
+@test "shutdown_server_for_update acknowledges an active coordinated barrier only after verified saves" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    source "$REPO_ROOT/scripts/update_server.sh"
+    safe_container_stop() { echo "verified-stop=ok"; return 0; }
+    update_coordination_has_active_cycle() { return 0; }
+    update_coordination_instance_is_participant() { return 0; }
+    update_coordination_mark_shutdown_ready() { echo "barrier=acknowledged"; }
+    shutdown_server_for_update
+  '
+
+  assert_success
+  assert_output --partial "verified-stop=ok"
+  assert_output --partial "barrier=acknowledged"
+  assert_output --partial "acknowledged the coordinated verified-shutdown barrier"
+}
+
 @test "trigger_container_restart delegates durable state and restart signaling" {
   run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
     set -e

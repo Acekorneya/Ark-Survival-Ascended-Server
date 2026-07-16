@@ -781,6 +781,13 @@ elif [ "${API}" = "TRUE" ] && env_value_is_truthy "${UPDATE_SERVER:-FALSE}"; the
   echo "⚠️           ./POK-manager.sh -start <instance_name>"
 fi
 
+if ! shared_update_policy_allows_automatic_updates; then
+  echo "[INFO] Starting read-only update notifier; it cannot restart servers or modify shared files."
+  nohup /home/pok/scripts/update_notice_monitor.sh > >(tee -a /home/pok/logs/update_notice.log) 2>&1 &
+  UPDATE_NOTICE_MONITOR_PID=$!
+  echo "[INFO] Read-only update notifier started with PID: $UPDATE_NOTICE_MONITOR_PID"
+fi
+
 # Keep PID 1 interruptible so SIGTERM runs the verified shutdown handler. A
 # foreground `tail -f /dev/null` can prevent Bash from processing the trap.
 while true; do

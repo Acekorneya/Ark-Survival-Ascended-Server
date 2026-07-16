@@ -953,7 +953,9 @@ start_server() {
         echo "[INFO] Ensuring PID file is up-to-date with server PID: $SERVER_PID"
         echo "$SERVER_PID" > "$PID_FILE"
 
-        if update_coordination_enabled && update_coordination_is_active_leader; then
+        if update_coordination_enabled && update_coordination_is_active_leader && \
+            update_coordination_refresh_state && \
+            [ "${UPDATE_COORDINATION_STATE_PHASE:-}" = "leader_starting" ]; then
           update_coordination_mark_ready || true
         fi
         
