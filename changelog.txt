@@ -9,6 +9,9 @@
 - Added a trailing `--force` escape hatch with prominent data-loss warnings, reliable RCON failure propagation, fresh log checkpoints, and stable main `.ark` metadata fallback based on each instance's unrestricted `MAP_NAME`.
 - Increased the new-instance `SAVE_WAIT_SECONDS` default to 60 seconds and range to 1-900 while preserving existing values, including 5-second configurations.
 - Added derived Compose/Docker grace periods, clean PID 1 SIGTERM handling, and verified-save protection across automatic update, restart, recovery, delete, and migration paths.
+- Automatic update/recovery restarts now persist their restart state before exiting PID 1, and a server process still present after the verified 60-second DoExit grace window is forcibly terminated only after both saves are confirmed.
+- Removed misleading GE-Proton8-21/9-25 launch aliases and runtime Wine fallbacks; startup now validates and retries only the image-pinned GE-Proton10-33 executable.
+- Redacted join and admin passwords from the ShooterGame log output mirrored to container logs.
 
 ## Version 2.1.80 (Previous)
 - Added `security_opt: - "seccomp=unconfined"` to `docker-compose.yaml` (template) and newly written instance configurations to prevent `steamcmd` worker thread crashes and update connection failures on host systems with restrictive libseccomp policies.

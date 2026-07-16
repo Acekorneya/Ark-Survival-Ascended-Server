@@ -54,17 +54,17 @@ load '../test_helper/project.bash'
   assert_output --partial "Shutdown complete signal received."
 }
 
-@test "restart flow no longer kills PID 1 with SIGKILL" {
+@test "restart flow delegates the verified PID 1 handoff" {
   run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
     set -e
     if grep -qE "kill[[:space:]]+-9[[:space:]]+1|killall[[:space:]]+-9" "$REPO_ROOT/scripts/restart_server.sh"; then
       echo "sigkill=present"
       exit 1
     fi
-    grep -q "kill -TERM 1" "$REPO_ROOT/scripts/restart_server.sh"
-    echo "sigkill=absent"
+    grep -q "request_verified_container_restart" "$REPO_ROOT/scripts/restart_server.sh"
+    echo "handoff=verified-helper"
   '
 
   assert_success
-  assert_output --partial "sigkill=absent"
+  assert_output --partial "handoff=verified-helper"
 }

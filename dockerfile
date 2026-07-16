@@ -96,8 +96,7 @@ RUN set -ex; \
     ACTUAL_VERSION=$(basename "$(find /tmp/proton-extract -maxdepth 1 -mindepth 1 -type d | head -n 1)"); \
     mv /tmp/proton-extract/* /home/pok/.steam/steam/compatibilitytools.d/; \
     ln -sf /home/pok/.steam/steam/compatibilitytools.d/$ACTUAL_VERSION /home/pok/.steam/steam/compatibilitytools.d/GE-Proton-Current; \
-    ln -sf /home/pok/.steam/steam/compatibilitytools.d/$ACTUAL_VERSION /home/pok/.steam/steam/compatibilitytools.d/GE-Proton8-21; \
-    ln -sf /home/pok/.steam/steam/compatibilitytools.d/$ACTUAL_VERSION /home/pok/.steam/steam/compatibilitytools.d/GE-Proton9-25; \
+    printf '%s\n' "$ACTUAL_VERSION" > /home/pok/.steam/steam/compatibilitytools.d/.pok-proton-version; \
     rm -rf /tmp/proton-extract "/tmp/$ARCHIVE_NAME" "/tmp/$CHECKSUM_NAME"
 
 # Setup machine-id for Proton

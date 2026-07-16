@@ -255,24 +255,9 @@ exit_container_for_restart() {
     return 1
   fi
   
-  # Create a flag file to indicate a clean exit for restart
-  echo "$(date) - Container exiting for automatic restart by orchestration system" > /home/pok/container_restart.log
-  
-  # Create a flag file that will be detected on container restart
-  echo "$restart_reason" > /home/pok/restart_reason.flag
-  
   echo "🔄 Container will now exit for restart via Docker"
   echo "⚠️ Docker will automatically restart the container"
-  
-  # Create a special flag to tell the monitor to stop as well
-  echo "true" > /home/pok/stop_monitor.flag
-  
-  # Simplified container exit approach - no extensive cleanup needed
-  echo "[INFO] Server is safely shut down. Signaling PID 1 for a clean container restart..."
-  sync
-  sleep 1
-  kill -TERM 1
-  return 0
+  request_verified_container_restart "$restart_reason" "" "/home/pok/container_restart.log"
 }
 
 # Function to restart the server after cleanup

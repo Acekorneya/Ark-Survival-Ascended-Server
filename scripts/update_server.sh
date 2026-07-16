@@ -220,22 +220,9 @@ trigger_container_restart() {
   local reason="${1:-UPDATE_RESTART}"
   local expected_build="${2:-$current_build_id}"
 
-  echo "$(date) - Container exiting for automatic restart due to update" > /home/pok/container_update_restart.log
-  echo "$reason" > /home/pok/restart_reason.flag
-
-  if [ -n "$expected_build" ]; then
-    echo "$expected_build" > /home/pok/expected_build_id.txt
-  fi
-
-  echo "true" > /home/pok/stop_monitor.flag
-
   echo "🔄 Container will now exit for restart via Docker"
   echo "⚠️ Docker will automatically restart the container"
-
-  sync
-  sleep 1
-  kill -TERM 1
-  return 0
+  request_verified_container_restart "$reason" "$expected_build" "/home/pok/container_update_restart.log"
 }
 
 main() {

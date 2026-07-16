@@ -45,71 +45,16 @@ check_critical_file() {
 # Function to check Proton installations
 check_proton_installations() {
   echo "Checking for Proton installations..."
-  
-  local PROTON_BASE_DIR="/home/pok/.steam/steam/compatibilitytools.d"
-  check_create_directory "$PROTON_BASE_DIR"
-  
-  # Check for any Proton installation
-  local found=false
-  for proton_dir in "$PROTON_BASE_DIR/GE-Proton-Current" "$PROTON_BASE_DIR/GE-Proton8-21" "$PROTON_BASE_DIR/GE-Proton9-25"; do
-    if [ -f "$proton_dir/proton" ]; then
-      echo "Found Proton at: $proton_dir"
-      found=true
-      break
-    fi
-  done
-  
-  if [ "$found" = "false" ]; then
-    # Look for any GE-Proton* directory
-    local any_proton=$(find "$PROTON_BASE_DIR" -maxdepth 1 -name "GE-Proton*" -type d | head -n 1)
-    if [ -n "$any_proton" ] && [ -f "$any_proton/proton" ]; then
-      echo "Found Proton at non-standard path: $any_proton"
-      # Create symlinks to standard locations
-      echo "Creating symlinks to standard locations..."
-      ln -sf "$any_proton" "$PROTON_BASE_DIR/GE-Proton-Current"
-      ln -sf "$any_proton" "$PROTON_BASE_DIR/GE-Proton8-21"
-      ln -sf "$any_proton" "$PROTON_BASE_DIR/GE-Proton9-25"
-      found=true
-    else
-      echo "No Proton installation found. Checking for fallback options..."
-      
-      # Check if /usr/local/bin/proton exists (from Dockerfile install)
-      if [ -f "/usr/local/bin/proton" ]; then
-        echo "Found Proton in /usr/local/bin"
-        
-        # Create a Proton directory structure and symlink the existing proton
-        mkdir -p "$PROTON_BASE_DIR/GE-Proton-Current/dist/bin"
-        ln -sf "/usr/local/bin/proton" "$PROTON_BASE_DIR/GE-Proton-Current/proton"
-        ln -sf "/usr/local/bin/"* "$PROTON_BASE_DIR/GE-Proton-Current/dist/bin/" 2>/dev/null
-        
-        # Create symlinks to standard locations
-        ln -sf "$PROTON_BASE_DIR/GE-Proton-Current" "$PROTON_BASE_DIR/GE-Proton8-21"
-        ln -sf "$PROTON_BASE_DIR/GE-Proton-Current" "$PROTON_BASE_DIR/GE-Proton9-25"
-        found=true
-      else
-        # Create a minimal Proton script as a last resort
-        echo "Creating minimal fallback Proton script..."
-        mkdir -p "$PROTON_BASE_DIR/GE-Proton-Current/dist/bin"
-        echo '#!/bin/bash' > "$PROTON_BASE_DIR/GE-Proton-Current/proton"
-        echo 'export WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx"' >> "$PROTON_BASE_DIR/GE-Proton-Current/proton"
-        echo 'wine "$@"' >> "$PROTON_BASE_DIR/GE-Proton-Current/proton"
-        chmod +x "$PROTON_BASE_DIR/GE-Proton-Current/proton"
-        
-        # Create symlinks to standard locations
-        ln -sf "$PROTON_BASE_DIR/GE-Proton-Current" "$PROTON_BASE_DIR/GE-Proton8-21"
-        ln -sf "$PROTON_BASE_DIR/GE-Proton-Current" "$PROTON_BASE_DIR/GE-Proton9-25"
-        found=true
-      fi
-    fi
-  fi
-  
-  if [ "$found" = "true" ]; then
-    echo "Proton installation check: PASSED"
-    return 0
-  else
+
+  if ! resolve_pinned_proton; then
     echo "Proton installation check: FAILED"
     return 1
   fi
+
+  echo "Pinned Proton installation found: $POK_PROTON_VERSION"
+  echo "Proton executable: $POK_PROTON_EXECUTABLE"
+  echo "Proton installation check: PASSED"
+  return 0
 }
 
 # Function to check and initialize Wine/Proton environment

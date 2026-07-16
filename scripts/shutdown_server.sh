@@ -53,6 +53,74 @@ shutdown_server_process_running() {
   pgrep -f "AsaApiLoader.exe" >/dev/null 2>&1 || pgrep -f "ArkAscendedServer.exe" >/dev/null 2>&1
 }
 
+shutdown_terminate_lingering_processes() {
+  if ! shutdown_verified_marker_is_fresh; then
+    echo "Error: Refusing to terminate lingering server processes without a fresh verified DoExit save." >&2
+    return 1
+  fi
+
+  echo "Warning: ASA did not exit after the verified grace period; terminating its remaining Proton/Wine processes." >&2
+  pkill -KILL -f "AsaApiLoader.exe" >/dev/null 2>&1 || true
+  pkill -KILL -f "ArkAscendedServer.exe" >/dev/null 2>&1 || true
+  pkill -KILL -f "wineserver" >/dev/null 2>&1 || true
+  sleep 1
+
+  if shutdown_server_process_running; then
+    echo "Error: ASA processes are still visible after verified forced termination." >&2
+    return 1
+  fi
+
+  echo "Lingering ASA processes were terminated after both saves were verified."
+  return 0
+}
+
+shutdown_atomic_write() {
+  local destination="$1"
+  local value="$2"
+  local temporary="${destination}.tmp.$$"
+
+  printf '%s\n' "$value" > "$temporary" || return 1
+  mv -f "$temporary" "$destination"
+}
+
+request_verified_container_restart() {
+  local restart_reason="${1:-NORMAL_RESTART}"
+  local expected_build="${2:-}"
+  local state_dir="${POK_RESTART_STATE_DIR:-/home/pok}"
+  local restart_log="${3:-${state_dir}/container_restart.log}"
+
+  if shutdown_server_process_running && ! shutdown_verified_marker_is_fresh; then
+    echo "Error: Refusing automatic container restart while ASA is running without a fresh verified DoExit save." >&2
+    return 1
+  fi
+
+  shutdown_atomic_write "$restart_log" "$(date) - Container exiting for automatic restart (${restart_reason})" || return 1
+  shutdown_atomic_write "${state_dir}/restart_reason.flag" "$restart_reason" || return 1
+  if [ -n "$expected_build" ]; then
+    shutdown_atomic_write "${state_dir}/expected_build_id.txt" "$expected_build" || return 1
+  fi
+  shutdown_atomic_write "${state_dir}/stop_monitor.flag" "true" || return 1
+
+  echo "Container restart state is durable; signaling PID 1 so Docker can restart the container."
+  sync
+  kill -TERM 1 || {
+    echo "Error: Failed to signal PID 1 for automatic container restart." >&2
+    return 1
+  }
+
+  # A successful request normally ends this process when the container exits.
+  # If tini did not forward the signal promptly, signal its init.sh child too.
+  sleep 5
+  local init_pid=""
+  init_pid=$(pgrep -P 1 -f "/home/pok/scripts/init.sh" | head -n 1 || true)
+  if [ -n "$init_pid" ]; then
+    echo "Warning: PID 1 is still active; signaling init.sh directly." >&2
+    kill -TERM "$init_pid" 2>/dev/null || true
+  fi
+
+  return 0
+}
+
 shutdown_normalized_map_name() {
   local map_name="${MAP_NAME:-}"
 
@@ -262,7 +330,8 @@ shutdown_wait_for_server_exit() {
 
   if shutdown_server_process_running; then
     echo "Warning: ASA is still running after ${max_wait} seconds; both saves are verified, so container termination is data-safe." >&2
-    return 1
+    shutdown_terminate_lingering_processes
+    return $?
   fi
 
   echo "ASA server process exited cleanly."

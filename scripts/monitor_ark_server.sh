@@ -40,12 +40,12 @@ check_restart_timeout() {
         return 1
       fi
       
-      # Absolutely ensure container dies
-      echo "true" > /home/pok/stop_monitor.flag
-      sync
-      
-      kill -TERM 1
-      return 0
+      local restart_reason
+      local expected_build=""
+      restart_reason=$(cat /home/pok/restart_reason.flag 2>/dev/null || echo "MONITOR_TIMEOUT_RESTART")
+      expected_build=$(cat /home/pok/expected_build_id.txt 2>/dev/null || true)
+      request_verified_container_restart "$restart_reason" "$expected_build" "/home/pok/container_recovery.log"
+      return $?
     fi
   else
     # If no restart flag, remove the timestamp file if it exists
@@ -289,24 +289,8 @@ exit_container_for_recovery() {
     echo "[$current_time] [INFO] Server not running, no world save needed" | tee -a "$RECOVERY_LOG"
   fi
   
-  # Make sure any existing shutdown flag is removed so a fresh restart can occur
-  if [ -f "$SHUTDOWN_COMPLETE_FLAG" ]; then
-    echo "[$current_time] [INFO] Removing existing shutdown complete flag..." | tee -a "$RECOVERY_LOG"
-    rm -f "$SHUTDOWN_COMPLETE_FLAG"
-  fi
-  
-  # Create a special flag to tell other monitors to stop
-  echo "true" > /home/pok/stop_monitor.flag
-  
-  # Flush any pending disk writes
-  sync
-  
-  # Allow some time for logs to be written
-  sleep 3
-  
   echo "[$current_time] [INFO] Signaling PID 1 for a clean container restart..." | tee -a "$RECOVERY_LOG"
-  kill -TERM 1
-  return 0
+  request_verified_container_restart "CONTAINER_RECOVERY" "" "/home/pok/container_recovery.log"
 }
 
 # Enhanced recovery function with better logging and recovery 
@@ -707,13 +691,10 @@ while true; do
       echo "[$current_time] [WARNING] Detected a restart flag with server not running - requesting clean container restart" | tee -a "$RECOVERY_LOG"
       display_monitor_status "⚠️ Restart detected with server stopped - restarting container" "WARNING" "true"
       
-      # Ensure stop flag is created
-      echo "true" > /home/pok/stop_monitor.flag
-      
-      # Force sync to ensure all data is written
-      sync
-      kill -TERM 1
-      exit 0
+      restart_reason=$(cat /home/pok/restart_reason.flag 2>/dev/null || echo "MONITOR_RESTART")
+      expected_build=$(cat /home/pok/expected_build_id.txt 2>/dev/null || true)
+      request_verified_container_restart "$restart_reason" "$expected_build" "/home/pok/container_recovery.log"
+      exit $?
     else
       # Server is healthy; clear restart coordination markers
       rm -f "/home/pok/restart_reason.flag"

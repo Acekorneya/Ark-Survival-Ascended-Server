@@ -73,6 +73,20 @@ EOF
   assert_output --partial "second=advertising"
 }
 
+@test "redact_server_log_stream removes join and admin passwords" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/launch_ASA.sh"
+    printf "%s\n" "Commandline: Map?ServerPassword=joinSecret?ServerAdminPassword=adminSecret! -Port=7777" | redact_server_log_stream
+  '
+
+  assert_success
+  assert_output --partial "ServerPassword=[REDACTED]"
+  assert_output --partial "ServerAdminPassword=[REDACTED]"
+  refute_output --partial "joinSecret"
+  refute_output --partial "adminSecret"
+}
+
 @test "update_game_user_settings updates the password and MOTD in GameUserSettings.ini" {
   run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
     set -e

@@ -87,3 +87,15 @@ load '../test_helper/project.bash'
   assert_output --partial "result=failed"
   refute_output --partial "result=unexpected-success"
 }
+
+@test "trigger_container_restart delegates durable state and restart signaling" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/update_server.sh"
+    request_verified_container_restart() { printf "request=%s:%s:%s\n" "$1" "$2" "$3"; }
+    trigger_container_restart FOLLOWER_COORDINATION_RESTART 24680
+  '
+
+  assert_success
+  assert_output --partial "request=FOLLOWER_COORDINATION_RESTART:24680:/home/pok/container_update_restart.log"
+}

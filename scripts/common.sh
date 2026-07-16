@@ -17,6 +17,46 @@ env_value_is_truthy() {
   esac
 }
 
+resolve_pinned_proton() {
+  local proton_base="${POK_PROTON_BASE_DIR:-/home/pok/.steam/steam/compatibilitytools.d}"
+  local canonical_path="${proton_base}/GE-Proton-Current"
+  local version_file="${proton_base}/.pok-proton-version"
+  local resolved_path=""
+  local expected_version=""
+  local resolved_version=""
+
+  POK_PROTON_DIR=""
+  POK_PROTON_EXECUTABLE=""
+  POK_PROTON_VERSION=""
+
+  if [ ! -f "$version_file" ]; then
+    echo "ERROR: Pinned Proton version metadata is missing: $version_file" >&2
+    return 1
+  fi
+  expected_version=$(tr -d '\r\n' < "$version_file")
+  [ -n "$expected_version" ] || {
+    echo "ERROR: Pinned Proton version metadata is empty." >&2
+    return 1
+  }
+
+  resolved_path=$(readlink -f "$canonical_path" 2>/dev/null || true)
+  if [ -z "$resolved_path" ] || [ ! -x "$resolved_path/proton" ]; then
+    echo "ERROR: Pinned Proton executable is unavailable through $canonical_path" >&2
+    return 1
+  fi
+
+  resolved_version=$(basename "$resolved_path")
+  if [ "$resolved_version" != "$expected_version" ]; then
+    echo "ERROR: Proton target mismatch: expected $expected_version, found $resolved_version" >&2
+    return 1
+  fi
+
+  POK_PROTON_DIR="$resolved_path"
+  POK_PROTON_EXECUTABLE="$resolved_path/proton"
+  POK_PROTON_VERSION="$resolved_version"
+  return 0
+}
+
 common_init() {
   USERNAME=anonymous
   APPID=2430930
@@ -74,37 +114,11 @@ initialize_proton_prefix() {
   ln -sf "/dev/null" "${STEAM_COMPAT_DATA_PATH}/pfx/dosdevices/e::"
   ln -sf "/dev/null" "${STEAM_COMPAT_DATA_PATH}/pfx/dosdevices/f::"
   
-  # Ensure consistent proton path detection by checking multiple common locations
-  PROTON_PATHS=(
-    "/home/pok/.steam/steam/compatibilitytools.d/GE-Proton-Current"
-    "/home/pok/.steam/steam/compatibilitytools.d/GE-Proton8-21"
-    "/home/pok/.steam/steam/compatibilitytools.d/GE-Proton9-25"
-    "/usr/local/bin"
-  )
-  
-  PROTON_PATH=""
-  for path in "${PROTON_PATHS[@]}"; do
-    if [ -f "${path}/proton" ]; then
-      PROTON_PATH="${path}"
-      echo "Found Proton at: ${PROTON_PATH}"
-      break
-    fi
-  done
-  
-  if [ -z "$PROTON_PATH" ]; then
-    echo "WARNING: Could not find Proton executable. Creating a symlink to the expected location."
-    # If not found, try to detect any available proton directory
-    FOUND_DIR=$(find /home/pok/.steam/steam/compatibilitytools.d -name "GE-Proton*" -type d | head -n 1)
-    if [ -n "$FOUND_DIR" ]; then
-      echo "Found Proton directory at: ${FOUND_DIR}, creating symlinks"
-      ln -sf "${FOUND_DIR}" "/home/pok/.steam/steam/compatibilitytools.d/GE-Proton-Current"
-      ln -sf "${FOUND_DIR}" "/home/pok/.steam/steam/compatibilitytools.d/GE-Proton8-21"
-      ln -sf "${FOUND_DIR}" "/home/pok/.steam/steam/compatibilitytools.d/GE-Proton9-25"
-      PROTON_PATH="${FOUND_DIR}"
-    else
-      echo "ERROR: No Proton installations found! Initialization may fail."
-    fi
+  if ! resolve_pinned_proton; then
+    return 1
   fi
+  PROTON_PATH="$POK_PROTON_DIR"
+  echo "Using pinned Proton: $POK_PROTON_VERSION ($POK_PROTON_EXECUTABLE)"
   
   # Force reset the prefix configuration if it exists but might be corrupted
   if [ -d "${STEAM_COMPAT_DATA_PATH}/pfx" ]; then
@@ -1437,14 +1451,14 @@ _legacy_install_ark_server_api() {
   if [ "$first_install" = "true" ]; then
     echo ">> Running VC++ installer with Proton directly..."
   fi
-  if [ -d "/home/pok/.steam/steam/compatibilitytools.d/GE-Proton8-21" ]; then
+  if resolve_pinned_proton; then
     STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam" \
     STEAM_COMPAT_DATA_PATH="${STEAM_COMPAT_DATA_PATH}" \
-    /home/pok/.steam/steam/compatibilitytools.d/GE-Proton8-21/proton run "$proton_drive_c/temp/vc_redist.x64.exe" /quiet /norestart || true
+    "$POK_PROTON_EXECUTABLE" run "$proton_drive_c/temp/vc_redist.x64.exe" /quiet /norestart || true
     
     STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam" \
     STEAM_COMPAT_DATA_PATH="${STEAM_COMPAT_DATA_PATH}" \
-    /home/pok/.steam/steam/compatibilitytools.d/GE-Proton8-21/proton run "$proton_drive_c/temp/vc_redist.x86.exe" /quiet /norestart || true
+    "$POK_PROTON_EXECUTABLE" run "$proton_drive_c/temp/vc_redist.x86.exe" /quiet /norestart || true
   fi
   
   # Allow more time for the installation to complete

@@ -454,6 +454,8 @@ Important notes:
 
 For `-all`, POK sends each stage to every running instance concurrently. It verifies every `SaveWorld` before sending any `DoExit`, then verifies every `DoExit` save before stopping any container. If one instance fails either stage, no containers are removed and the command returns a failure for cron. Use trailing `--force` only when you intentionally accept possible data loss or corruption.
 
+After both saves are verified, POK allows ASA up to 60 seconds to exit normally. If the Windows process remains stuck, POK terminates the lingering Proton/Wine server process only after that verified grace period. Automatic update and recovery paths then persist their restart state and exit the container so `restart: unless-stopped` can start it again; operator `-stop` and `-shutdown` commands remain stopped. Passwords embedded in ASA's `Commandline:` log entry are redacted from the container's mirrored console output.
+
 #### Sending Chat Messages
 ```bash
 ./POK-manager.sh -chat "Hello, world!" my_instance
@@ -473,6 +475,8 @@ To schedule automatic restarts using cron, add an entry to your crontab file. He
   ```
 
 > **Note:** When using `-restart` with instances that have `API=TRUE`, the script automatically uses a special restart process that stops and starts the container instead of using the in-game restart command. This ensures proper restarting for API-enabled servers.
+
+The image launches only its checksum-verified, pinned GE-Proton build. A retry message means the same pinned executable is being tried again; it does not select an older Proton release or direct Wine fallback.
 
 - Save the world of all instances every 30 minutes:
   ```

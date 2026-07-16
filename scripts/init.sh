@@ -482,118 +482,37 @@ setup_virtual_display() {
 # Robust AsaApi initialization for container environment
 verify_proton_environment() {
   echo "----Robust Proton Environment Verification for AsaApi----"
-  
-  # Ensure we have the correct directory structure
+
   mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/windows/system32"
   mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files"
   mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/Program Files (x86)"
   mkdir -p "${STEAM_COMPAT_DATA_PATH}/pfx/drive_c/users/steamuser"
-  
-  # Step 1: Check and find available Proton versions
-  echo "Searching for available Proton GE versions..."
-  PROTON_BASE_DIR="/home/pok/.steam/steam/compatibilitytools.d"
-  mkdir -p "$PROTON_BASE_DIR"
-  
-  # Create an array to store found Proton directories
-  FOUND_PROTON_DIRS=()
-  
-  # First search in the standard location
-  if [ -d "$PROTON_BASE_DIR" ]; then
-    while IFS= read -r dir; do
-      if [ -d "$dir" ] && [ -f "$dir/proton" ]; then
-        FOUND_PROTON_DIRS+=("$dir")
-        echo "Found Proton at: $dir"
-      fi
-    done < <(find "$PROTON_BASE_DIR" -maxdepth 1 -name "GE-Proton*" -type d)
+
+  if ! resolve_pinned_proton; then
+    echo "ERROR: The image-pinned Proton installation failed verification." >&2
+    return 1
   fi
-  
-  # Then check in /usr/local/bin
-  if [ -f "/usr/local/bin/proton" ]; then
-    FOUND_PROTON_DIRS+=("/usr/local/bin")
-    echo "Found Proton at: /usr/local/bin"
-  fi
-  
-  # Step 2: If no Proton directories found, check if the tarball is available
-  if [ ${#FOUND_PROTON_DIRS[@]} -eq 0 ]; then
-    echo "No Proton installations found in standard locations."
-    
-    # Try to find the tarball
-    PROTON_TARBALL=$(find /tmp -name "GE-Proton*.tar.gz" -type f 2>/dev/null | head -n 1)
-    
-    if [ -n "$PROTON_TARBALL" ]; then
-      echo "Found Proton tarball: $PROTON_TARBALL. Extracting..."
-      mkdir -p "$PROTON_BASE_DIR/GE-Proton-Current"
-      tar -xzf "$PROTON_TARBALL" -C "$PROTON_BASE_DIR"
-      EXTRACTED_DIR=$(find "$PROTON_BASE_DIR" -maxdepth 1 -name "GE-Proton*" -type d | head -n 1)
-      
-      if [ -n "$EXTRACTED_DIR" ]; then
-        echo "Extracted Proton to: $EXTRACTED_DIR"
-        FOUND_PROTON_DIRS+=("$EXTRACTED_DIR")
-      fi
-    else
-      echo "WARNING: No Proton tarball found. Will try to use the system Proton."
-    fi
-  fi
-  
-  # Step 3: Create symlinks for expected Proton versions
-  if [ ${#FOUND_PROTON_DIRS[@]} -gt 0 ]; then
-    # Use the first found Proton directory as the source for symlinks
-    PROTON_SOURCE="${FOUND_PROTON_DIRS[0]}"
-    echo "Using $PROTON_SOURCE as the primary Proton installation"
-    
-    # Create symlinks for various expected version names
-    ln -sf "$PROTON_SOURCE" "$PROTON_BASE_DIR/GE-Proton-Current"
-    ln -sf "$PROTON_SOURCE" "$PROTON_BASE_DIR/GE-Proton8-21"
-    ln -sf "$PROTON_SOURCE" "$PROTON_BASE_DIR/GE-Proton9-25"
-    
-    echo "Created symlinks for compatibility with scripts"
-  else
-    echo "WARNING: No Proton installations found. Container may not function correctly."
-    
-    # Try to create a minimal proton script as a last resort
-    if [ ! -d "$PROTON_BASE_DIR/GE-Proton-Current" ]; then
-      echo "Creating minimal Proton directory structure as fallback..."
-      mkdir -p "$PROTON_BASE_DIR/GE-Proton-Current"
-      mkdir -p "$PROTON_BASE_DIR/GE-Proton-Current/dist/bin"
-      
-      # Create a minimal proton script
-      echo '#!/bin/bash' > "$PROTON_BASE_DIR/GE-Proton-Current/proton"
-      echo 'export WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx"' >> "$PROTON_BASE_DIR/GE-Proton-Current/proton"
-      echo 'wine "$@"' >> "$PROTON_BASE_DIR/GE-Proton-Current/proton"
-      chmod +x "$PROTON_BASE_DIR/GE-Proton-Current/proton"
-      
-      # Create symlinks
-      ln -sf "$PROTON_BASE_DIR/GE-Proton-Current" "$PROTON_BASE_DIR/GE-Proton8-21"
-      ln -sf "$PROTON_BASE_DIR/GE-Proton-Current" "$PROTON_BASE_DIR/GE-Proton9-25"
-      
-      echo "Created minimal Proton fallback"
-    fi
-  fi
-  
-  # Step 4: Force reset the Proton prefix to ensure clean environment
+  echo "Using image-pinned Proton: $POK_PROTON_VERSION"
+  echo "Proton executable: $POK_PROTON_EXECUTABLE"
+
   echo "Force resetting Proton prefix for clean environment..."
-  initialize_proton_prefix
-  
-  # Step 5: Set up directory permissions
+  initialize_proton_prefix || return 1
+
   echo "Setting correct permissions for top-level directories..."
   chmod 755 "${STEAM_COMPAT_DATA_PATH}"
-  chmod 755 "$PROTON_BASE_DIR"
-  
-  # Ensure synchronization
+  chmod 755 "$(dirname "$POK_PROTON_DIR")"
+
   sync
-  # Add a delay to ensure all filesystem operations complete
   sleep 3
-  
-  # Step 6: Test Wine functionality
+
   echo "Testing Wine functionality..."
   if WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine --version >/dev/null 2>&1; then
     echo "Wine is functional in the environment."
   else
     echo "WARNING: Wine does not appear to be functioning correctly."
-    # Try to set up Wine library paths
     export LD_LIBRARY_PATH="/usr/lib/wine:/usr/lib32/wine:$LD_LIBRARY_PATH"
   fi
-  
+
   echo "Proton environment verification completed."
 }
 
@@ -650,7 +569,10 @@ if [ -f "/home/pok/require_files/xaudio2_9redist.dll" ]; then
 fi
 
 # Initialize Proton environment regardless of API setting
-verify_proton_environment
+if ! verify_proton_environment; then
+  echo "❌ ERROR: Pinned Proton environment verification failed." >&2
+  exit 1
+fi
 
 # Install/Update AsaApi if API=TRUE
 if [ "${API}" = "TRUE" ]; then

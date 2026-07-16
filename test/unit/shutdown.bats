@@ -188,3 +188,67 @@ EOF
   assert_output --partial "result=failed"
   assert_output --partial "flag=no"
 }
+
+@test "lingering process termination is refused without fresh DoExit verification" {
+  run env REPO_ROOT="$PROJECT_ROOT" BATS_TMP="$BATS_TEST_TMPDIR/no-force-before-save" bash -lc '
+    POK_SCRIPTS_DIR="$REPO_ROOT/scripts"
+    source "$POK_SCRIPTS_DIR/shutdown_server.sh"
+    VERIFIED_SHUTDOWN_MARKER="$BATS_TMP/missing.flag"
+    pkill() { echo "unexpected-kill:$*"; }
+    if shutdown_terminate_lingering_processes; then
+      echo "result=unexpected-success"
+    else
+      echo "result=refused"
+    fi
+  '
+
+  assert_success
+  assert_output --partial "result=refused"
+  refute_output --partial "unexpected-kill"
+}
+
+@test "lingering ASA processes are force-terminated after verified timeout" {
+  run env REPO_ROOT="$PROJECT_ROOT" BATS_TMP="$BATS_TEST_TMPDIR/verified-force" bash -lc '
+    set -e
+    POK_SCRIPTS_DIR="$REPO_ROOT/scripts"
+    source "$POK_SCRIPTS_DIR/shutdown_server.sh"
+    mkdir -p "$BATS_TMP"
+    VERIFIED_SHUTDOWN_MARKER="$BATS_TMP/verified.flag"
+    date +%s > "$VERIFIED_SHUTDOWN_MARKER"
+    running=true
+    shutdown_server_process_running() { [ "$running" = true ]; }
+    pkill() { printf "kill:%s\n" "$*" >> "$BATS_TMP/kills"; running=false; }
+    sleep() { :; }
+    shutdown_wait_for_server_exit 0
+    cat "$BATS_TMP/kills"
+  '
+
+  assert_success
+  assert_output --partial "kill:-KILL -f AsaApiLoader.exe"
+  assert_output --partial "Lingering ASA processes were terminated"
+}
+
+@test "automatic restart persists state before signaling PID 1" {
+  run env REPO_ROOT="$PROJECT_ROOT" BATS_TMP="$BATS_TEST_TMPDIR/restart-state" bash -lc '
+    set -e
+    POK_SCRIPTS_DIR="$REPO_ROOT/scripts"
+    source "$POK_SCRIPTS_DIR/shutdown_server.sh"
+    mkdir -p "$BATS_TMP"
+    POK_RESTART_STATE_DIR="$BATS_TMP"
+    shutdown_server_process_running() { return 1; }
+    sync() { :; }
+    sleep() { :; }
+    pgrep() { return 1; }
+    kill() {
+      printf "signal=%s:%s\n" "$1" "$2"
+      printf "reason_at_signal=%s\n" "$(cat "$POK_RESTART_STATE_DIR/restart_reason.flag")"
+      printf "build_at_signal=%s\n" "$(cat "$POK_RESTART_STATE_DIR/expected_build_id.txt")"
+    }
+    request_verified_container_restart UPDATE_RESTART 24680
+  '
+
+  assert_success
+  assert_output --partial "signal=-TERM:1"
+  assert_output --partial "reason_at_signal=UPDATE_RESTART"
+  assert_output --partial "build_at_signal=24680"
+}
