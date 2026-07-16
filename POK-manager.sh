@@ -4182,7 +4182,28 @@ _instance_has_running_server_process() {
   container_name=$(_instance_resolved_container_name "$instance_name")
 
   docker inspect --format '{{.State.Running}}' "$container_name" 2>/dev/null | grep -q '^true$' || return 1
-  docker exec "$container_name" /bin/bash -lc 'pgrep -f "AsaApiLoader.exe" >/dev/null 2>&1 || pgrep -f "ArkAscendedServer.exe" >/dev/null 2>&1' >/dev/null 2>&1
+  docker exec "$container_name" /bin/sh -c '
+    if [ -r /home/pok/scripts/shutdown_server.sh ] && command -v bash >/dev/null 2>&1; then
+      bash /home/pok/scripts/shutdown_server.sh process-running
+      exit $?
+    fi
+
+    # Compatibility fallback for images that predate the shared shutdown helper.
+    if pgrep -f "[A]saApiLoader.exe" >/dev/null 2>&1 || pgrep -f "[A]rkAscendedServer.exe" >/dev/null 2>&1; then
+      exit 0
+    fi
+    for pid_file in /home/pok/*_ark_server.pid; do
+      [ -f "$pid_file" ] || continue
+      pid=$(tr -d "[:space:]" < "$pid_file" 2>/dev/null || true)
+      case "$pid" in
+        ""|*[!0-9]*) continue ;;
+      esac
+      if ps -p "$pid" -o args= 2>/dev/null | grep -q -E "[A]saApiLoader.exe|[A]rkAscendedServer.exe"; then
+        exit 0
+      fi
+    done
+    exit 1
+  ' >/dev/null 2>&1
 }
 
 _instance_confirm_no_server_process_for_fast_removal() {
@@ -4212,12 +4233,12 @@ _instance_confirm_no_server_process_for_fast_removal() {
 
   if [ "$use_sudo" = "true" ]; then
     sudo docker exec "$container_name" /bin/sh -c \
-      'command -v pgrep >/dev/null 2>&1 || exit 11; if pgrep -f "[A]saApiLoader.exe" >/dev/null 2>&1 || pgrep -f "[A]rkAscendedServer.exe" >/dev/null 2>&1; then exit 10; else exit 0; fi' \
+      'if [ -r /home/pok/scripts/shutdown_server.sh ] && command -v bash >/dev/null 2>&1; then bash /home/pok/scripts/shutdown_server.sh process-running; status=$?; if [ "$status" -eq 0 ]; then exit 10; elif [ "$status" -eq 1 ]; then exit 0; else exit 11; fi; fi; command -v pgrep >/dev/null 2>&1 || exit 11; if pgrep -f "[A]saApiLoader.exe" >/dev/null 2>&1 || pgrep -f "[A]rkAscendedServer.exe" >/dev/null 2>&1; then exit 10; else exit 0; fi' \
       >/dev/null 2>&1
     process_status=$?
   else
     docker exec "$container_name" /bin/sh -c \
-      'command -v pgrep >/dev/null 2>&1 || exit 11; if pgrep -f "[A]saApiLoader.exe" >/dev/null 2>&1 || pgrep -f "[A]rkAscendedServer.exe" >/dev/null 2>&1; then exit 10; else exit 0; fi' \
+      'if [ -r /home/pok/scripts/shutdown_server.sh ] && command -v bash >/dev/null 2>&1; then bash /home/pok/scripts/shutdown_server.sh process-running; status=$?; if [ "$status" -eq 0 ]; then exit 10; elif [ "$status" -eq 1 ]; then exit 0; else exit 11; fi; fi; command -v pgrep >/dev/null 2>&1 || exit 11; if pgrep -f "[A]saApiLoader.exe" >/dev/null 2>&1 || pgrep -f "[A]rkAscendedServer.exe" >/dev/null 2>&1; then exit 10; else exit 0; fi' \
       >/dev/null 2>&1
     process_status=$?
   fi

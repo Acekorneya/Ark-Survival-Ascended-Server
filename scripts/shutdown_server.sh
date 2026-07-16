@@ -360,7 +360,10 @@ safe_container_stop() {
 
   verified_saveworld || return 1
   verified_doexit_save || return 1
-  shutdown_wait_for_server_exit 60 || true
+  if ! shutdown_wait_for_server_exit 5; then
+    echo "Warning: Verified process termination did not complete; retaining the remaining 55-second safety wait." >&2
+    shutdown_wait_for_server_exit 55 || return 1
+  fi
 
   touch "$SHUTDOWN_COMPLETE_FLAG"
   echo "---- Both world saves verified; container is safe to stop ----"
@@ -401,6 +404,11 @@ initiate_shutdown() {
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  if [ "${1:-}" = "process-running" ]; then
+    shutdown_server_process_running
+    exit $?
+  fi
+
   prepare_runtime_env
   case "${1:-}" in
   restart)

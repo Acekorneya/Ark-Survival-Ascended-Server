@@ -880,6 +880,12 @@ Non-interactive API restarts always keep the known-good files so scheduled maint
 
 If ASA has already exited before the verified stop phase begins, POK reconfirms that no server process appeared and removes the already-safe container immediately instead of waiting through the full Docker grace period. If the final check is uncertain or sees a process, the normal protected grace period remains in force.
 
+The manager uses the container's authoritative shutdown process probe before deciding that ASA is absent, with live Wine/Proton command-line and recorded-launcher-PID fallbacks for older images. The final pre-removal race check uses the same probe. If Docker's PID 1 shutdown trap must perform the two saves itself, it allows five seconds for a clean ASA exit and then terminates lingering Proton/Wine processes only after both saves are verified. A failed verified termination retains the remaining 55-second safety wait.
+
+Direct `API=FALSE` launches do not use Steam's game-specific ProtonFixes hook path. Unfiltered launch diagnostics remain available at `/home/pok/logs/proton_runtime.log`, and the final lines are shown automatically if both pinned-Proton attempts fail.
+
+For `API=TRUE`, the container console omits AsaApi's repeated copyright, URL, cache-reading, and hook-initialization boilerplate. API load success, plugin activity, warnings, and errors remain visible, while the mounted `API_Logs` file retains the complete original output. First-launch guidance is controlled by persistent per-instance flags, so recreating a container does not incorrectly present an established server as a first launch.
+
 ```bash
 # Restart an API-enabled instance with a 5-minute countdown
 ./POK-manager.sh -restart 5 my_api_instance

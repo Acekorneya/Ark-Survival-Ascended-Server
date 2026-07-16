@@ -32,6 +32,31 @@ EOF
   assert_output --partial "found=other"
 }
 
+@test "manager ASA detection uses the container shutdown probe with compatibility fallbacks" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/process-detection" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    mkdir -p "$BASE_DIR"
+    source "$REPO_ROOT/POK-manager.sh"
+    _instance_resolved_container_name() { echo asa_demo; }
+    docker() {
+      if [ "$1" = inspect ]; then
+        echo true
+        return 0
+      fi
+      printf "%s\n" "$*" > "$BASE_DIR/docker-exec.args"
+      return 0
+    }
+    _instance_has_running_server_process demo
+    cat "$BASE_DIR/docker-exec.args"
+  '
+
+  assert_success
+  assert_output --partial "shutdown_server.sh process-running"
+  assert_output --partial "pgrep -f"
+  assert_output --partial "*_ark_server.pid"
+  assert_output --partial "ps -p"
+}
+
 @test "stop_instance uses two verified stages and derived compose timeout when a folder was renamed" {
   run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/stop-renamed" POK_MANAGER_TEST_MODE=1 bash -lc '
     set -e

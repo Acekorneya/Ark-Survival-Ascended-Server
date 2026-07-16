@@ -68,6 +68,55 @@ EOF
   assert_output --partial "flag=yes"
 }
 
+@test "safe_container_stop uses the five-second exit window after both saves are verified" {
+  run env REPO_ROOT="$PROJECT_ROOT" BATS_TMP="$BATS_TEST_TMPDIR/container-fast-stop" bash -lc '
+    set -e
+    POK_SCRIPTS_DIR="$REPO_ROOT/scripts"
+    source "$POK_SCRIPTS_DIR/shutdown_server.sh"
+    mkdir -p "$BATS_TMP"
+    SHUTDOWN_COMPLETE_FLAG="$BATS_TMP/shutdown_complete.flag"
+    VERIFIED_SHUTDOWN_MARKER="$BATS_TMP/verified.flag"
+    shutdown_server_process_running() { return 0; }
+    send_rcon_command() { :; }
+    verified_saveworld() { echo "save=verified"; }
+    verified_doexit_save() { echo "doexit=verified"; }
+    shutdown_wait_for_server_exit() { echo "wait=$1"; return 0; }
+    safe_container_stop
+  '
+
+  assert_success
+  assert_output --partial "save=verified"
+  assert_output --partial "doexit=verified"
+  assert_output --partial "wait=5"
+  refute_output --partial "wait=60"
+  refute_output --partial "wait=55"
+}
+
+@test "safe_container_stop retains the remaining safety wait when verified termination fails" {
+  run env REPO_ROOT="$PROJECT_ROOT" BATS_TMP="$BATS_TEST_TMPDIR/container-stop-fallback" bash -lc '
+    set -e
+    POK_SCRIPTS_DIR="$REPO_ROOT/scripts"
+    source "$POK_SCRIPTS_DIR/shutdown_server.sh"
+    mkdir -p "$BATS_TMP"
+    SHUTDOWN_COMPLETE_FLAG="$BATS_TMP/shutdown_complete.flag"
+    VERIFIED_SHUTDOWN_MARKER="$BATS_TMP/verified.flag"
+    shutdown_server_process_running() { return 0; }
+    send_rcon_command() { :; }
+    verified_saveworld() { :; }
+    verified_doexit_save() { :; }
+    shutdown_wait_for_server_exit() {
+      echo "wait=$1"
+      [ "$1" = 55 ]
+    }
+    safe_container_stop
+  '
+
+  assert_success
+  assert_output --partial "wait=5"
+  assert_output --partial "retaining the remaining 55-second safety wait"
+  assert_output --partial "wait=55"
+}
+
 @test "shutdown_main_save_file uses exact MAP_NAME for modded and future maps" {
   run env REPO_ROOT="$PROJECT_ROOT" BATS_TMP="$BATS_TEST_TMPDIR/map-exact" bash -lc '
     set -e

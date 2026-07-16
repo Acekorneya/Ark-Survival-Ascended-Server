@@ -15,6 +15,52 @@ load '../test_helper/project.bash'
   assert_output --partial "main=function"
 }
 
+@test "Proton console filtering hides only the misleading direct-launch unit-test warning" {
+  run env REPO_ROOT="$PROJECT_ROOT" BATS_TMP="$BATS_TEST_TMPDIR/proton-filter" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/launch_ASA.sh"
+    mkdir -p "$BATS_TMP"
+    PROTON_RUNTIME_LOG="$BATS_TMP/proton.log"
+    printf "%s\n" \
+      "ProtonFixes[324] WARN: Skipping fix execution. We are probably running a unit test." \
+      "Proton: Upgrading prefix from None to GE-Proton10-33" \
+      "wine: example actionable failure" | filter_proton_runtime_output
+    printf "%s\n" "---raw-diagnostics---"
+    cat "$PROTON_RUNTIME_LOG"
+  '
+
+  assert_success
+  assert_line "Proton: Upgrading prefix from None to GE-Proton10-33"
+  assert_line "wine: example actionable failure"
+  assert_output --partial "---raw-diagnostics---"
+  assert_output --partial "ProtonFixes[324] WARN: Skipping fix execution. We are probably running a unit test."
+  [ "$(printf "%s\n" "$output" | grep -c "probably running a unit test")" -eq 1 ]
+}
+
+@test "AsaApi console filtering removes fixed startup boilerplate but keeps operational lines" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/launch_ASA.sh"
+    printf "%s\n" \
+      "07/16/26 10:25 [API][info] -----------------------------------------------" \
+      "07/16/26 10:25 [API][info] ARK:SA Api V2.01" \
+      "07/16/26 10:25 [API][info] Reading cached offsets" \
+      "07/16/26 10:25 [API][info] Initialized hooks" \
+      "07/16/26 10:25 [API][info] API was successfully loaded" \
+      "07/16/26 10:25 [API][info] Loaded plugin Permissions V1.1" \
+      "07/16/26 10:25 [API][critical] Failed to get an offset" |
+      filter_asaapi_console_output
+  '
+
+  assert_success
+  refute_output --partial "ARK:SA Api V2.01"
+  refute_output --partial "Reading cached offsets"
+  refute_output --partial "Initialized hooks"
+  assert_line "07/16/26 10:25 [API][info] API was successfully loaded"
+  assert_line "07/16/26 10:25 [API][info] Loaded plugin Permissions V1.1"
+  assert_line "07/16/26 10:25 [API][critical] Failed to get an offset"
+}
+
 @test "determine_map_path maps official and custom map names" {
   run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
     set -e

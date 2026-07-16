@@ -17,13 +17,69 @@ LAUNCH_ASA_ADVERTISING_MARKER="Server has completed startup and is now advertisi
 LAUNCH_ASA_FULL_STARTUP_MARKER="Full Startup:"
 LAUNCH_ASA_READY_MARKER_TYPE=""
 
+proton_output_is_direct_launch_hook_warning() {
+  local line="$1"
+
+  [[ "$line" =~ ^ProtonFixes\[[0-9]+\]\ WARN:\ Skipping\ fix\ execution\.\ We\ are\ probably\ running\ a\ unit\ test\.$ ]]
+}
+
+filter_proton_runtime_output() {
+  local line=""
+  local diagnostic_log="${PROTON_RUNTIME_LOG:-/home/pok/logs/proton_runtime.log}"
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    printf '%s\n' "$line" >> "$diagnostic_log"
+    if proton_output_is_direct_launch_hook_warning "$line"; then
+      continue
+    fi
+    printf '%s\n' "$line"
+  done
+}
+
+print_proton_runtime_diagnostics() {
+  local diagnostic_log="$1"
+  local line=""
+  local filtered_log=""
+
+  [ -s "$diagnostic_log" ] || return 0
+  filtered_log=$(mktemp "${TMPDIR:-/tmp}/pok-proton-diagnostics.XXXXXX") || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    proton_output_is_direct_launch_hook_warning "$line" && continue
+    printf '%s\n' "$line" >> "$filtered_log"
+  done < "$diagnostic_log"
+  tail -20 "$filtered_log"
+  rm -f "$filtered_log"
+}
+
+asaapi_output_is_startup_boilerplate() {
+  local line="$1"
+
+  [[ "$line" =~ \[API\]\[info\]\ (-+|ARK:SA\ Api\ V[^[:space:]]+|Brought\ to\ you\ by\ ArkServerApi|https://github\.com/orgs/ArkServerApi|Website:\ https://ark-server-api\.com|Loading\.\.\.|Added\ DLL\ search\ directory:.*|Reading\ cached\ offsets|Reading\ cached\ bitfields|Initialized\ hooks)$ ]]
+}
+
+filter_asaapi_console_output() {
+  local line=""
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    asaapi_output_is_startup_boilerplate "$line" && continue
+    printf '%s\n' "$line"
+  done
+}
+
 start_log_tail() {
   local log_file="$1"
   local pid_variable="$2"
+  local output_mode="${3:-complete}"
 
-  # Stream the complete file directly to container stdout. Following by name
-  # keeps the mirror alive when ASA replaces or rotates its log file.
-  tail -n +1 -F "$log_file" &
+  # Follow the complete source file by name so mirroring survives replacement
+  # and rotation. The selected console mode may omit documented boilerplate.
+  if [ "$output_mode" = "asaapi" ]; then
+    # The source log remains complete on disk. The container console omits only
+    # AsaApi's fixed startup banner/cache boilerplate and keeps operational lines.
+    tail -n +1 -F "$log_file" > >(filter_asaapi_console_output) &
+  else
+    tail -n +1 -F "$log_file" &
+  fi
   printf -v "$pid_variable" '%s' "$!"
 }
 
@@ -424,28 +480,6 @@ start_server() {
     sync
     sleep 2
     
-    # Add first-time launch detection and notification
-    local first_launch_file="/home/pok/.first_launch_completed"
-    local container_launch_file="/home/pok/.container_launched"
-    local is_first_launch=false
-    
-    # Only show first launch message if both conditions are true:
-    # 1. First time running the server (no .first_launch_completed file)
-    # 2. First time in this container instance (no .container_launched file)
-    if [ ! -f "$first_launch_file" ] && [ ! -f "$container_launch_file" ]; then
-      is_first_launch=true
-      echo ""
-      echo "🔍 FIRST-TIME LAUNCH DETECTED"
-      echo "⚠️ The first server launch may take longer and could potentially fail"
-      echo "🔄 If the first launch fails, the system will automatically restart"
-      echo "   and complete setup on the second attempt (this is normal behavior)"
-      echo "⏱️ Please be patient during the first launch process"
-      echo ""
-    fi
-    
-    # Always create the container_launched file to mark this container as having been run before
-    touch "$container_launch_file"
-    
     # Define a function to make a launch attempt
     attempt_launch() {
       local method="$1"
@@ -653,6 +687,12 @@ start_server() {
     SERVER_PID=""
     local launch_attempt
     local proton_launcher_pid
+    local PROTON_RUNTIME_LOG="/home/pok/logs/proton_runtime.log"
+
+    mkdir -p "$(dirname "$PROTON_RUNTIME_LOG")"
+    : > "$PROTON_RUNTIME_LOG"
+    echo "[INFO] Direct dedicated-server launch: Steam game-specific ProtonFixes hooks are not applicable."
+    echo "[INFO] Proton diagnostics are mirrored to $PROTON_RUNTIME_LOG"
 
     for launch_attempt in 1 2; do
       if [ "$launch_attempt" -eq 1 ]; then
@@ -660,7 +700,9 @@ start_server() {
       else
         echo "Retrying launch with pinned Proton $POK_PROTON_VERSION"
       fi
-      "$PROTON_EXECUTABLE" run "$LAUNCH_BINARY_NAME" $server_params &
+      "$PROTON_EXECUTABLE" run "$LAUNCH_BINARY_NAME" $server_params \
+        > >(filter_proton_runtime_output) \
+        2> >(filter_proton_runtime_output >&2) &
       proton_launcher_pid=$!
       sleep 5
 
@@ -676,6 +718,8 @@ start_server() {
 
     if [ -z "$SERVER_PID" ]; then
       echo "ERROR: Both launch attempts with pinned Proton $POK_PROTON_VERSION failed."
+      echo "[ERROR] Last Proton diagnostic output:"
+      print_proton_runtime_diagnostics "$PROTON_RUNTIME_LOG"
       exit 1
     fi
   fi
@@ -718,7 +762,7 @@ start_server() {
           echo "---------------------------------------------"
           echo "📋 ASAAPI LOG OUTPUT:"
           echo "---------------------------------------------"
-          start_log_tail "$api_log" API_TAIL_PID
+          start_log_tail "$api_log" API_TAIL_PID asaapi
           break
         fi
         printf "\r🔍 Waiting for AsaApi logs... (%ds elapsed)      " "$api_elapsed"
