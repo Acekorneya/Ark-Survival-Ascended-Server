@@ -30,10 +30,81 @@ validate_manifest() {
   fi
 }
 
+find_rollback_depot_root() {
+  local steamcmd_root="${1:-${STEAMCMD_ROOT:-/opt/steamcmd}}"
+  local downloaded_exe=""
+
+  [ -d "$steamcmd_root" ] || return 1
+  while IFS= read -r -d '' downloaded_exe; do
+    dirname "$(dirname "$(dirname "$(dirname "$downloaded_exe")")")"
+    return 0
+  done < <(find "$steamcmd_root" -type f \
+    -name ArkAscendedServer.exe \
+    -path '*app_2430930*' \
+    -path '*depot_2430931*' \
+    -print0 2>/dev/null)
+
+  return 1
+}
+
+cleanup_rollback_downloads() {
+  local steamcmd_root="${1:-${STEAMCMD_ROOT:-/opt/steamcmd}}"
+  local depot_root=""
+
+  depot_root=$(find_rollback_depot_root "$steamcmd_root" 2>/dev/null || true)
+  [ -z "$depot_root" ] || rm -rf -- "$depot_root"
+
+  # Also remove empty/partial standard layouts that do not contain the
+  # executable yet. SteamCMD has used both root- and linux32-relative layouts.
+  rm -rf -- \
+    "${steamcmd_root}/steamapps/content/app_2430930/depot_2430931" \
+    "${steamcmd_root}/linux32/steamapps/content/app_2430930/depot_2430931"
+}
+
+rollback_downloaded_megabytes() {
+  local steamcmd_root="${1:-${STEAMCMD_ROOT:-/opt/steamcmd}}"
+  local total_kib=0
+
+  [ -d "$steamcmd_root" ] || {
+    echo 0
+    return 0
+  }
+  total_kib=$(find "$steamcmd_root" -type f \
+    -path '*app_2430930*' \
+    -path '*depot_2430931*' \
+    -printf '%k\n' 2>/dev/null | awk '{ total += $1 } END { print total + 0 }')
+  echo $((total_kib / 1024))
+}
+
+rollback_download_heartbeat() {
+  local steamcmd_root="$1"
+  local interval="${ROLLBACK_PROGRESS_INTERVAL_SECONDS:-30}"
+  local elapsed=0
+  local downloaded_mb=0
+  local sleep_pid=""
+
+  if ! [[ "$interval" =~ ^[0-9]+$ ]] || [ "$interval" -lt 1 ]; then
+    interval=30
+  fi
+  trap '[ -z "$sleep_pid" ] || kill "$sleep_pid" 2>/dev/null || true; exit 0' TERM INT
+  while true; do
+    sleep "$interval" &
+    sleep_pid=$!
+    wait "$sleep_pid" || return 0
+    sleep_pid=""
+    elapsed=$((elapsed + interval))
+    downloaded_mb=$(rollback_downloaded_megabytes "$steamcmd_root")
+    echo "[INFO] SteamCMD rollback staging is still active (${elapsed}s elapsed, approximately ${downloaded_mb} MiB present)."
+  done
+}
+
 download_rollback_manifest() {
   local manifest="$1"
   local steamcmd_bin="${STEAMCMD_BIN:-/opt/steamcmd/steamcmd.sh}"
+  local steamcmd_root="${STEAMCMD_ROOT:-/opt/steamcmd}"
   local -a login_args=()
+  local heartbeat_pid=""
+  local steamcmd_status=0
 
   if [ -z "${STEAM_USERNAME:-}" ] || [ -z "${STEAM_PASSWORD:-}" ]; then
     echo "[ERROR] Authenticated Steam credentials are required to download historical ASA depot manifests."
@@ -43,18 +114,28 @@ download_rollback_manifest() {
   login_args=(+login "$STEAM_USERNAME" "$STEAM_PASSWORD")
   if [ -n "${STEAM_GUARD_CODE:-}" ]; then
     login_args+=("$STEAM_GUARD_CODE")
+    echo "[INFO] Authenticating to Steam with the supplied one-run Steam Guard code."
+  else
+    echo "[ACTION REQUIRED] If Steam requests mobile confirmation, approve the new SteamCMD sign-in immediately."
+    echo "[ACTION REQUIRED] SteamCMD will wait only for a limited time before cancelling the login."
   fi
 
+  rollback_download_heartbeat "$steamcmd_root" &
+  heartbeat_pid=$!
   "$steamcmd_bin" \
     +@sSteamCmdForcePlatformType windows \
     "${login_args[@]}" \
     +download_depot 2430930 2430931 "$manifest" \
-    +quit
+    +quit || steamcmd_status=$?
+  kill "$heartbeat_pid" 2>/dev/null || true
+  wait "$heartbeat_pid" 2>/dev/null || true
+  return "$steamcmd_status"
 }
 
 stage_rollback() {
   local manifest="$1"
-  local content_root="/opt/steamcmd/steamapps/content/app_2430930/depot_2430931"
+  local steamcmd_root="${STEAMCMD_ROOT:-/opt/steamcmd}"
+  local content_root=""
   local staged_exe="${ROLLBACK_STAGING_DIR}/ShooterGame/Binaries/Win64/ArkAscendedServer.exe"
   local current_exe="${ASA_DIR}/ShooterGame/Binaries/Win64/ArkAscendedServer.exe"
   local failed_hash=""
@@ -81,13 +162,20 @@ stage_rollback() {
   LOCK_HELD=true
 
   echo "[INFO] Staging ASA depot 2430931 manifest ${manifest} with authenticated SteamCMD access..."
-  rm -rf "$content_root" "$ROLLBACK_STAGING_DIR"
+  cleanup_rollback_downloads "$steamcmd_root"
+  rm -rf "$ROLLBACK_STAGING_DIR"
   mkdir -p "$ROLLBACK_STAGING_DIR" "$DEPLOYMENT_STATE_DIR"
   if ! download_rollback_manifest "$manifest"; then
     echo "[ERROR] SteamCMD failed to download rollback manifest ${manifest}."
     echo "[ERROR] Confirm that the configured Steam account owns ARK: Survival Ascended and that any Steam Guard code is current."
     return 1
   fi
+  content_root=$(find_rollback_depot_root "$steamcmd_root" || true)
+  [ -n "$content_root" ] || {
+    echo "[ERROR] SteamCMD reported success, but the downloaded depot could not be located under ${steamcmd_root}."
+    return 1
+  }
+  echo "[INFO] Located downloaded rollback depot at: ${content_root}"
   [ -f "${content_root}/ShooterGame/Binaries/Win64/ArkAscendedServer.exe" ] || {
     echo "[ERROR] SteamCMD completed without the expected ARK server executable."
     return 1

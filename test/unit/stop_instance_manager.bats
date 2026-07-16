@@ -291,6 +291,72 @@ EOF
   assert_output --partial "Shared ASA rollback manifest 681058914540629286 is active."
 }
 
+@test "interactive rollback staging keeps a TTY while captured actions disable it" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/rollback-tty" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    mkdir -p "$BASE_DIR/Instance_demo"
+    touch "$BASE_DIR/Instance_demo/docker-compose-demo.yaml"
+    source "$REPO_ROOT/POK-manager.sh"
+    DOCKER_COMPOSE_CMD=fake_compose
+    is_sudo() { return 1; }
+    _rollback_terminal_is_interactive() { return 0; }
+    fake_compose() {
+      local argument=""
+      local action=""
+      local disabled=false
+      for argument in "$@"; do
+        [ "$argument" = "-T" ] && disabled=true
+        case "$argument" in
+          stage|select) action="$argument" ;;
+        esac
+      done
+      if [ "$action" = "stage" ] && [ "$disabled" = false ]; then
+        echo "stage-tty=enabled"
+      elif [ "$action" = "select" ] && [ "$disabled" = true ]; then
+        echo "select-tty=disabled"
+      else
+        return 1
+      fi
+    }
+    _rollback_compose_run demo stage 681058914540629286
+    _rollback_compose_run demo select
+  '
+
+  assert_success
+  assert_output --partial "stage-tty=enabled"
+  assert_output --partial "select-tty=disabled"
+}
+
+@test "rollback Steam Guard prompt captures a code without echoing it" {
+  run env REPO_ROOT="$PROJECT_ROOT" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    source "$REPO_ROOT/POK-manager.sh"
+    _rollback_terminal_is_interactive() { return 0; }
+    STEAM_GUARD_CODE=""
+    _prompt_optional_rollback_steam_guard_code demo <<< "TEST1"
+    [ "$STEAM_GUARD_CODE" = "TEST1" ]
+    echo "guard-code=captured"
+  '
+
+  assert_success
+  assert_output --partial "guard-code=captured"
+  refute_output --partial "TEST1"
+}
+
+@test "rollback Steam Guard prompt explains mobile approval when code is blank" {
+  run env REPO_ROOT="$PROJECT_ROOT" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    source "$REPO_ROOT/POK-manager.sh"
+    _rollback_terminal_is_interactive() { return 0; }
+    STEAM_GUARD_CODE=""
+    _prompt_optional_rollback_steam_guard_code demo <<< ""
+  '
+
+  assert_success
+  assert_output --partial "Keep the Steam Mobile app open"
+  assert_output --partial "approve the new sign-in before its timeout"
+}
+
 @test "named rollback refuses noninteractive shared mutation when multiple instances exist" {
   run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/rollback-confirm" POK_MANAGER_TEST_MODE=1 bash -lc '
     mkdir -p "$BASE_DIR/Instance_alpha" "$BASE_DIR/Instance_beta"

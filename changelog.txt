@@ -16,6 +16,8 @@
 - Managed AsaApi caches now retain `cached_offsets.txt`, validate the core offsets required by the pinned release, quarantine incompatible executable-specific archives until their CDN timestamp changes, and expose the missing symbol through startup health instead of launching into a fatal hook error.
 - Added `-rollback <instance|-all> [--force]` to stage a known-good ASA depot and its executable-specific AsaApi cache before using the shared two-stage save barrier, activating the shared files, and restarting only previously running instances.
 - Fixed historical depot rollback authentication by reusing Steam credentials from managed Compose files, securely prompting when missing, and forwarding an optional one-run Steam Guard code without persisting it.
+- Kept an interactive TTY during rollback staging and added immediate Steam Mobile approval instructions so SteamCMD authentication requests no longer remain buffered until timeout; the image now also provides the `en_US.UTF-8` locale expected by SteamCMD.
+- Fixed rollback activation after a successful depot transfer by discovering SteamCMD's platform-dependent depot location from `ArkAscendedServer.exe` instead of assuming a root-relative `steamapps` path, with periodic elapsed-time and staged-size progress while the 8+ GB download runs.
 - Fully started managed API deployments now build a bounded known-good manifest history. Active rollback protection holds the compatible depot until Steam publishes another build or the failed cache timestamp changes, and preflights that candidate before returning the cluster to latest.
 
 ## Version 2.1.80 (Previous)

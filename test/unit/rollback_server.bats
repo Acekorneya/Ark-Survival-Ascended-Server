@@ -26,6 +26,25 @@ load '../test_helper/project.bash'
   assert_output --partial "Depot manifest must contain only digits"
 }
 
+@test "rollback depot discovery accepts SteamCMD linux32-relative content" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/rollback_server.sh"
+    steamcmd_root="$BATS_TEST_TMPDIR/steamcmd"
+    depot_root="$steamcmd_root/linux32/steamapps/content/app_2430930/depot_2430931"
+    mkdir -p "$depot_root/ShooterGame/Binaries/Win64"
+    touch "$depot_root/ShooterGame/Binaries/Win64/ArkAscendedServer.exe"
+    discovered=$(find_rollback_depot_root "$steamcmd_root")
+    [ "$discovered" = "$depot_root" ]
+    cleanup_rollback_downloads "$steamcmd_root"
+    [ ! -e "$depot_root" ]
+    echo "depot-path=discovered-and-cleaned"
+  '
+
+  assert_success
+  assert_output "depot-path=discovered-and-cleaned"
+}
+
 @test "rollback depot download uses authenticated Steam credentials and a one-run Guard code" {
   run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
     set -e
@@ -63,7 +82,9 @@ EOF
   '
 
   assert_success
-  assert_output "rollback-login=authenticated"
+  assert_output --partial "Authenticating to Steam with the supplied one-run Steam Guard code"
+  assert_output --partial "rollback-login=authenticated"
+  refute_output --partial "TEST1"
 }
 
 @test "rollback depot download refuses to run without Steam credentials" {

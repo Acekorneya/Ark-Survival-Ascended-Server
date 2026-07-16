@@ -2214,17 +2214,27 @@ stop_all_instances() {
   _verified_shutdown_instances "$force_mode" "${running_instances[@]}"
 }
 
+_rollback_terminal_is_interactive() {
+  [ -t 0 ] && [ -t 1 ]
+}
+
 _rollback_compose_run() {
   local instance_name="$1"
   local rollback_action="$2"
   local manifest="${3:-}"
   local compose_file="${BASE_DIR}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
-  local -a command_args=(-f "$compose_file" run --rm --no-deps -T)
+  local -a command_args=(-f "$compose_file" run --rm --no-deps)
 
   [ -f "$compose_file" ] || {
     echo "Rollback worker compose file was not found for instance '${instance_name}'." >&2
     return 1
   }
+  # SteamCMD changes its output buffering and authentication prompts when no
+  # terminal is present. Keep a TTY for interactive staging so mobile approval
+  # requests are visible immediately and stdin remains available.
+  if [ "$rollback_action" != "stage" ] || ! _rollback_terminal_is_interactive; then
+    command_args+=(-T)
+  fi
   if [ "$rollback_action" = "stage" ] && [ -n "${STEAM_GUARD_CODE:-}" ]; then
     command_args+=(-e "STEAM_GUARD_CODE=${STEAM_GUARD_CODE}")
   fi
@@ -2241,14 +2251,30 @@ _rollback_compose_run() {
 _prompt_optional_rollback_steam_guard_code() {
   local instance_name="${1:-}"
 
-  if [ -n "${STEAM_GUARD_CODE:-}" ] || [ ! -t 0 ]; then
+  if [ -n "${STEAM_GUARD_CODE:-}" ]; then
+    return 0
+  fi
+
+  if ! _rollback_terminal_is_interactive; then
+    echo "[INFO] Steam Guard input is unavailable without an interactive terminal." >&2
+    echo "[ACTION REQUIRED] Watch the Steam Mobile app and approve the new SteamCMD sign-in immediately if prompted." >&2
     return 0
   fi
 
   echo "" >&2
-  echo "Steam Guard code for ASA rollback on instance ${instance_name} (optional)." >&2
-  echo "Enter the current code from your Steam mobile app, or leave blank if this login does not require one:" >&2
-  read -rp "> " STEAM_GUARD_CODE
+  echo "═══════════════════════════════════════════════════════════" >&2
+  echo "  Steam Guard / Mobile Approval Required for Rollback" >&2
+  echo "═══════════════════════════════════════════════════════════" >&2
+  echo "Instance: ${instance_name}" >&2
+  echo "Enter a current Steam Guard code now, or press Enter to use Steam Mobile approval." >&2
+  read -rsp "> " STEAM_GUARD_CODE
+  echo "" >&2
+  if [ -z "$STEAM_GUARD_CODE" ]; then
+    echo "[ACTION REQUIRED] Keep the Steam Mobile app open." >&2
+    echo "[ACTION REQUIRED] When SteamCMD asks for confirmation, approve the new sign-in before its timeout." >&2
+  else
+    echo "[INFO] A one-run Steam Guard code will be supplied to the rollback worker." >&2
+  fi
   echo "" >&2
 }
 

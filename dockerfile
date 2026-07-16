@@ -28,7 +28,7 @@ RUN set -ex; \
     apt-get install -y --no-install-recommends \
     jq curl wget tar unzip nano gzip iproute2 procps software-properties-common dbus \
     python3-minimal \
-    tzdata \
+    tzdata locales \
     # tzdata package provides timezone database for TZ environment variable support \
     lib32gcc-s1 libglib2.0-0 libglib2.0-0:i386 libvulkan1 libvulkan1:i386 \
     libnss3 libnss3:i386 libgconf-2-4 libgconf-2-4:i386 \
@@ -44,6 +44,9 @@ RUN set -ex; \
     # DO NOT ENABLE screen package - causes log display issues which is needed by the POK-manager.sh script
     # cabextract is essential for winetricks vcrun2019 installation
     cabextract winbind; \
+    sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen; \
+    locale-gen en_US.UTF-8; \
+    update-locale LANG=en_US.UTF-8; \
     # Setup WineHQ repository
     mkdir -pm755 /etc/apt/keyrings; \
     wget -O - https://dl.winehq.org/wine-builds/winehq.key | gpg --dearmor -o /etc/apt/keyrings/winehq-archive.key; \
@@ -54,6 +57,10 @@ RUN set -ex; \
     # Cleanup to keep the image lean
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*
+
+ENV LANG=en_US.UTF-8
+ENV LANGUAGE=en_US:en
+ENV LC_ALL=en_US.UTF-8
 
 # Setup winetricks for Visual C++ Redistributable installation
 RUN set -ex; \
