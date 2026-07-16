@@ -7,7 +7,7 @@ FROM ubuntu:22.04
 # Host file ownership MUST match these values to avoid permission issues
 ARG PUID=7777
 ARG PGID=7777
-ARG PROTON_VERSION=GE-Proton11-1
+ARG PROTON_VERSION=GE-Proton10-33
 
 # Set a default timezone, can be overridden at runtime
 ENV TZ=UTC
