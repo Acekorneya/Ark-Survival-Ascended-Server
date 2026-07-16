@@ -99,3 +99,26 @@ load '../test_helper/project.bash'
   assert_success
   assert_output --partial "request=FOLLOWER_COORDINATION_RESTART:24680:/home/pok/container_update_restart.log"
 }
+
+@test "rollback update preflight rejects incompatible candidates without shutdown" {
+  run env REPO_ROOT="$PROJECT_ROOT" BATS_TMP="$BATS_TEST_TMPDIR/update-preflight" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/update_server.sh"
+    rollback_state_is_active() { return 0; }
+    acquire_update_lock() { echo lock; return 0; }
+    release_update_lock() { echo unlock; }
+    create_temp_download_dir() { mkdir -p "$BATS_TMP/staged"; echo "$BATS_TMP/staged"; }
+    steamcmd_download_to_dir() { echo download; return 0; }
+    prepare_staged_asaapi_cache() { echo incompatible; return 1; }
+    record_failed_rollback_retry() { echo recorded; }
+    shutdown_server_for_update() { echo unexpected-shutdown; }
+    if preflight_rollback_update; then echo unexpected-success; else echo held-online; fi
+  '
+
+  assert_success
+  assert_output --partial "incompatible"
+  assert_output --partial "recorded"
+  assert_output --partial "held-online"
+  assert_output --partial "unlock"
+  refute_output --partial "unexpected-shutdown"
+}

@@ -225,6 +225,44 @@ trigger_container_restart() {
   request_verified_container_restart "$reason" "$expected_build" "/home/pok/container_update_restart.log"
 }
 
+preflight_rollback_update() {
+  rollback_state_is_active || return 0
+  echo "[INFO] Preflighting the rollback-protected update while the current server remains online..."
+  if ! acquire_update_lock; then
+    echo "[WARNING] Another shared operation is active; deferring rollback compatibility preflight."
+    return 1
+  fi
+  LOCK_HELD=true
+  TEMP_DOWNLOAD_DIR=$(create_temp_download_dir) || {
+    release_update_lock
+    LOCK_HELD=false
+    return 1
+  }
+  if ! steamcmd_download_to_dir "$TEMP_DOWNLOAD_DIR"; then
+    echo "[WARNING] Candidate update could not be staged; the rollback server will remain online."
+    release_update_lock
+    LOCK_HELD=false
+    rm -rf "$TEMP_DOWNLOAD_DIR"
+    TEMP_DOWNLOAD_DIR=""
+    return 1
+  fi
+  if ! prepare_staged_asaapi_cache "$TEMP_DOWNLOAD_DIR"; then
+    record_failed_rollback_retry "$TEMP_DOWNLOAD_DIR"
+    echo "[WARNING] Candidate update remains incompatible with AsaApi; the rollback server will remain online."
+    release_update_lock
+    LOCK_HELD=false
+    rm -rf "$TEMP_DOWNLOAD_DIR"
+    TEMP_DOWNLOAD_DIR=""
+    return 1
+  fi
+  release_update_lock
+  LOCK_HELD=false
+  rm -rf "$TEMP_DOWNLOAD_DIR"
+  TEMP_DOWNLOAD_DIR=""
+  echo "[SUCCESS] Candidate update passed AsaApi preflight before the restart countdown."
+  return 0
+}
+
 main() {
   prepare_runtime_env
   current_build_id=$(get_current_build_id)
@@ -242,6 +280,15 @@ main() {
 
   if server_needs_update; then
     echo "[INFO] Server update/restart required: Current build ID: $current_build_id, Installed build ID: $(get_build_id_from_acf)"
+
+    if rollback_state_is_active && ! has_dirty_flag; then
+      if ! update_coordination_enabled || update_coordination_is_master_role; then
+        if ! preflight_rollback_update; then
+          echo "[INFO] No shutdown was initiated because the candidate update did not pass preflight."
+          exit 0
+        fi
+      fi
+    fi
 
     if has_dirty_flag; then
       echo "[INFO] This instance needs restart due to server files updated by another instance"
