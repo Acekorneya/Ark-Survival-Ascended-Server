@@ -635,11 +635,12 @@ else
   nohup /home/pok/scripts/launch_ASA.sh > /home/pok/logs/server_console.log 2>&1 &
   SERVER_PID=$!
   echo "[INFO] ARK server launched with PID: $SERVER_PID"
-  echo "[INFO] View logs with: tail -f /home/pok/logs/server_console.log"
+  echo "[INFO] View logs with: tail -n +1 -F /home/pok/logs/server_console.log"
   
-  # Start a background process to tail the log file to console
-  # This will show logs in the container's output while allowing the server to run in background
-  (tail -f /home/pok/logs/server_console.log 2>/dev/null &)
+  # Mirror the complete launcher/server stream into container stdout and keep
+  # following it if the console log is replaced.
+  tail -n +1 -F /home/pok/logs/server_console.log 2>/dev/null &
+  CONSOLE_TAIL_PID=$!
 fi
 
 # Simple server startup notification without creating competing flags

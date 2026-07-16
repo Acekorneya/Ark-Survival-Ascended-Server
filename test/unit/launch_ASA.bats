@@ -73,18 +73,49 @@ EOF
   assert_output --partial "second=advertising"
 }
 
-@test "redact_server_log_stream removes join and admin passwords" {
+@test "start_log_tail mirrors complete lines and follows log replacement" {
   run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
     set -e
     source "$REPO_ROOT/scripts/launch_ASA.sh"
-    printf "%s\n" "Commandline: Map?ServerPassword=joinSecret?ServerAdminPassword=adminSecret! -Port=7777" | redact_server_log_stream
+    log_file="$BATS_TEST_TMPDIR/ShooterGame.log"
+    captured="$BATS_TEST_TMPDIR/container.log"
+    printf "%s\n" "Log file open" > "$log_file"
+
+    start_log_tail "$log_file" GAME_TAIL_PID > "$captured" 2>&1
+    printf "%s\n" "Commandline: Map?ServerPassword=joinSecret?ServerAdminPassword=adminSecret! -Port=7777" >> "$log_file"
+
+    for _ in $(seq 1 50); do
+      if grep -q "adminSecret" "$captured"; then
+        break
+      fi
+      sleep 0.1
+    done
+
+    mv "$log_file" "$log_file.previous"
+    printf "%s\n" "Server has completed startup and is now advertising for join" > "$log_file"
+    for _ in $(seq 1 50); do
+      if grep -q "advertising for join" "$captured"; then
+        break
+      fi
+      sleep 0.1
+    done
+
+    kill "$GAME_TAIL_PID"
+    wait "$GAME_TAIL_PID" 2>/dev/null || true
+    if kill -0 "$GAME_TAIL_PID" 2>/dev/null; then
+      printf "%s\n" "tail-still-running"
+      exit 1
+    fi
+    cat "$captured"
+    printf "%s\n" "tail-stopped"
   '
 
   assert_success
-  assert_output --partial "ServerPassword=[REDACTED]"
-  assert_output --partial "ServerAdminPassword=[REDACTED]"
-  refute_output --partial "joinSecret"
-  refute_output --partial "adminSecret"
+  assert_output --partial "Log file open"
+  assert_output --partial "ServerPassword=joinSecret"
+  assert_output --partial "ServerAdminPassword=adminSecret!"
+  assert_output --partial "Server has completed startup and is now advertising for join"
+  assert_output --partial "tail-stopped"
 }
 
 @test "update_game_user_settings updates the password and MOTD in GameUserSettings.ini" {

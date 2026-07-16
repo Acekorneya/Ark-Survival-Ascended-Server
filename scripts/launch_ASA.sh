@@ -17,10 +17,14 @@ LAUNCH_ASA_ADVERTISING_MARKER="Server has completed startup and is now advertisi
 LAUNCH_ASA_FULL_STARTUP_MARKER="Full Startup:"
 LAUNCH_ASA_READY_MARKER_TYPE=""
 
-redact_server_log_stream() {
-  sed -E \
-    -e 's/(ServerAdminPassword=)[^?[:space:]]*/\1[REDACTED]/g' \
-    -e 's/(ServerPassword=)[^?[:space:]]*/\1[REDACTED]/g'
+start_log_tail() {
+  local log_file="$1"
+  local pid_variable="$2"
+
+  # Stream the complete file directly to container stdout. Following by name
+  # keeps the mirror alive when ASA replaces or rotates its log file.
+  tail -n +1 -F "$log_file" &
+  printf -v "$pid_variable" '%s' "$!"
 }
 
 launch_asa_detect_ready_marker() {
@@ -703,7 +707,6 @@ start_server() {
     unset API_TAIL_PID
     unset GAME_TAIL_PID
     unset LOGS_DISPLAY_PID
-    unset TAIL_PID
 
     if [ "${API}" = "TRUE" ]; then
       echo "🔍 Looking for AsaApi logs (API is enabled)..."
@@ -715,12 +718,7 @@ start_server() {
           echo "---------------------------------------------"
           echo "📋 ASAAPI LOG OUTPUT:"
           echo "---------------------------------------------"
-          if [ -s "$api_log" ]; then
-            cat "$api_log"
-          fi
-          tail -n 0 -f "$api_log" &
-          API_TAIL_PID=$!
-          export API_TAIL_PID
+          start_log_tail "$api_log" API_TAIL_PID
           break
         fi
         printf "\r🔍 Waiting for AsaApi logs... (%ds elapsed)      " "$api_elapsed"
@@ -742,16 +740,7 @@ start_server() {
         echo "---------------------------------------------"
         echo "📋 ARK SERVER LOG OUTPUT:"
         echo "---------------------------------------------"
-        if [ -s "$game_log" ]; then
-          redact_server_log_stream < "$game_log"
-          echo "---------------------------------------------"
-          echo "📋 CONTINUING LIVE LOGS:"
-          echo "---------------------------------------------"
-        fi
-        tail -n 0 -f "$game_log" | redact_server_log_stream &
-        GAME_TAIL_PID=$!
-        export GAME_TAIL_PID
-        export TAIL_PID=$GAME_TAIL_PID
+        start_log_tail "$game_log" GAME_TAIL_PID
         return 0
       fi
       printf "\r🔍 Waiting for ShooterGame.log... (%ds elapsed)      " "$elapsed"
@@ -934,7 +923,7 @@ start_server() {
             echo "[INFO] Waiting for startup completion markers: '${LAUNCH_ASA_FULL_STARTUP_MARKER}' or '${LAUNCH_ASA_ADVERTISING_MARKER}'"
             if [ -z "${GAME_TAIL_PID:-}" ]; then
               echo "[INFO] Recent log entries:"
-              tail -n 5 "$LOG_FILE" | redact_server_log_stream
+              tail -n 5 "$LOG_FILE"
               echo ""
             fi
             logs_shown_timestamp=$wait_time
@@ -968,8 +957,9 @@ start_server() {
   echo "Server stopped."
   
   # Clean up all background processes
-  if [ -n "$TAIL_PID" ]; then
-    kill $TAIL_PID 2>/dev/null || true
+  if [ -n "${GAME_TAIL_PID:-}" ]; then
+    kill "$GAME_TAIL_PID" 2>/dev/null || true
+    wait "$GAME_TAIL_PID" 2>/dev/null || true
     echo "Stopped tailing ShooterGame.log."
   fi
   
@@ -978,8 +968,9 @@ start_server() {
     echo "Stopped logs display process."
   fi
   
-  if [ -n "$API_TAIL_PID" ]; then
-    kill $API_TAIL_PID 2>/dev/null || true
+  if [ -n "${API_TAIL_PID:-}" ]; then
+    kill "$API_TAIL_PID" 2>/dev/null || true
+    wait "$API_TAIL_PID" 2>/dev/null || true
     echo "Stopped tailing AsaApi log."
   fi
   
