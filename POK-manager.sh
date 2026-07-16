@@ -4185,6 +4185,57 @@ _instance_has_running_server_process() {
   docker exec "$container_name" /bin/bash -lc 'pgrep -f "AsaApiLoader.exe" >/dev/null 2>&1 || pgrep -f "ArkAscendedServer.exe" >/dev/null 2>&1' >/dev/null 2>&1
 }
 
+_instance_confirm_no_server_process_for_fast_removal() {
+  local instance_name="$1"
+  local container_name
+  local running_state=""
+  local use_sudo
+  local process_status=1
+
+  container_name=$(_instance_resolved_container_name "$instance_name")
+  use_sudo=$(get_docker_sudo_preference)
+
+  if [ "$use_sudo" = "true" ]; then
+    if ! running_state=$(sudo docker inspect --format '{{.State.Running}}' "$container_name" 2>/dev/null); then
+      echo "  ⚠️ ${instance_name}: unable to inspect the container before fast removal; using the normal cleanup path." >&2
+      return 1
+    fi
+  else
+    if ! running_state=$(docker inspect --format '{{.State.Running}}' "$container_name" 2>/dev/null); then
+      echo "  ⚠️ ${instance_name}: unable to inspect the container before fast removal; using the normal cleanup path." >&2
+      return 1
+    fi
+  fi
+
+  # An already-stopped container has no live ASA process to protect.
+  [ "$running_state" = "true" ] || return 0
+
+  if [ "$use_sudo" = "true" ]; then
+    sudo docker exec "$container_name" /bin/sh -c \
+      'command -v pgrep >/dev/null 2>&1 || exit 11; if pgrep -f "[A]saApiLoader.exe" >/dev/null 2>&1 || pgrep -f "[A]rkAscendedServer.exe" >/dev/null 2>&1; then exit 10; else exit 0; fi' \
+      >/dev/null 2>&1
+    process_status=$?
+  else
+    docker exec "$container_name" /bin/sh -c \
+      'command -v pgrep >/dev/null 2>&1 || exit 11; if pgrep -f "[A]saApiLoader.exe" >/dev/null 2>&1 || pgrep -f "[A]rkAscendedServer.exe" >/dev/null 2>&1; then exit 10; else exit 0; fi' \
+      >/dev/null 2>&1
+    process_status=$?
+  fi
+
+  case "$process_status" in
+    0)
+      return 0
+      ;;
+    10)
+      echo "  ⚠️ ${instance_name}: an ASA process appeared before removal; using the normal container shutdown grace period." >&2
+      ;;
+    *)
+      echo "  ⚠️ ${instance_name}: unable to reconfirm the empty container; using the normal container shutdown grace period." >&2
+      ;;
+  esac
+  return 1
+}
+
 _run_parallel_shutdown_stage() {
   local command="$1"
   local stage_label="$2"
@@ -4267,7 +4318,11 @@ _stop_verified_containers_in_parallel() {
 
   echo "🛑 Removing verified containers in parallel..."
   for instance in "${instances[@]}"; do
-    (stop_instance "$instance" "skip_save") &
+    if _verified_shutdown_instance_was_idle "$instance"; then
+      (stop_instance "$instance" "skip_save_idle") &
+    else
+      (stop_instance "$instance" "skip_save") &
+    fi
     stop_pids["$instance"]=$!
   done
 
@@ -4281,6 +4336,18 @@ _stop_verified_containers_in_parallel() {
   [ "$stop_failed" = false ]
 }
 
+_VERIFIED_SHUTDOWN_IDLE_INSTANCES=()
+
+_verified_shutdown_instance_was_idle() {
+  local wanted="$1"
+  local instance
+
+  for instance in "${_VERIFIED_SHUTDOWN_IDLE_INSTANCES[@]}"; do
+    [ "$instance" = "$wanted" ] && return 0
+  done
+  return 1
+}
+
 _verified_shutdown_instances() {
   local force_mode="${1:-false}"
   shift
@@ -4291,11 +4358,13 @@ _verified_shutdown_instances() {
   local second_stage_failed=false
 
   [ "${#instances[@]}" -gt 0 ] || return 0
+  _VERIFIED_SHUTDOWN_IDLE_INSTANCES=()
 
   for instance in "${instances[@]}"; do
     if _instance_has_running_server_process "$instance"; then
       save_instances+=("$instance")
     else
+      _VERIFIED_SHUTDOWN_IDLE_INSTANCES+=("$instance")
       echo "  ${instance}: no running ASA process; no world save is required."
     fi
   done
@@ -4342,6 +4411,38 @@ _verified_shutdown_instances() {
   return 0
 }
 
+_stop_instance_remove_verified_idle_container() {
+  local instance_name="$1"
+  local docker_compose_file="$2"
+  local container_name="$3"
+  local container_id="$4"
+  local use_sudo
+
+  if ! _instance_confirm_no_server_process_for_fast_removal "$instance_name"; then
+    _stop_instance_stop_container "$docker_compose_file" "$container_name"
+    return $?
+  fi
+
+  use_sudo=$(get_docker_sudo_preference)
+  echo "No ASA process is running; removing the already-safe container without waiting through the full grace period."
+
+  if [ -n "$container_id" ]; then
+    if [ "$use_sudo" = "true" ]; then
+      sudo docker rm -f "$container_name" >/dev/null || return 1
+    else
+      docker rm -f "$container_name" >/dev/null || return 1
+    fi
+  fi
+
+  if [ -f "$docker_compose_file" ]; then
+    if [ "$use_sudo" = "true" ]; then
+      sudo $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down || return 1
+    else
+      $DOCKER_COMPOSE_CMD -f "$docker_compose_file" down || return 1
+    fi
+  fi
+}
+
 # Function to stop an instance
 stop_instance() {
   local instance_name="$1"
@@ -4355,13 +4456,19 @@ stop_instance() {
 
   echo "-----Stopping ${instance_name} Server-----"
 
-  if [ "$save_mode" != "skip_save" ]; then
+  if [ "$save_mode" != "skip_save" ] && [ "$save_mode" != "skip_save_idle" ]; then
     _verified_shutdown_instances "$force_mode" "$instance_name"
     return $?
   fi
 
   _stop_instance_resolve_compose_context "$instance_name" "$instance_dir" docker_compose_file container_name found_instance_name
   container_id=$(_stop_instance_find_container_id "$instance_name" "$found_instance_name")
+  if [ "$save_mode" = "skip_save_idle" ]; then
+    _stop_instance_remove_verified_idle_container \
+      "$instance_name" "$docker_compose_file" "$container_name" "$container_id" || return 1
+    echo "Instance ${instance_name} stopped successfully."
+    return 0
+  fi
   _stop_instance_stop_container "$docker_compose_file" "$container_name" || return 1
   echo "Instance ${instance_name} stopped successfully."
   return 0
@@ -4438,13 +4545,15 @@ _rcon_print_mixed_restart_warning() {
 
   echo "$header"
   echo "When restarting with mixed API modes, the running containers will be stopped,"
-  echo "server files WILL be updated, and containers will be brought back up."
-  echo "If a game update is available, it WILL be applied during this process."
+  echo "then all selected containers will be brought back up against the shared ARK installation."
+  echo "Because AsaApi is enabled, POK will ask whether to update that installation and defaults to"
+  echo "the current known-good files. If you opt in and AsaApi fails, use '-rollback -all'."
   echo ""
   echo "This process follows these steps automatically:"
-  echo "1. Stop all containers"
-  echo "2. Update server files"
-  echo "3. Start all containers"
+  echo "1. Choose whether to keep or update the shared server files"
+  echo "2. Stop all containers through the verified save barrier"
+  echo "3. Apply an opted-in update, if selected"
+  echo "4. Start all containers"
   echo ""
   echo "This ensures all server files are updated correctly while minimizing downtime."
   sleep 3
@@ -6744,7 +6853,7 @@ display_usage() {
   echo "  -upgrade                                  Upgrade POK-manager.sh script to the latest version (requires confirmation)"
   echo "  -force-restore                            Force restore POK-manager.sh from backup in case of update failure"
   echo "  -status <instance_name|-all>              Show the status of an instance or all instances"
-  echo "  -restart <minutes> <instance|-all> [--force]   Verified restart with a countdown"
+  echo "  -restart <minutes> <instance|-all> [--force]   Verified restart; API targets keep known-good files unless update is approved"
   echo "  -saveworld <instance_name|-all>           Save the world of an instance or all instances"
   echo "  -chat \"<message>\" <instance_name|-all>    Send a chat message to an instance or all instances"
   echo "  -custom <command> <instance_name|-all>    Execute a custom command on an instance or all instances"
@@ -8980,6 +9089,7 @@ _RESTART_API_INSTANCES=()
 _RESTART_NON_API_INSTANCES=()
 _RESTART_NOTIFICATION_POINTS=()
 _COUNTDOWN_TARGET_INSTANCES=()
+_RESTART_UPDATE_SKIP_REASON=""
 
 _restart_validate_specific_instance() {
   local instance_arg="$1"
@@ -9018,6 +9128,7 @@ _restart_collect_instances_to_process() {
   local start_choice=""
 
   _RESTART_SKIP_UPDATE=false
+  _RESTART_UPDATE_SKIP_REASON=""
   _RESTART_INSTANCES_TO_PROCESS=()
 
   if [[ "${instance_arg,,}" == "-all" ]]; then
@@ -9032,6 +9143,7 @@ _restart_collect_instances_to_process() {
   fi
 
   _RESTART_SKIP_UPDATE=true
+  _RESTART_UPDATE_SKIP_REASON="specific_instance"
   echo "Restarting specific instance: Updates will be skipped to minimize downtime"
   _restart_validate_specific_instance "$instance_arg" || return 1
 
@@ -9078,19 +9190,7 @@ _restart_set_mode_and_announce() {
     _RESTART_MODE="mixed"
     echo "⚠️ Mixed API modes detected. Using coordinated restart approach for all instances."
     echo ""
-    echo "⚠️ IMPORTANT UPDATE INFORMATION: ⚠️"
-    echo "When restarting instances with mixed API modes (TRUE and FALSE), the running containers will be stopped,"
-    echo "server files WILL be updated, and containers will be brought back up."
-    echo "If a game update is available, it WILL be applied during this process."
-    echo ""
-    echo "This process follows these steps automatically:"
-    echo "1. Stop all containers"
-    echo "2. Update server files"
-    echo "3. Start all containers"
-    echo ""
-    echo "This ensures all server files are updated correctly while minimizing downtime."
-    echo "Continuing with restart in 5 seconds..."
-    sleep 5
+    echo "The instances share one ARK installation, so the AsaApi-safe update choice applies to all of them."
   elif [ ${#_RESTART_API_INSTANCES[@]} -gt 0 ]; then
     _RESTART_MODE="api-only"
     echo "All instances have API=TRUE. Using container-level restart approach."
@@ -9100,11 +9200,50 @@ _restart_set_mode_and_announce() {
   fi
 }
 
+_restart_prompt_is_interactive() {
+  [ -t 0 ] && [ -t 1 ]
+}
+
+_restart_choose_api_update_policy() {
+  local update_choice=""
+
+  [ "$_RESTART_SKIP_UPDATE" = "false" ] || return 0
+  [ "${#_RESTART_API_INSTANCES[@]}" -gt 0 ] || return 0
+
+  echo ""
+  echo "⚠️ AsaApi server-file compatibility protection"
+  echo "The current ARK executable and AsaApi offsets are known to start successfully."
+  echo "Installing a newer ARK build can invalidate those offsets and prevent API startup."
+  echo "If an opted-in update causes that failure, recover with: ./POK-manager.sh -rollback -all"
+  echo ""
+
+  if ! _restart_prompt_is_interactive; then
+    _RESTART_SKIP_UPDATE=true
+    _RESTART_UPDATE_SKIP_REASON="api_safe_default"
+    echo "[INFO] Non-interactive restart: keeping the current known-good server files."
+    echo "[INFO] Run './POK-manager.sh -update' separately when you intentionally want to test newer ARK files."
+    return 0
+  fi
+
+  read -r -p "Update the shared ARK server files during this restart? [y/N] " update_choice || update_choice=""
+  if [[ "$update_choice" =~ ^[Yy]$ ]]; then
+    echo "⚠️ Server-file update selected. AsaApi compatibility will be re-evaluated during startup."
+    echo "⚠️ If startup reports a missing offset, run: ./POK-manager.sh -rollback -all"
+    return 0
+  fi
+
+  _RESTART_SKIP_UPDATE=true
+  _RESTART_UPDATE_SKIP_REASON="api_safe_default"
+  echo "[INFO] Keeping the current known-good ARK server files for this restart."
+}
+
 _restart_build_restart_message() {
   local countdown_minutes="$1"
 
-  if [ "$_RESTART_MODE" = "mixed" ]; then
+  if [ "$_RESTART_MODE" = "mixed" ] && [ "$_RESTART_SKIP_UPDATE" = "true" ]; then
     echo "SERVER ANNOUNCEMENT: Prepare for restart in ${countdown_minutes} minutes. Please note: This restart will NOT include game updates."
+  elif [ "$_RESTART_MODE" = "mixed" ]; then
+    echo "SERVER ANNOUNCEMENT: Prepare for restart in ${countdown_minutes} minutes. A server-file update was selected."
   else
     echo "SERVER ANNOUNCEMENT: Prepare for restart in ${countdown_minutes} minutes. Please finish your current activities."
   fi
@@ -9227,7 +9366,14 @@ _restart_maybe_update_server_files() {
   if [ "$skip_update" = "false" ]; then
     update_server_files_and_docker
   else
-    echo "Skipping server updates as a specific instance was selected"
+    case "$_RESTART_UPDATE_SKIP_REASON" in
+      api_safe_default)
+        echo "Keeping the current known-good server files for AsaApi compatibility."
+        ;;
+      *)
+        echo "Skipping server updates as a specific instance was selected"
+        ;;
+    esac
   fi
 }
 
@@ -9291,6 +9437,7 @@ enhanced_restart_command() {
   _restart_collect_instances_to_process "$instance_arg" || return 1
   _restart_classify_instances
   _restart_set_mode_and_announce
+  _restart_choose_api_update_policy
   _restart_notify_initial_restart "$countdown_minutes"
   _restart_run_countdown "$countdown_minutes"
   _restart_run_coordinated_sequence "$_RESTART_SKIP_UPDATE" "$force_mode" || return 1

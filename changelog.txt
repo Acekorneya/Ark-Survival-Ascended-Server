@@ -19,6 +19,8 @@
 - Kept an interactive TTY during rollback staging and added immediate Steam Mobile approval instructions so SteamCMD authentication requests no longer remain buffered until timeout; the image now also provides the `en_US.UTF-8` locale expected by SteamCMD.
 - Fixed rollback activation after a successful depot transfer by discovering SteamCMD's platform-dependent depot location from `ArkAscendedServer.exe` instead of assuming a root-relative `steamapps` path, with periodic elapsed-time and staged-size progress while the 8+ GB download runs.
 - Fully started managed API deployments now build a bounded known-good manifest history. Active rollback protection holds the compatible depot until Steam publishes another build or the failed cache timestamp changes, and preflights that candidate before returning the cluster to latest.
+- Coordinated `-restart` operations that include `API=TRUE` now default to the current known-good ARK executable/cache pair and ask interactively before updating shared server files, with `-rollback -all` identified as the recovery path; non-interactive API restarts keep the compatible files automatically while API-disabled restarts retain their existing update behavior.
+- Verified shutdown now removes containers immediately when ASA was already absent and a final process recheck confirms the container is safe, avoiding the full Docker grace wait while retaining the normal protected fallback if a process reappears or inspection is uncertain.
 
 ## Version 2.1.80 (Previous)
 - Added `security_opt: - "seccomp=unconfined"` to `docker-compose.yaml` (template) and newly written instance configurations to prevent `steamcmd` worker thread crashes and update connection failures on host systems with restrictive libseccomp policies.

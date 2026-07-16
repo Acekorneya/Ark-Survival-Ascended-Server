@@ -62,7 +62,7 @@ EOF
   refute_output --partial "unexpected-update"
 }
 
-@test "enhanced_restart_command keeps coordinated mixed-mode restarts for all instances" {
+@test "non-interactive mixed-mode restart keeps known-good API files by default" {
   run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/restart-mixed" POK_MANAGER_TEST_MODE=1 bash -lc '
     set -e
     mkdir -p "$BASE_DIR/Instance_alpha" "$BASE_DIR/Instance_beta"
@@ -92,9 +92,68 @@ EOF
   assert_success
   assert_output --partial "Processing all running instances for restart: alpha beta"
   assert_output --partial "⚠️ Mixed API modes detected. Using coordinated restart approach for all instances."
-  assert_output --partial "updated-server-files"
+  assert_output --partial "Non-interactive restart: keeping the current known-good server files."
+  assert_output --partial "Keeping the current known-good server files for AsaApi compatibility."
+  assert_output --partial "./POK-manager.sh -rollback -all"
+  refute_output --partial "updated-server-files"
   assert_output --partial "barrier:false alpha beta"
   assert_output --partial "coord-start:coordinated_all:coordinated_all:alpha beta"
+}
+
+@test "interactive API restart can explicitly opt in to updating shared server files" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/restart-api-update" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    mkdir -p "$BASE_DIR/Instance_alpha"
+    cat > "$BASE_DIR/Instance_alpha/docker-compose-alpha.yaml" <<EOF
+services:
+  asaserver:
+    environment:
+      - API=TRUE
+EOF
+    source "$REPO_ROOT/POK-manager.sh"
+    list_running_instances() { echo alpha; }
+    docker() { return 0; }
+    sleep() { :; }
+    run_in_container_background() { :; }
+    _restart_prompt_is_interactive() { return 0; }
+    _verified_shutdown_instances() { echo "barrier:$*"; }
+    _coordination_start_instance_subset() { echo "coord-start:$1:$2:${*:3}"; }
+    update_server_files_and_docker() { echo "updated-server-files"; }
+    enhanced_restart_command 0 -all <<< y
+  '
+
+  assert_success
+  assert_output --partial "Server-file update selected."
+  assert_output --partial "./POK-manager.sh -rollback -all"
+  assert_output --partial "updated-server-files"
+  assert_output --partial "barrier:false alpha"
+}
+
+@test "all-instance API-disabled restart retains automatic update behavior" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/restart-no-api" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    mkdir -p "$BASE_DIR/Instance_alpha"
+    cat > "$BASE_DIR/Instance_alpha/docker-compose-alpha.yaml" <<EOF
+services:
+  asaserver:
+    environment:
+      - API=FALSE
+EOF
+    source "$REPO_ROOT/POK-manager.sh"
+    list_running_instances() { echo alpha; }
+    docker() { return 0; }
+    sleep() { :; }
+    run_in_container_background() { :; }
+    _verified_shutdown_instances() { echo "barrier:$*"; }
+    _coordination_start_instance_subset() { echo "coord-start:$1:$2:${*:3}"; }
+    update_server_files_and_docker() { echo "updated-server-files"; }
+    enhanced_restart_command 0 -all
+  '
+
+  assert_success
+  assert_output --partial "updated-server-files"
+  refute_output --partial "AsaApi server-file compatibility protection"
+  assert_output --partial "barrier:false alpha"
 }
 
 @test "enhanced_shutdown_command uses the shared countdown renderer and two-stage barrier" {

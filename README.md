@@ -401,7 +401,7 @@ This approach provides better security while ensuring permissions are automatica
 - `-upgrade`: Upgrades POK-manager.sh script to the latest version (requires confirmation).
 - `-force-restore`: Forces restoration of POK-manager.sh from backup in case of update failure.
 - `-status <instance_name|-all>`: Shows the status of a specific server instance or all instances. The first successful run now needs Steam credentials so the container can obtain an EOS user token for the matchmaking query.
-- `-restart <minutes> <instance_name|-all> [--force]`: Restarts one or all instances after the verified two-stage save barrier.
+- `-restart <minutes> <instance_name|-all> [--force]`: Restarts one or all instances after the verified two-stage save barrier. Coordinated restarts that include `API=TRUE` default to the current known-good ARK files and require an explicit interactive opt-in before updating them.
 - `-saveworld <instance_name|-all>`: Saves the world of a specific server instance or all instances.
 - `-chat "<message>" <instance_name|-all>`: Sends a chat message to a specific server instance or all instances.
 - `-custom <command> <instance_name|-all>`: Executes a custom command on a specific server instance or all instances.
@@ -868,12 +868,17 @@ AsaApi instances require special handling when restarting. POK-manager includes 
 When using the `-restart` command on an instance with API=TRUE, POK-manager:
 
 1. Detects that the instance is in API mode
-2. Sends a shutdown command with the specified countdown
-3. Waits for the server to completely shut down
-4. Stops the Docker container entirely
-5. Starts a fresh container
+2. For an all-instance/shared restart, explains the AsaApi offset risk and asks whether to keep the current known-good ARK files or update them; keeping them is the default
+3. Sends a shutdown command with the specified countdown
+4. Waits for the server to completely shut down
+5. Stops the Docker container entirely
+6. Starts a fresh container
 
 This approach ensures a clean environment for API mode restarts, which solves common issues where API-enabled servers fail to restart properly when using the in-game restart command.
+
+Non-interactive API restarts always keep the known-good files so scheduled maintenance cannot silently invalidate AsaApi offsets. Use `./POK-manager.sh -update` when an unattended workflow intentionally needs to test a newer build. If an explicitly selected update proves incompatible, `./POK-manager.sh -rollback -all` restores a previously verified executable/cache pair. API-disabled all-instance restarts retain their existing automatic update behavior.
+
+If ASA has already exited before the verified stop phase begins, POK reconfirms that no server process appeared and removes the already-safe container immediately instead of waiting through the full Docker grace period. If the final check is uncertain or sees a process, the normal protected grace period remains in force.
 
 ```bash
 # Restart an API-enabled instance with a 5-minute countdown

@@ -107,6 +107,69 @@ EOF
   assert_output --partial "stop:beta:skip_save"
 }
 
+@test "verified idle containers bypass the full Compose grace period after a final process recheck" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/stop-idle-fast" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    mkdir -p "$BASE_DIR/Instance_demo"
+    cat > "$BASE_DIR/Instance_demo/docker-compose-demo.yaml" <<EOF
+services:
+  asaserver:
+    container_name: asa_demo
+EOF
+    source "$REPO_ROOT/POK-manager.sh"
+    DOCKER_COMPOSE_CMD=compose_cmd
+    get_docker_sudo_preference() { echo false; }
+    get_instance_container_id() { echo container-123; }
+    _instance_confirm_no_server_process_for_fast_removal() { return 0; }
+    compose_cmd() { echo "compose:$*"; }
+    docker() { echo "docker:$*" >> "$BASE_DIR/docker.calls"; }
+    stop_instance demo skip_save_idle
+    cat "$BASE_DIR/docker.calls"
+  '
+
+  assert_success
+  assert_output --partial "No ASA process is running; removing the already-safe container"
+  assert_output --partial "docker:rm -f asa_demo"
+  assert_output --partial "compose:-f $BATS_TEST_TMPDIR/stop-idle-fast/Instance_demo/docker-compose-demo.yaml down"
+  refute_output --partial "down -t"
+}
+
+@test "idle fast removal falls back to the normal grace period if an ASA process reappears" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/stop-idle-race" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    mkdir -p "$BASE_DIR/Instance_demo"
+    touch "$BASE_DIR/Instance_demo/docker-compose-demo.yaml"
+    source "$REPO_ROOT/POK-manager.sh"
+    get_instance_container_id() { echo container-123; }
+    _instance_confirm_no_server_process_for_fast_removal() { return 1; }
+    _stop_instance_stop_container() { echo "normal-grace:$1:$2"; }
+    stop_instance demo skip_save_idle
+  '
+
+  assert_success
+  assert_output --partial "normal-grace:$BATS_TEST_TMPDIR/stop-idle-race/Instance_demo/docker-compose-demo.yaml:asa_demo"
+  refute_output --partial "removing the already-safe container"
+}
+
+@test "idle fast removal never treats a failed Docker inspection as proof that ASA is absent" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/stop-idle-inspect" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    source "$REPO_ROOT/POK-manager.sh"
+    get_docker_sudo_preference() { echo false; }
+    docker() { return 1; }
+    if _instance_confirm_no_server_process_for_fast_removal demo; then
+      echo "result=unsafe-fast-removal"
+    else
+      echo "result=protected-fallback"
+    fi
+  '
+
+  assert_success
+  assert_output --partial "unable to inspect the container before fast removal"
+  assert_output --partial "result=protected-fallback"
+  refute_output --partial "result=unsafe-fast-removal"
+}
+
 @test "stop_all_instances skips save barriers when no ASA processes are running" {
   run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/stop-all-no-startup" POK_MANAGER_TEST_MODE=1 bash -lc '
     set -e
@@ -139,8 +202,8 @@ EOF
   assert_output --partial "alpha: no running ASA process; no world save is required."
   assert_output --partial "beta: no running ASA process; no world save is required."
   refute_output --partial "unexpected-stage"
-  assert_output --partial "stop:alpha:skip_save"
-  assert_output --partial "stop:beta:skip_save"
+  assert_output --partial "stop:alpha:skip_save_idle"
+  assert_output --partial "stop:beta:skip_save_idle"
 }
 
 @test "_save_completion_logged_since only matches new ShooterGame.log entries after the checkpoint" {
@@ -250,14 +313,14 @@ EOF
     get_instance_container_id() { echo "container-123"; }
     _instance_has_running_server_process() { return 1; }
     _run_parallel_shutdown_stage() { echo "unexpected-stage"; }
-    _stop_instance_stop_container() { echo "stopped:$1:$2"; }
+    _stop_instance_remove_verified_idle_container() { echo "idle-stopped:$1:$2:$3:$4"; }
     stop_instance demo
   '
 
   assert_success
   assert_output --partial "demo: no running ASA process; no world save is required."
   refute_output --partial "unexpected-stage"
-  assert_output --partial "stopped:$BATS_TEST_TMPDIR/stop-not-ready/Instance_demo/docker-compose-demo.yaml:asa_demo"
+  assert_output --partial "idle-stopped:demo:$BATS_TEST_TMPDIR/stop-not-ready/Instance_demo/docker-compose-demo.yaml:asa_demo:container-123"
 }
 
 @test "rollback stages before the shared save barrier and restarts only previous instances" {
