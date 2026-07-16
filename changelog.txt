@@ -1,4 +1,5 @@
 ## Version 2.1.80 (Latest)
+- Reduced persisted Proton-prefix startup delays by repairing permissions only on entries missing required access, while preserving executable and additional permission bits on already-valid files.
 - Added `security_opt: - "seccomp=unconfined"` to `docker-compose.yaml` (template) and newly written instance configurations to prevent `steamcmd` worker thread crashes and update connection failures on host systems with restrictive libseccomp policies.
 - Added Step 6 to the `-fix` command to automatically migrate existing instance compose files to include the `seccomp=unconfined` option.
 - Enhanced Docker permission check (`adjust_docker_permissions`) to verify active access to `/var/run/docker.sock` when running without `sudo`. It now auto-recovers socket ownership (if user belongs to the `docker` group) or prompts to revert to using `sudo`.
