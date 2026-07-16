@@ -433,7 +433,7 @@ POK-manager now handles this automatically:
 
 Important notes:
 
-- These Steam credentials are only needed for the `-status` command path.
+- These Steam credentials are used by the `-status` authentication path and to download licensed historical depots during `-rollback`.
 - The 5-digit Steam Guard mobile code is never saved to compose. You can enter it up front for a fresh auth run, or leave it blank if the account does not use Steam Guard.
 - `-status -all` resolves the Steam credentials once and reuses them for every running instance.
 - The Steam values are preserved in the compose file, but they are not shown in the interactive config review screen to avoid echoing secrets back to the terminal.
@@ -690,8 +690,8 @@ When creating a new server instance using POK-manager.sh, a Docker Compose confi
 | `MAP_NAME`                    | `TheIsland`       | Official, future, or modded map name; save discovery uses this value without an allowlist  |
 | `SESSION_NAME`                | `Server_name`     | The session name for the server                                                           |
 | `SERVER_ADMIN_PASSWORD`       | `MyPassword`      | The admin password for the server                                                         |
-| `STEAM_USERNAME`              |                   | Optional: Steam account name used only by `-status` to obtain an EOS user token           |
-| `STEAM_PASSWORD`              |                   | Optional: Steam password used only by `-status` to obtain an EOS user token               |
+| `STEAM_USERNAME`              |                   | Optional: Steam account name used by authenticated `-status` and `-rollback` operations   |
+| `STEAM_PASSWORD`              |                   | Optional: Steam password used by authenticated `-status` and `-rollback` operations       |
 | `SERVER_PASSWORD`             |                   | Set a server password or leave it blank (ONLY NUMBERS AND CHARACTERS ARE ALLOWED BY DEVS) |
 | `ASA_PORT`                    | `7777`            | The game port for the server                                                              |
 | `RCON_PORT`                   | `27020`           | Rcon Port Use for Most Server Operations                                                  |
@@ -718,11 +718,11 @@ When creating a new server instance using POK-manager.sh, a Docker Compose confi
 
 Host file ownership must match these values to prevent permission issues.
 
-**`-status` authentication note**
+**Steam authentication note**
 
-- `STEAM_USERNAME` and `STEAM_PASSWORD` are only used for the `-status` matchmaking query flow.
-- Most users do not need to add them manually because POK-manager can prompt for them and save them automatically on the first `-status` run.
-- When a fresh Steam/EOS auth is likely needed, POK-manager offers the current 5-digit mobile code prompt and does not save it.
+- `STEAM_USERNAME` and `STEAM_PASSWORD` are used for the `-status` matchmaking query and authenticated historical depot downloads during `-rollback`.
+- Most users do not need to add them manually because POK-manager prompts for them and saves them automatically when either command first needs them.
+- POK-manager can request the current Steam Guard mobile code for either operation and never saves that code.
 
 ---
 
@@ -761,8 +761,8 @@ services:
       - MAP_NAME=TheIsland                   # Official, future, or modded map name; save verification uses this value directly
       - SESSION_NAME=Server_name             # The name of the server session
       - SERVER_ADMIN_PASSWORD=MyPassword     # The admin password for the server 
-      - STEAM_USERNAME=                      # Optional: used only by -status to obtain an EOS user token
-      - STEAM_PASSWORD=                      # Optional: used only by -status to obtain an EOS user token
+      - STEAM_USERNAME=                      # Optional: used by authenticated -status and -rollback operations
+      - STEAM_PASSWORD=                      # Optional: used by authenticated -status and -rollback operations
       - SERVER_PASSWORD=                     # Set a server password or leave it blank (ONLY NUMBERS AND CHARACTERS ARE ALLOWED BY DEVS)
       - ASA_PORT=7777                        # The port for the server
       - RCON_PORT=27020                      # The port for the RCON
@@ -843,7 +843,7 @@ When a new ARK build is missing an offset required by managed AsaApi, run:
 ./POK-manager.sh -rollback -all
 ```
 
-POK first downloads the selected Windows depot with anonymous SteamCMD and validates its executable-specific AsaApi cache while the existing servers remain online. Only after that preflight succeeds does it run the normal two-stage verified save barrier across every running instance that shares `ServerFiles/arkserver`, activate the shared files once, and restart exactly those instances. A named-instance rollback prompts before affecting the shared installation; non-interactive jobs must use `-all`. `--force` only overrides failed save verification and never bypasses file or cache validation.
+Historical ASA depot manifests require a Steam account that owns ARK: Survival Ascended. POK reuses `STEAM_USERNAME` and `STEAM_PASSWORD` from the selected instance's Compose file, prompts securely and saves them when missing, and offers a one-run Steam Guard code prompt that is never persisted. It then downloads and validates the selected Windows depot and its executable-specific AsaApi cache while the existing servers remain online. Only after that preflight succeeds does it run the normal two-stage verified save barrier across every running instance that shares `ServerFiles/arkserver`, activate the shared files once, and restart exactly those instances. A named-instance rollback prompts before affecting the shared installation; non-interactive jobs must use `-all`, have credentials configured already, and can supply a current one-run code as `STEAM_GUARD_CODE=<code> ./POK-manager.sh -rollback -all`. `--force` only overrides failed save verification and never bypasses file or cache validation.
 
 The first rollback uses depot `2430931` manifest `681058914540629286`. Afterward, POK records up to five deployments that reached fresh game startup, `API was successfully loaded`, and `Loaded all plugins`, and prefers the newest distinct verified deployment. Rollback state prevents the normal updater from immediately reinstalling the known-bad build. A retry is allowed only after Steam publishes another build or the failed AsaApi cache timestamp changes, and that candidate is again cache-validated before it replaces live files. Proton, saves, plugins, and instance configuration are not downgraded.
 

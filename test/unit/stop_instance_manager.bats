@@ -269,6 +269,8 @@ EOF
     source "$REPO_ROOT/POK-manager.sh"
     list_instances() { echo "alpha beta"; }
     list_running_instances() { echo "alpha"; }
+    ensure_steam_credentials() { echo "credentials:$1:$2"; }
+    _prompt_optional_rollback_steam_guard_code() { echo "guard-prompt:$1"; }
     _rollback_compose_run() {
       echo "worker:$1:$2:${3:-}" >&2
       [ "$2" = select ] && echo 681058914540629286
@@ -280,6 +282,8 @@ EOF
   '
 
   assert_success
+  assert_output --partial "credentials:alpha:rollback"
+  assert_output --partial "guard-prompt:alpha"
   assert_output --partial "worker:alpha:stage:681058914540629286"
   assert_output --partial "barrier:false alpha"
   assert_output --partial "worker:alpha:activate:681058914540629286"

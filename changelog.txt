@@ -14,7 +14,8 @@
 - Removed misleading GE-Proton8-21/9-25 launch aliases and runtime Wine fallbacks; startup now validates and retries only the image-pinned GE-Proton executable.
 - Streamed the complete ShooterGame and AsaApi logs directly to container output without a buffering filter, including continued following after log replacement. ASA command-line entries, including game join and admin passwords, are mirrored verbatim.
 - Managed AsaApi caches now retain `cached_offsets.txt`, validate the core offsets required by the pinned release, quarantine incompatible executable-specific archives until their CDN timestamp changes, and expose the missing symbol through startup health instead of launching into a fatal hook error.
-- Added `-rollback <instance|-all> [--force]` to anonymously stage a known-good ASA depot and its executable-specific AsaApi cache before using the shared two-stage save barrier, activating the shared files, and restarting only previously running instances.
+- Added `-rollback <instance|-all> [--force]` to stage a known-good ASA depot and its executable-specific AsaApi cache before using the shared two-stage save barrier, activating the shared files, and restarting only previously running instances.
+- Fixed historical depot rollback authentication by reusing Steam credentials from managed Compose files, securely prompting when missing, and forwarding an optional one-run Steam Guard code without persisting it.
 - Fully started managed API deployments now build a bounded known-good manifest history. Active rollback protection holds the compatible depot until Steam publishes another build or the failed cache timestamp changes, and preflights that candidate before returning the cluster to latest.
 
 ## Version 2.1.80 (Previous)

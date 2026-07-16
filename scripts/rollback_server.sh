@@ -30,6 +30,28 @@ validate_manifest() {
   fi
 }
 
+download_rollback_manifest() {
+  local manifest="$1"
+  local steamcmd_bin="${STEAMCMD_BIN:-/opt/steamcmd/steamcmd.sh}"
+  local -a login_args=()
+
+  if [ -z "${STEAM_USERNAME:-}" ] || [ -z "${STEAM_PASSWORD:-}" ]; then
+    echo "[ERROR] Authenticated Steam credentials are required to download historical ASA depot manifests."
+    return 1
+  fi
+
+  login_args=(+login "$STEAM_USERNAME" "$STEAM_PASSWORD")
+  if [ -n "${STEAM_GUARD_CODE:-}" ]; then
+    login_args+=("$STEAM_GUARD_CODE")
+  fi
+
+  "$steamcmd_bin" \
+    +@sSteamCmdForcePlatformType windows \
+    "${login_args[@]}" \
+    +download_depot 2430930 2430931 "$manifest" \
+    +quit
+}
+
 stage_rollback() {
   local manifest="$1"
   local content_root="/opt/steamcmd/steamapps/content/app_2430930/depot_2430931"
@@ -58,15 +80,12 @@ stage_rollback() {
   fi
   LOCK_HELD=true
 
-  echo "[INFO] Staging ASA depot 2430931 manifest ${manifest} with anonymous SteamCMD access..."
+  echo "[INFO] Staging ASA depot 2430931 manifest ${manifest} with authenticated SteamCMD access..."
   rm -rf "$content_root" "$ROLLBACK_STAGING_DIR"
   mkdir -p "$ROLLBACK_STAGING_DIR" "$DEPLOYMENT_STATE_DIR"
-  if ! /opt/steamcmd/steamcmd.sh \
-      +@sSteamCmdForcePlatformType windows \
-      +login anonymous \
-      +download_depot 2430930 2430931 "$manifest" \
-      +quit; then
+  if ! download_rollback_manifest "$manifest"; then
     echo "[ERROR] SteamCMD failed to download rollback manifest ${manifest}."
+    echo "[ERROR] Confirm that the configured Steam account owns ARK: Survival Ascended and that any Steam Guard code is current."
     return 1
   fi
   [ -f "${content_root}/ShooterGame/Binaries/Win64/ArkAscendedServer.exe" ] || {

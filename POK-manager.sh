@@ -1743,11 +1743,21 @@ find_existing_steam_creds() {
 
 ensure_steam_credentials() {
   local instance_name="$1"
+  local purpose="${2:-status}"
   local docker_compose_file="${BASE_DIR}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
   local found_user=""
   local found_pass=""
   local all_compose_file=""
   local saved_current=false
+  local prompt_title="Server Status"
+  local purpose_description="The -status command requires a Steam account that owns\nARK: Survival Ascended to authenticate with Epic Online Services."
+  local required_for="-status"
+
+  if [ "$purpose" = "rollback" ]; then
+    prompt_title="ASA Rollback"
+    purpose_description="Historical ASA depot manifests require a Steam account that owns\nARK: Survival Ascended. Anonymous SteamCMD access cannot download them."
+    required_for="rollback"
+  fi
 
   if [ ! -f "$docker_compose_file" ]; then
     echo "Error: Docker compose file not found for instance ${instance_name}."
@@ -1768,22 +1778,27 @@ ensure_steam_credentials() {
 
   echo ""
   echo "═══════════════════════════════════════════════════════════"
-  echo "  Steam Credentials Required for Server Status"
+  echo "  Steam Credentials Required for ${prompt_title}"
   echo "═══════════════════════════════════════════════════════════"
   echo ""
-  echo "The -status command now requires a Steam account that owns"
-  echo "ARK: Survival Ascended to authenticate with Epic Online Services."
+  printf '%b\n' "$purpose_description"
   echo ""
   echo "This is a one-time setup. Credentials are saved to your"
   echo "docker-compose configuration files."
   echo ""
+
+  if [ ! -t 0 ]; then
+    echo "Error: Steam credentials are required for ${required_for}, but no interactive terminal is available."
+    echo "Set STEAM_USERNAME and STEAM_PASSWORD in an instance Compose file and retry."
+    return 1
+  fi
 
   read -rp "Steam Username: " STEAM_USERNAME
   read -rsp "Steam Password: " STEAM_PASSWORD
   echo ""
 
   if [ -z "$STEAM_USERNAME" ] || [ -z "$STEAM_PASSWORD" ]; then
-    echo "Error: Steam username and password are required for -status."
+    echo "Error: Steam username and password are required for ${required_for}."
     return 1
   fi
 
@@ -2204,13 +2219,16 @@ _rollback_compose_run() {
   local rollback_action="$2"
   local manifest="${3:-}"
   local compose_file="${BASE_DIR}/Instance_${instance_name}/docker-compose-${instance_name}.yaml"
-  local -a command_args=(-f "$compose_file" run --rm --no-deps -T \
-    --entrypoint /home/pok/scripts/rollback_server.sh asaserver "$rollback_action")
+  local -a command_args=(-f "$compose_file" run --rm --no-deps -T)
 
   [ -f "$compose_file" ] || {
     echo "Rollback worker compose file was not found for instance '${instance_name}'." >&2
     return 1
   }
+  if [ "$rollback_action" = "stage" ] && [ -n "${STEAM_GUARD_CODE:-}" ]; then
+    command_args+=(-e "STEAM_GUARD_CODE=${STEAM_GUARD_CODE}")
+  fi
+  command_args+=(--entrypoint /home/pok/scripts/rollback_server.sh asaserver "$rollback_action")
   [ -n "$manifest" ] && command_args+=("$manifest")
 
   if is_sudo; then
@@ -2218,6 +2236,20 @@ _rollback_compose_run() {
   else
     $DOCKER_COMPOSE_CMD "${command_args[@]}"
   fi
+}
+
+_prompt_optional_rollback_steam_guard_code() {
+  local instance_name="${1:-}"
+
+  if [ -n "${STEAM_GUARD_CODE:-}" ] || [ ! -t 0 ]; then
+    return 0
+  fi
+
+  echo "" >&2
+  echo "Steam Guard code for ASA rollback on instance ${instance_name} (optional)." >&2
+  echo "Enter the current code from your Steam mobile app, or leave blank if this login does not require one:" >&2
+  read -rp "> " STEAM_GUARD_CODE
+  echo "" >&2
 }
 
 _rollback_confirm_shared_scope() {
@@ -2264,6 +2296,8 @@ rollback_shared_server_files() {
 
   echo "⚠️ Rolling back ASA can temporarily prevent newer game clients from joining."
   echo "[INFO] Proton, the container image, saves, and instance configuration will not be downgraded."
+  ensure_steam_credentials "$worker_instance" rollback || return 1
+  _prompt_optional_rollback_steam_guard_code "$worker_instance"
   select_output=$(_rollback_compose_run "$worker_instance" select) || return 1
   manifest=$(printf '%s\n' "$select_output" | tail -1 | tr -d '\r')
   [[ "$manifest" =~ ^[0-9]+$ ]] || {

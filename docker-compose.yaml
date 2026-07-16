@@ -39,11 +39,11 @@ services:
       - MAP_NAME=TheIsland                   # Official, future, or modded map name; save verification uses this value directly
       - SESSION_NAME=Server_name             # The name of the server session
       - SERVER_ADMIN_PASSWORD=MyPassword     # The admin password for the server 
-      # Optional Steam credentials used only by the -status command to obtain an EOS token.
-      # POK-manager can prompt for and save these automatically on the first -status run.
-      # If Steam Guard is required, POK-manager asks for the current 5-digit mobile code only for that run.
-      - STEAM_USERNAME=                      # Steam account name used for -status only
-      - STEAM_PASSWORD=                      # Steam password used for -status only
+      # Optional Steam credentials used by -status and authenticated historical depot rollback.
+      # POK-manager can prompt for and save these automatically when either command first needs them.
+      # If Steam Guard is required, POK-manager asks for the current mobile code only for that run.
+      - STEAM_USERNAME=                      # Steam account name used for -status and -rollback
+      - STEAM_PASSWORD=                      # Steam password used for -status and -rollback
       - SERVER_PASSWORD=                     # Set a server password or leave it blank (ONLY NUMBERS AND CHARACTERS ARE ALLOWED BY DEVS)
       - ASA_PORT=7777                        # The port for the server
       - RCON_PORT=27020                      # The port for the RCON
