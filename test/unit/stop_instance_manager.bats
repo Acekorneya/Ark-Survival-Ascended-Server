@@ -224,11 +224,34 @@ EOF
   '
 
   assert_success
-  assert_output --partial "alpha: no running ASA process; no world save is required."
-  assert_output --partial "beta: no running ASA process; no world save is required."
+  assert_output --partial "alpha: host probe did not find ASA; container shutdown will make the final process and save decision."
+  assert_output --partial "beta: host probe did not find ASA; container shutdown will make the final process and save decision."
   refute_output --partial "unexpected-stage"
   assert_output --partial "stop:alpha:skip_save_idle"
   assert_output --partial "stop:beta:skip_save_idle"
+}
+
+@test "host-missed ASA shutdown reports fresh world saves from ShooterGame log" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/stop-idle-save-confirmed" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    mkdir -p "$BASE_DIR/Instance_demo/Saved/Logs"
+    printf "%s\n" "existing log line" > "$BASE_DIR/Instance_demo/Saved/Logs/ShooterGame.log"
+    source "$REPO_ROOT/POK-manager.sh"
+    list_running_instances() { echo demo; }
+    _instance_has_running_server_process() { return 1; }
+    stop_instance() {
+      printf "%s\n" \
+        "World Save Complete. Took: 0.51" \
+        "World Save Complete. Took: 0.49" >> "$BASE_DIR/Instance_demo/Saved/Logs/ShooterGame.log"
+      echo "stop:$1:$2"
+    }
+    stop_all_instances
+  '
+
+  assert_success
+  assert_output --partial "host probe did not find ASA; container shutdown will make the final process and save decision."
+  assert_output --partial "container shutdown confirmed 2 fresh world saves in ShooterGame.log."
+  refute_output --partial "no world save is required"
 }
 
 @test "_save_completion_logged_since only matches new ShooterGame.log entries after the checkpoint" {
@@ -343,7 +366,7 @@ EOF
   '
 
   assert_success
-  assert_output --partial "demo: no running ASA process; no world save is required."
+  assert_output --partial "demo: host probe did not find ASA; container shutdown will make the final process and save decision."
   refute_output --partial "unexpected-stage"
   assert_output --partial "idle-stopped:demo:$BATS_TEST_TMPDIR/stop-not-ready/Instance_demo/docker-compose-demo.yaml:asa_demo:container-123"
 }

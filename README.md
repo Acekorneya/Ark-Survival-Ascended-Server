@@ -882,6 +882,8 @@ If ASA has already exited before the verified stop phase begins, POK reconfirms 
 
 The manager uses the container's authoritative shutdown process probe before deciding that ASA is absent, with live Wine/Proton command-line and recorded-launcher-PID fallbacks for older images. The final pre-removal race check uses the same probe. If Docker's PID 1 shutdown trap must perform the two saves itself, it allows five seconds for a clean ASA exit and then terminates lingering Proton/Wine processes only after both saves are verified. A failed verified termination retains the remaining 55-second safety wait.
 
+When the host cannot see ASA but the container shutdown trap finds it, the manager no longer claims that no save was required. It checkpoints the instance's `ShooterGame.log` before removal and reports the number of fresh `World Save Complete` entries afterward, so saves completed by PID 1 remain visible in host-side stop output.
+
 Direct `API=FALSE` launches do not use Steam's game-specific ProtonFixes hook path. Unfiltered launch diagnostics remain available at `/home/pok/logs/proton_runtime.log`, and the final lines are shown automatically if both pinned-Proton attempts fail.
 
 For `API=TRUE`, the container console omits AsaApi's repeated copyright, URL, cache-reading, and hook-initialization boilerplate. API load success, plugin activity, warnings, and errors remain visible, while the mounted `API_Logs` file retains the complete original output. First-launch guidance is controlled by persistent per-instance flags, so recreating a container does not incorrectly present an established server as a first launch.

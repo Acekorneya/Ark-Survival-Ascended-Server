@@ -3247,14 +3247,25 @@ _instance_save_log_line_count() {
 _save_completion_logged_since() {
   local instance_name="$1"
   local since_line="$2"
+  local completion_count
+
+  completion_count=$(_save_completion_count_since "$instance_name" "$since_line")
+  [ "$completion_count" -gt 0 ]
+}
+
+_save_completion_count_since() {
+  local instance_name="$1"
+  local since_line="$2"
   local log_file
   log_file=$(_instance_save_log_path "$instance_name")
 
   if [ ! -f "$log_file" ]; then
-    return 1
+    echo "0"
+    return 0
   fi
 
-  tail -n "+$((since_line + 1))" "$log_file" 2>/dev/null | grep -qF "World Save Complete. Took:"
+  tail -n "+$((since_line + 1))" "$log_file" 2>/dev/null |
+    awk 'index($0, "World Save Complete. Took:") { count++ } END { print count + 0 }'
 }
 
 _wait_for_single_instance_save() {
@@ -4334,6 +4345,8 @@ _wait_for_shutdown_server_processes() {
 _stop_verified_containers_in_parallel() {
   local instances=("$@")
   local instance
+  local completion_count=0
+  local checkpoint=0
   local stop_failed=false
   local -A stop_pids=()
 
@@ -4351,6 +4364,19 @@ _stop_verified_containers_in_parallel() {
     if ! wait "${stop_pids[$instance]}"; then
       echo "  ❌ Failed to stop container for ${instance}."
       stop_failed=true
+      continue
+    fi
+
+    if _verified_shutdown_instance_was_idle "$instance"; then
+      checkpoint=$(_verified_shutdown_log_checkpoint "$instance")
+      completion_count=$(_save_completion_count_since "$instance" "$checkpoint")
+      if [ "$completion_count" -ge 2 ]; then
+        echo "  ✅ ${instance}: container shutdown confirmed ${completion_count} fresh world saves in ShooterGame.log."
+      elif [ "$completion_count" -eq 1 ]; then
+        echo "  ✅ ${instance}: container shutdown confirmed a fresh world save in ShooterGame.log."
+      else
+        echo "  ℹ️ ${instance}: no fresh world-save entry was emitted during removal; this is expected when ASA was already stopped."
+      fi
     fi
   done
 
@@ -4358,6 +4384,7 @@ _stop_verified_containers_in_parallel() {
 }
 
 _VERIFIED_SHUTDOWN_IDLE_INSTANCES=()
+_VERIFIED_SHUTDOWN_LOG_CHECKPOINTS=()
 
 _verified_shutdown_instance_was_idle() {
   local wanted="$1"
@@ -4367,6 +4394,19 @@ _verified_shutdown_instance_was_idle() {
     [ "$instance" = "$wanted" ] && return 0
   done
   return 1
+}
+
+_verified_shutdown_log_checkpoint() {
+  local wanted="$1"
+  local record
+
+  for record in "${_VERIFIED_SHUTDOWN_LOG_CHECKPOINTS[@]}"; do
+    if [ "${record%%|*}" = "$wanted" ]; then
+      echo "${record#*|}"
+      return 0
+    fi
+  done
+  echo "0"
 }
 
 _verified_shutdown_instances() {
@@ -4380,13 +4420,15 @@ _verified_shutdown_instances() {
 
   [ "${#instances[@]}" -gt 0 ] || return 0
   _VERIFIED_SHUTDOWN_IDLE_INSTANCES=()
+  _VERIFIED_SHUTDOWN_LOG_CHECKPOINTS=()
 
   for instance in "${instances[@]}"; do
+    _VERIFIED_SHUTDOWN_LOG_CHECKPOINTS+=("${instance}|$(_instance_save_log_line_count "$instance")")
     if _instance_has_running_server_process "$instance"; then
       save_instances+=("$instance")
     else
       _VERIFIED_SHUTDOWN_IDLE_INSTANCES+=("$instance")
-      echo "  ${instance}: no running ASA process; no world save is required."
+      echo "  ${instance}: host probe did not find ASA; container shutdown will make the final process and save decision."
     fi
   done
 
