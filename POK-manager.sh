@@ -9883,7 +9883,7 @@ enhanced_shutdown_command() {
   for instance in "${instances_to_process[@]}"; do
     echo "  - Notifying $instance..."
     # Send RCON commands to notify of shutdown
-    run_in_container_background "$instance" "-chat" "Server shutdown in $countdown_minutes minute(s)!" >/dev/null 2>&1
+    run_in_container_background "$instance" "-chat" "SERVER ANNOUNCEMENT: Prepare for shutdown in ${countdown_minutes} minutes. Please finish your current activities." >/dev/null 2>&1
   done
   
   _COUNTDOWN_TARGET_INSTANCES=("${instances_to_process[@]}")
