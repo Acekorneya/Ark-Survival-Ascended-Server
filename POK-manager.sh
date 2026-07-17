@@ -3299,6 +3299,26 @@ get_docker_sudo_preference() {
   fi
 }
 
+# Run Docker using the operator's persisted privilege preference. In
+# non-interactive contexts, sudo must already be passwordless/cached so cron
+# jobs fail clearly instead of waiting forever for an unavailable prompt.
+run_docker_with_saved_preference() {
+  local use_sudo
+
+  use_sudo=$(get_docker_sudo_preference 2>/dev/null || echo "true")
+  if [ "$use_sudo" != "true" ]; then
+    docker "$@"
+    return $?
+  fi
+
+  if [ -t 0 ]; then
+    sudo docker "$@"
+    return $?
+  fi
+
+  sudo -n docker "$@"
+}
+
 _compose_file_instance_name() {
   local docker_compose_file="$1"
   basename "$docker_compose_file" | sed 's/docker-compose-//g' | sed 's/\.yaml//g'
@@ -6034,23 +6054,19 @@ validate_directory_permissions() {
 get_current_build_id() {
   local app_id="2430930"
   local existing_container="${1:-}"
-  local docker_cmd="docker"
   local cleanup_container=false
-  
-  if ! (groups | grep -q '\bdocker\b' || [ "$(id -u)" -eq 0 ]); then
-    docker_cmd="sudo docker"
-  fi
   
   if [ -z "$existing_container" ]; then
     echo "Creating temporary container to check for server updates..." >&2
     local temp_container_name="pok_steamcmd_check"
     local image_tag=$(get_docker_image_tag "")
     
-    local temp_container_id=$($docker_cmd run -d --rm \
+    local temp_container_id
+    temp_container_id=$(run_docker_with_saved_preference run -d --rm \
       -e UPDATE_MODE=TRUE \
       --name "$temp_container_name" \
       "acekorneya/asa_server:${image_tag}" \
-      sleep infinity)
+      sleep infinity) || return 1
     
     if [ -z "$temp_container_id" ]; then
       echo "error: could not create temporary container for SteamCMD check" >&2
@@ -6062,10 +6078,17 @@ get_current_build_id() {
     cleanup_container=true
   fi
   
-  local steamcmd_output=$($docker_cmd exec "$existing_container" /opt/steamcmd/steamcmd.sh +login anonymous +app_info_print $app_id +quit 2>/dev/null)
+  local steamcmd_output
+  steamcmd_output=$(run_docker_with_saved_preference exec "$existing_container" \
+    /opt/steamcmd/steamcmd.sh +login anonymous +app_info_print "$app_id" +quit 2>/dev/null) || {
+    if [ "$cleanup_container" = true ]; then
+      run_docker_with_saved_preference rm -f "$existing_container" > /dev/null 2>&1 || true
+    fi
+    return 1
+  }
   
   if [ "$cleanup_container" = true ]; then
-    $docker_cmd rm -f "$existing_container" > /dev/null 2>&1 || true
+    run_docker_with_saved_preference rm -f "$existing_container" > /dev/null 2>&1 || true
   fi
   
   # Extract the build ID using the same approach as common.sh
@@ -7164,7 +7187,7 @@ manage_service() {
     ;;
   -update)
     update_server_files_and_docker
-    exit 0
+    exit $?
     ;;
   -fix)
     _manage_service_handle_fix
@@ -7973,8 +7996,13 @@ update_server_files_and_docker() {
 
   # Pull the latest Docker image to ensure we have the latest version
   local image_tag=$(get_docker_image_tag "")
+  local image_name="acekorneya/asa_server:${image_tag}"
   echo "Using Docker image tag: ${image_tag}"
-  pull_docker_image ""
+  echo "Pulling Docker image: $image_name"
+  if ! run_docker_with_saved_preference pull "$image_name"; then
+    echo "❌ ERROR: Failed to pull the Docker image using the configured Docker privilege mode."
+    return 1
+  fi
 
   # Create a temporary container for update process
   echo "Creating a temporary container for update..."
@@ -7987,6 +8015,7 @@ update_server_files_and_docker() {
     "-e" "INSTANCE_NAME=pok_update_temp"
     "-e" "UPDATE_MODE=TRUE"
     "-e" "POK_MANUAL_SHARED_UPDATE=TRUE"
+    "-e" "TEMP_DOWNLOAD_ROOT=/home/pok/arkserver/.pok-manager/update/staging"
   )
   
   remove_temp_update_container_if_exists() {
@@ -7994,10 +8023,7 @@ update_server_files_and_docker() {
     local filter="name=^/${instance_for_update}$"
     local container_id=""
 
-    container_id=$(docker ps -a --filter "$filter" --format '{{.ID}}' 2>/dev/null || true)
-    if [ -z "$container_id" ] && [ "$(id -u)" -ne 0 ]; then
-      container_id=$(sudo docker ps -a --filter "$filter" --format '{{.ID}}' 2>/dev/null || true)
-    fi
+    container_id=$(run_docker_with_saved_preference ps -a --filter "$filter" --format '{{.ID}}' 2>/dev/null || true)
 
     if [ -z "$container_id" ]; then
       return 0
@@ -8018,16 +8044,9 @@ update_server_files_and_docker() {
         ;;
     esac
 
-    if docker rm -f "$instance_for_update" > /dev/null 2>&1; then
+    if run_docker_with_saved_preference rm -f "$instance_for_update" > /dev/null 2>&1; then
       echo "Temporary update container removed."
       return 0
-    fi
-
-    if [ "$(id -u)" -ne 0 ]; then
-      if sudo docker rm -f "$instance_for_update" > /dev/null 2>&1; then
-        echo "Temporary update container removed."
-        return 0
-      fi
     fi
 
     echo "❌ ERROR: Unable to remove existing temporary update container '$instance_for_update'."
@@ -8037,12 +8056,19 @@ update_server_files_and_docker() {
 
   check_update_disk_space() {
     local required_mb=${REQUIRED_UPDATE_FREE_MB:-25360}
-    local target_path="${BASE_DIR%/}/ServerFiles/arkserver"
-    if [ ! -d "$target_path" ]; then
-      target_path="${BASE_DIR%/}/ServerFiles"
-    fi
+    local target_path="${BASE_DIR%/}/ServerFiles/arkserver/.pok-manager/update/staging"
+    local check_path="$target_path"
     local available_mb
-    available_mb=$(df -Pm "$target_path" 2>/dev/null | awk 'NR==2 {print $4}')
+
+    # The container creates the staging directory as its fixed runtime user.
+    # Until then, df the nearest existing parent on the same filesystem.
+    while [ ! -e "$check_path" ] && [ "$check_path" != "/" ]; do
+      check_path=$(dirname "$check_path")
+    done
+    if [ ! -d "$target_path" ]; then
+      echo "[INFO] ARK update staging location: $target_path"
+    fi
+    available_mb=$(df -Pm "$check_path" 2>/dev/null | awk 'NR==2 {print $4}')
     if [ -z "$available_mb" ]; then
       echo "⚠️ Unable to determine free disk space for $target_path; continuing without disk space validation."
       return 0
@@ -8052,6 +8078,7 @@ update_server_files_and_docker() {
       echo "Please free up additional space and rerun the update."
       return 1
     fi
+    echo "[INFO] ARK update staging space available: ${available_mb}MB (required: ${required_mb}MB)."
     return 0
   }
   
@@ -8060,24 +8087,22 @@ update_server_files_and_docker() {
     if ! remove_temp_update_container_if_exists "startup"; then
       return 1
     fi
-    if groups | grep -Eq '\bdocker\b' || [ "$(id -u)" -eq 0 ]; then
-      id=$(docker run -d --rm         -v "${BASE_DIR%/}/ServerFiles/arkserver:/home/pok/arkserver"         "${env_vars[@]}"         --name "$instance_for_update"         "acekorneya/asa_server:${image_tag}"         sleep infinity) || return 1
-    else
-      id=$(sudo docker run -d --rm         -v "${BASE_DIR%/}/ServerFiles/arkserver:/home/pok/arkserver"         "${env_vars[@]}"         --name "$instance_for_update"         "acekorneya/asa_server:${image_tag}"         sleep infinity) || return 1
-    fi
+    id=$(run_docker_with_saved_preference run -d --rm \
+      -v "${BASE_DIR%/}/ServerFiles/arkserver:/home/pok/arkserver" \
+      "${env_vars[@]}" \
+      --name "$instance_for_update" \
+      "$image_name" \
+      sleep infinity) || return 1
     echo "$id"
   }
   
   init_temp_update_container() {
-    if groups | grep -Eq '\bdocker\b' || [ "$(id -u)" -eq 0 ]; then
-      docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Binaries/Win64/logs' || true
-      docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Saved/Config/WindowsServer' || true
-      docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Saved/SavedArks' || true
-    else
-      sudo docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Binaries/Win64/logs' || true
-      sudo docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Saved/Config/WindowsServer' || true
-      sudo docker exec "$instance_for_update" bash -c 'mkdir -p /home/pok/arkserver/ShooterGame/Saved/SavedArks' || true
-    fi
+    run_docker_with_saved_preference exec "$instance_for_update" bash -c \
+      'mkdir -p /home/pok/arkserver/ShooterGame/Binaries/Win64/logs' || true
+    run_docker_with_saved_preference exec "$instance_for_update" bash -c \
+      'mkdir -p /home/pok/arkserver/ShooterGame/Saved/Config/WindowsServer' || true
+    run_docker_with_saved_preference exec "$instance_for_update" bash -c \
+      'mkdir -p /home/pok/arkserver/ShooterGame/Saved/SavedArks' || true
   }
   
   restart_temp_update_container() {
@@ -8099,7 +8124,7 @@ update_server_files_and_docker() {
   temp_container_id=$(start_temp_update_container)
   if [ -z "$temp_container_id" ]; then
     echo "Failed to create temporary container for update. Aborting."
-    exit 1
+    return 1
   fi
   
   echo "Temporary container created with ID: $temp_container_id"
@@ -8111,8 +8136,14 @@ update_server_files_and_docker() {
   
 # Check current and latest build IDs
   echo "Checking for server updates..."
-  local current_build_id=$(get_build_id_from_acf)
-  local latest_build_id=$(get_current_build_id "$instance_for_update")
+  local current_build_id
+  local latest_build_id
+  current_build_id=$(get_build_id_from_acf)
+  if ! latest_build_id=$(get_current_build_id "$instance_for_update"); then
+    echo "❌ ERROR: Unable to retrieve the latest ARK build ID."
+    remove_temp_update_container_if_exists "cleanup" || true
+    return 1
+  fi
   
   echo "Current build ID: $current_build_id"
   echo "Latest build ID:  $latest_build_id"
@@ -8127,34 +8158,22 @@ update_server_files_and_docker() {
       retry_count=$((retry_count + 1))
       echo "SteamCMD update attempt $retry_count of $max_retries..."
       
-      # Use docker directly if user is in docker group or is root
-      if groups | grep -Eq '\bdocker\b' || [ "$(id -u)" -eq 0 ]; then
-        if docker exec "$instance_for_update" /home/pok/scripts/install_server.sh; then
-          echo "Staged server install/update completed successfully inside container."
-          success=true
-        else
-          echo "Container install_server.sh run failed. Attempt $retry_count of $max_retries."
-          if [ $retry_count -lt $max_retries ]; then
-            echo "Retrying in 10 seconds..."
-            sleep 10
-          fi
-        fi
+      if run_docker_with_saved_preference exec "$instance_for_update" /home/pok/scripts/install_server.sh; then
+        echo "Staged server install/update completed successfully inside container."
+        success=true
       else
-        if sudo docker exec "$instance_for_update" /home/pok/scripts/install_server.sh; then
-          echo "Staged server install/update completed successfully inside container."
-          success=true
-        else
-          echo "Container install_server.sh run failed. Attempt $retry_count of $max_retries."
-          if [ $retry_count -lt $max_retries ]; then
-            echo "Retrying in 10 seconds..."
-            sleep 10
-          fi
+        echo "Container install_server.sh run failed. Attempt $retry_count of $max_retries."
+        if [ $retry_count -lt $max_retries ]; then
+          echo "Retrying in 10 seconds..."
+          sleep 10
         fi
       fi
     done
     
-    return $([ "$success" = true ] && echo 0 || echo 1)
+    [ "$success" = true ]
   }
+
+  local update_status=0
   
   # Check if the server files are installed or need update
   if [ ! -f "${BASE_DIR%/}/ServerFiles/arkserver/appmanifest_2430930.acf" ]; then
@@ -8164,6 +8183,7 @@ update_server_files_and_docker() {
       echo "----- ARK server files installed successfully -----"
     else
       echo "Failed to install ARK server files after multiple attempts. Please check the logs for more information."
+      update_status=1
     fi
   elif [ "$current_build_id" != "$latest_build_id" ]; then
     echo "---- New server build available: $latest_build_id (current: $current_build_id) -----"
@@ -8180,6 +8200,7 @@ update_server_files_and_docker() {
       fi
     else
       echo "Failed to update ARK server files after multiple attempts. Please check the logs for more information."
+      update_status=1
     fi
   else
     echo "----- ARK server files are already up to date with build id: $current_build_id -----"
@@ -8189,9 +8210,15 @@ update_server_files_and_docker() {
   echo "Removing temporary update container..."
   if ! remove_temp_update_container_if_exists "cleanup"; then
     echo "⚠️ WARNING: Automatic removal of the temporary update container failed. It may still be running as '${instance_for_update}'."
+    update_status=1
   fi
 
-  echo "----- Update process completed -----"
+  if [ "$update_status" -eq 0 ]; then
+    echo "----- Update process completed successfully -----"
+  else
+    echo "----- Update process failed; review the errors above -----"
+  fi
+  return "$update_status"
 }
 
 _MIGRATION_DIRS_TO_CHANGE=()
