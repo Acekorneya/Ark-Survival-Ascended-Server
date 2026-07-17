@@ -88,6 +88,31 @@ load '../test_helper/project.bash'
   assert_output --partial "Command received by server, but no response was provided."
 }
 
+@test "saveWorld propagates non-connection RCON process failures" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    source "$REPO_ROOT/scripts/rcon_commands.sh"
+    timeout() {
+      echo "unexpected rcon-cli failure"
+      return 2
+    }
+    sleep() { :; }
+    RCON_PATH=/usr/local/bin/rcon-cli
+    RCON_HOST=127.0.0.1
+    RCON_PORT=27020
+    RCON_PASSWORD=secret
+    SAVE_WAIT_SECONDS=5
+    if saveWorld; then
+      echo "result=unexpected-success"
+    else
+      echo "result=failed"
+    fi
+  '
+
+  assert_success
+  assert_output --partial "result=failed"
+  assert_output --partial "World save command was not accepted"
+}
+
 @test "get_or_refresh_eos_token returns a cached token when it is still valid" {
   run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
     set -e

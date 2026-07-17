@@ -17,6 +17,72 @@ LAUNCH_ASA_ADVERTISING_MARKER="Server has completed startup and is now advertisi
 LAUNCH_ASA_FULL_STARTUP_MARKER="Full Startup:"
 LAUNCH_ASA_READY_MARKER_TYPE=""
 
+proton_output_is_direct_launch_hook_warning() {
+  local line="$1"
+
+  [[ "$line" =~ ^ProtonFixes\[[0-9]+\]\ WARN:\ Skipping\ fix\ execution\.\ We\ are\ probably\ running\ a\ unit\ test\.$ ]]
+}
+
+filter_proton_runtime_output() {
+  local line=""
+  local diagnostic_log="${PROTON_RUNTIME_LOG:-/home/pok/logs/proton_runtime.log}"
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    printf '%s\n' "$line" >> "$diagnostic_log"
+    if proton_output_is_direct_launch_hook_warning "$line"; then
+      continue
+    fi
+    printf '%s\n' "$line"
+  done
+}
+
+print_proton_runtime_diagnostics() {
+  local diagnostic_log="$1"
+  local line=""
+  local filtered_log=""
+
+  [ -s "$diagnostic_log" ] || return 0
+  filtered_log=$(mktemp "${TMPDIR:-/tmp}/pok-proton-diagnostics.XXXXXX") || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    proton_output_is_direct_launch_hook_warning "$line" && continue
+    printf '%s\n' "$line" >> "$filtered_log"
+  done < "$diagnostic_log"
+  tail -20 "$filtered_log"
+  rm -f "$filtered_log"
+}
+
+asaapi_output_is_startup_boilerplate() {
+  local line="$1"
+
+  [[ "$line" =~ \[API\]\[info\]\ (-+|ARK:SA\ Api\ V[^[:space:]]+|Brought\ to\ you\ by\ ArkServerApi|https://github\.com/orgs/ArkServerApi|Website:\ https://ark-server-api\.com|Loading\.\.\.|Added\ DLL\ search\ directory:.*|Reading\ cached\ offsets|Reading\ cached\ bitfields|Initialized\ hooks)$ ]]
+}
+
+filter_asaapi_console_output() {
+  local line=""
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    asaapi_output_is_startup_boilerplate "$line" && continue
+    printf '%s\n' "$line"
+  done
+}
+
+start_log_tail() {
+  local log_file="$1"
+  local pid_variable="$2"
+  local output_mode="${3:-complete}"
+
+  # Follow the complete source file by name so mirroring survives replacement
+  # and rotation. The selected console mode may omit documented boilerplate.
+  if [ "$output_mode" = "asaapi" ]; then
+    # The source log remains complete on disk. The container console omits only
+    # AsaApi's fixed startup banner/cache boilerplate and keeps operational lines.
+    tail -n +1 -F "$log_file" > >(filter_asaapi_console_output) &
+  else
+    tail -n +1 -F "$log_file" &
+  fi
+  printf -v "$pid_variable" '%s' "$!"
+}
+
 launch_asa_detect_ready_marker() {
   local log_file="$1"
 
@@ -136,6 +202,13 @@ setup_arkserverapi() {
     local ASA_PLUGIN_BINARY_NAME="AsaApiLoader.exe"
     local ASA_PLUGIN_BINARY_PATH="$ASA_BINARY_DIR/$ASA_PLUGIN_BINARY_NAME"
     local ASA_PLUGIN_LOADER_ARCHIVE_NAME=$(basename $ASA_BINARY_DIR/AsaApi_*.zip 2>/dev/null)
+
+    # Prepare the selected API source and its executable-specific cache before
+    # Wine starts. This deliberately bypasses AsaApi's Windows HTTPS client.
+    if ! ensure_ark_server_api_ready; then
+      echo "ERROR: AsaApi source or cache preparation did not complete."
+      return 1
+    fi
     
     # Make sure the directory exists
     mkdir -p "$ASA_BINARY_DIR"
@@ -326,79 +399,31 @@ start_server() {
     echo "🔧 CPU optimization disabled (default)"
   fi
   
-  # Launch the server using proton run directly, similar to test_script.sh
-  # Using the same approach as in test_script.sh which we know works
-  local STEAM_COMPAT_DIR="/home/pok/.steam/steam/compatibilitytools.d"
-  
   # Construct server parameters
   local server_params="$MAP_PATH?listen?$session_name_arg?${rcon_args}${server_password_arg}?ServerAdminPassword=${SERVER_ADMIN_PASSWORD} -Port=${ASA_PORT} -WinLiveMaxPlayers=${MAX_PLAYERS} $cluster_id_arg -servergamelog -servergamelogincludetribelogs -ServerRCONOutputTribeLogs $notify_admin_commands_arg $custom_args $mods_arg $battleye_arg $passive_mods_arg"
   
   # Change to the binary directory
   cd "${ASA_DIR}/ShooterGame/Binaries/Win64"
 
+  # Health checks use this timestamp to reject an API success message left by
+  # an earlier server process. The API log must be updated after this launch
+  # checkpoint before managed AsaApi can be reported healthy.
+  if [ "$LAUNCH_BINARY_NAME" = "AsaApiLoader.exe" ]; then
+    : > "${ASAAPI_LAUNCH_MARKER:-/tmp/pok_asaapi_launch_started}"
+  fi
+
   # Defensive cleanup: Remove problematic Steam DLL files that interfere with Proton/Wine
   echo "[INFO] Performing pre-launch Steam DLL cleanup..."
   rm -f steamclient.dll steamclient64.dll tier0_s.dll tier0_s64.dll vstdlib_s.dll vstdlib_s64.dll 2>/dev/null || true
 
-  # Improved Proton path detection with multiple fallbacks
-  local FOUND_PROTON=false
   local PROTON_EXECUTABLE=""
-  
-  # Define an array of potential Proton directories to check
-  local POTENTIAL_PROTON_DIRS=(
-    "${STEAM_COMPAT_DIR}/GE-Proton-Current"
-    "${STEAM_COMPAT_DIR}/GE-Proton8-21"
-    "${STEAM_COMPAT_DIR}/GE-Proton9-25"
-  )
-  
-  # Find a working Proton installation
-  echo "Looking for Proton installations..."
-  for proton_dir in "${POTENTIAL_PROTON_DIRS[@]}"; do
-    if [ -f "$proton_dir/proton" ]; then
-      PROTON_EXECUTABLE="$proton_dir/proton"
-      PROTON_DIR_NAME=$(basename "$proton_dir")
-      echo "Found Proton executable at: $PROTON_EXECUTABLE (directory: $PROTON_DIR_NAME)"
-      FOUND_PROTON=true
-      break
-    fi
-  done
-  
-  # If no Proton found in standard locations, search for any GE-Proton* directory
-  if ! $FOUND_PROTON; then
-    echo "No Proton found in standard locations, searching for any GE-Proton installation..."
-    # Find any GE-Proton* directory
-    local ANY_PROTON_DIR=$(find $STEAM_COMPAT_DIR -maxdepth 1 -name "GE-Proton*" -type d | head -n 1)
-    
-    if [ -n "$ANY_PROTON_DIR" ] && [ -f "$ANY_PROTON_DIR/proton" ]; then
-      PROTON_EXECUTABLE="$ANY_PROTON_DIR/proton"
-      PROTON_DIR_NAME=$(basename "$ANY_PROTON_DIR")
-      echo "Found Proton executable at: $PROTON_EXECUTABLE (directory: $PROTON_DIR_NAME)"
-      FOUND_PROTON=true
-    else
-      echo "WARNING: No Proton installation found. Will try system 'proton' command."
-      # Check if system 'proton' command exists
-      if command -v proton >/dev/null 2>&1; then
-        echo "System 'proton' command exists, will use it."
-        PROTON_EXECUTABLE="proton"
-        FOUND_PROTON=true
-      else
-        echo "ERROR: No Proton installation found and no system 'proton' command."
-        echo "Creating minimal Proton script as a last resort..."
-        
-        # Create minimal Proton directory and script as last resort
-        mkdir -p "${STEAM_COMPAT_DIR}/GE-Proton-Fallback"
-        echo '#!/bin/bash' > "${STEAM_COMPAT_DIR}/GE-Proton-Fallback/proton"
-        echo 'export WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx"' >> "${STEAM_COMPAT_DIR}/GE-Proton-Fallback/proton"
-        echo 'wine "$@"' >> "${STEAM_COMPAT_DIR}/GE-Proton-Fallback/proton"
-        chmod +x "${STEAM_COMPAT_DIR}/GE-Proton-Fallback/proton"
-        
-        PROTON_EXECUTABLE="${STEAM_COMPAT_DIR}/GE-Proton-Fallback/proton"
-        PROTON_DIR_NAME="GE-Proton-Fallback"
-        echo "Created fallback Proton script at: $PROTON_EXECUTABLE"
-        FOUND_PROTON=true
-      fi
-    fi
+  echo "Resolving image-pinned Proton installation..."
+  if ! resolve_pinned_proton; then
+    echo "ERROR: Image-pinned Proton installation is unavailable or mismatched."
+    exit 1
   fi
+  PROTON_EXECUTABLE="$POK_PROTON_EXECUTABLE"
+  echo "Using pinned Proton $POK_PROTON_VERSION: $PROTON_EXECUTABLE"
   
   # Set crucial Wine DLL overrides - this is very important for AsaApiLoader.exe
   export WINEDLLOVERRIDES="version=n,b"
@@ -454,28 +479,6 @@ start_server() {
     # Sync to ensure all changes are written
     sync
     sleep 2
-    
-    # Add first-time launch detection and notification
-    local first_launch_file="/home/pok/.first_launch_completed"
-    local container_launch_file="/home/pok/.container_launched"
-    local is_first_launch=false
-    
-    # Only show first launch message if both conditions are true:
-    # 1. First time running the server (no .first_launch_completed file)
-    # 2. First time in this container instance (no .container_launched file)
-    if [ ! -f "$first_launch_file" ] && [ ! -f "$container_launch_file" ]; then
-      is_first_launch=true
-      echo ""
-      echo "🔍 FIRST-TIME LAUNCH DETECTED"
-      echo "⚠️ The first server launch may take longer and could potentially fail"
-      echo "🔄 If the first launch fails, the system will automatically restart"
-      echo "   and complete setup on the second attempt (this is normal behavior)"
-      echo "⏱️ Please be patient during the first launch process"
-      echo ""
-    fi
-    
-    # Always create the container_launched file to mark this container as having been run before
-    touch "$container_launch_file"
     
     # Define a function to make a launch attempt
     attempt_launch() {
@@ -543,51 +546,10 @@ start_server() {
               return 1
             fi
             ;;
-          "proton_fallback")
-            # Method 2: Fallback to fixed path
+          "proton_retry")
             export DISPLAY=:0.0
-            if [ -f "${STEAM_COMPAT_DIR}/GE-Proton8-21/proton" ]; then
-              echo "[INFO] Using GE-Proton8-21 for fallback launch"
-              "${STEAM_COMPAT_DIR}/GE-Proton8-21/proton" run "$binary" $params > /tmp/launch_output.log 2>&1 &
-            elif [ -f "${STEAM_COMPAT_DIR}/GE-Proton9-25/proton" ]; then
-              echo "[INFO] Using GE-Proton9-25 for fallback launch"
-              "${STEAM_COMPAT_DIR}/GE-Proton9-25/proton" run "$binary" $params > /tmp/launch_output.log 2>&1 &
-            else
-              # Last resort: check for any available GE-Proton directory
-              local ANY_PROTON=$(find "${STEAM_COMPAT_DIR}" -name "GE-Proton*" -type d | head -1)
-              if [ -n "$ANY_PROTON" ] && [ -f "$ANY_PROTON/proton" ]; then
-                echo "[INFO] Using $ANY_PROTON for fallback launch"
-                "$ANY_PROTON/proton" run "$binary" $params > /tmp/launch_output.log 2>&1 &
-              else
-                echo "[WARNING] Fallback Proton paths not found, skipping this method."
-                return 1
-              fi
-            fi
-            ;;
-          "proton_command")
-            # Method 3: System proton command
-            STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam" \
-            STEAM_COMPAT_DATA_PATH="${STEAM_COMPAT_DATA_PATH}" \
-            proton run "$binary" $params > /tmp/launch_output.log 2>&1 &
-            ;;
-          "wine_direct")
-            # Method 4: Direct Wine launch with virtual display
-            export DISPLAY=:0.0
-            # Create virtual display with Xvfb if available
-            if command -v Xvfb >/dev/null 2>&1; then
-              # Create .X11-unix directory first to avoid errors
-              mkdir -p /tmp/.X11-unix 2>/dev/null || true
-              chmod 1777 /tmp/.X11-unix 2>/dev/null || true
-              
-              # Start Xvfb with error output suppressed
-              Xvfb :0 -screen 0 1024x768x16 2>/dev/null &
-              XVFB_PID=$!
-              sleep 2  # Give Xvfb time to start
-            fi
-            # Add environment variables to help wine find libraries
-            export WINEDLLOVERRIDES="*version=n,b;vcrun2022=n,b"
-            export WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx"
-            WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine "$binary" $params > /tmp/launch_output.log 2>&1 &
+            echo "[INFO] Retrying launch with pinned Proton $POK_PROTON_VERSION"
+            "$PROTON_EXECUTABLE" run "$binary" $params > /tmp/launch_output.log 2>&1 &
             ;;
         esac
         
@@ -607,27 +569,25 @@ start_server() {
             echo "[INFO] Waiting for server initialization... (${waited}s elapsed)"
           fi
           
-          # Check if process is still running
-          if ! kill -0 $pid 2>/dev/null; then
-            # Process exited early
-            echo "[ERROR] Server process exited unexpectedly after ${waited}s"
-            break
-          fi
-          
           # Check for ARK processes which indicate successful launch
           if pgrep -f "AsaApiLoader.exe" >/dev/null 2>&1 || pgrep -f "ArkAscendedServer.exe" >/dev/null 2>&1; then
-            echo "[SUCCESS] ARK Server process detected with PID: $(pgrep -f "AsaApiLoader.exe|ArkAscendedServer.exe" | head -1)"
+            LAUNCH_ATTEMPT_PID=$(pgrep -f "AsaApiLoader.exe|ArkAscendedServer.exe" | head -n 1)
+            echo "[SUCCESS] ARK Server process detected with PID: $LAUNCH_ATTEMPT_PID"
+            break
+          fi
+
+          if ! kill -0 "$pid" 2>/dev/null; then
+            echo "[ERROR] Proton launcher exited before an ARK process appeared (${waited}s)"
             break
           fi
         done
-        
-        # Check if process is still running
-        if kill -0 $pid 2>/dev/null; then
+
+        if [ -n "${LAUNCH_ATTEMPT_PID:-}" ]; then
           echo "[SUCCESS] Launch successful using method: $method (${waited}s)"
-          # Create the first launch completed file to skip this next time
           mark_first_launch_completed
           return 0
         else
+          kill -TERM "$pid" 2>/dev/null || true
           echo "[ERROR] Launch failed using method: $method after ${waited}s"
           # Check if this was a MSVCP140.dll error
           if grep -q "err:module:import_dll Loading library MSVCP140.dll.*failed" /tmp/launch_output.log 2>/dev/null; then
@@ -657,51 +617,10 @@ start_server() {
               return 1
             fi
             ;;
-          "proton_fallback")
-            # Method 2: Fallback to fixed path
+          "proton_retry")
             export DISPLAY=:0.0
-            if [ -f "${STEAM_COMPAT_DIR}/GE-Proton8-21/proton" ]; then
-              echo "[INFO] Using GE-Proton8-21 for fallback launch"
-              "${STEAM_COMPAT_DIR}/GE-Proton8-21/proton" run "$binary" $params > /tmp/launch_output.log 2>&1 &
-            elif [ -f "${STEAM_COMPAT_DIR}/GE-Proton9-25/proton" ]; then
-              echo "[INFO] Using GE-Proton9-25 for fallback launch"
-              "${STEAM_COMPAT_DIR}/GE-Proton9-25/proton" run "$binary" $params > /tmp/launch_output.log 2>&1 &
-            else
-              # Last resort: check for any available GE-Proton directory
-              local ANY_PROTON=$(find "${STEAM_COMPAT_DIR}" -name "GE-Proton*" -type d | head -1)
-              if [ -n "$ANY_PROTON" ] && [ -f "$ANY_PROTON/proton" ]; then
-                echo "[INFO] Using $ANY_PROTON for fallback launch"
-                "$ANY_PROTON/proton" run "$binary" $params > /tmp/launch_output.log 2>&1 &
-              else
-                echo "[WARNING] Fallback Proton paths not found, skipping this method."
-                return 1
-              fi
-            fi
-            ;;
-          "proton_command")
-            # Method 3: System proton command
-            STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam" \
-            STEAM_COMPAT_DATA_PATH="${STEAM_COMPAT_DATA_PATH}" \
-            proton run "$binary" $params > /tmp/launch_output.log 2>&1 &
-            ;;
-          "wine_direct")
-            # Method 4: Direct Wine launch with virtual display
-            export DISPLAY=:0.0
-            # Create virtual display with Xvfb if available
-            if command -v Xvfb >/dev/null 2>&1; then
-              # Create .X11-unix directory first to avoid errors
-              mkdir -p /tmp/.X11-unix 2>/dev/null || true
-              chmod 1777 /tmp/.X11-unix 2>/dev/null || true
-              
-              # Start Xvfb with error output suppressed
-              Xvfb :0 -screen 0 1024x768x16 2>/dev/null &
-              XVFB_PID=$!
-              sleep 2  # Give Xvfb time to start
-            fi
-            # Add environment variables to help wine find libraries
-            export WINEDLLOVERRIDES="*version=n,b;vcrun2022=n,b"
-            export WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx"
-            WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine "$binary" $params > /tmp/launch_output.log 2>&1 &
+            echo "[INFO] Retrying launch with pinned Proton $POK_PROTON_VERSION"
+            "$PROTON_EXECUTABLE" run "$binary" $params > /tmp/launch_output.log 2>&1 &
             ;;
         esac
         
@@ -712,18 +631,18 @@ start_server() {
         echo "[INFO] Waiting for server initialization..."
         sleep 5
         
-        # Check for ARK process
+        LAUNCH_ATTEMPT_PID=""
         if pgrep -f "AsaApiLoader.exe" >/dev/null 2>&1 || pgrep -f "ArkAscendedServer.exe" >/dev/null 2>&1; then
-          echo "[SUCCESS] ARK Server process detected with PID: $(pgrep -f "AsaApiLoader.exe|ArkAscendedServer.exe" | head -1)"
+          LAUNCH_ATTEMPT_PID=$(pgrep -f "AsaApiLoader.exe|ArkAscendedServer.exe" | head -n 1)
+          echo "[SUCCESS] ARK Server process detected with PID: $LAUNCH_ATTEMPT_PID"
         fi
-        
-        # Check if process is still running
-        if kill -0 $pid 2>/dev/null; then
+
+        if [ -n "$LAUNCH_ATTEMPT_PID" ]; then
           echo "[SUCCESS] Launch successful using method: $method"
-          # Mark first launch as completed (just in case)
           mark_first_launch_completed
           return 0
         else
+          kill -TERM "$pid" 2>/dev/null || true
           echo "[ERROR] Launch failed using method: $method"
           # Check if this was a MSVCP140.dll error
           if grep -q "err:module:import_dll Loading library MSVCP140.dll.*failed" /tmp/launch_output.log 2>/dev/null; then
@@ -739,28 +658,22 @@ start_server() {
     # Try different launch methods for AsaApiLoader with better fallbacks
     SERVER_PID=""
     
+    LAUNCH_ATTEMPT_PID=""
     if attempt_launch "proton_direct" "$LAUNCH_BINARY_NAME" "$server_params"; then
-      SERVER_PID=$!
-    elif attempt_launch "proton_fallback" "$LAUNCH_BINARY_NAME" "$server_params"; then
-      SERVER_PID=$!
-    elif attempt_launch "proton_command" "$LAUNCH_BINARY_NAME" "$server_params"; then
-      SERVER_PID=$!
-    elif attempt_launch "wine_direct" "$LAUNCH_BINARY_NAME" "$server_params"; then
-      SERVER_PID=$!
+      SERVER_PID="$LAUNCH_ATTEMPT_PID"
+    elif attempt_launch "proton_retry" "$LAUNCH_BINARY_NAME" "$server_params"; then
+      SERVER_PID="$LAUNCH_ATTEMPT_PID"
     else
       # As a last resort, try launching the regular server executable
       echo "All AsaApiLoader launch attempts failed. Falling back to standard server executable..."
       LAUNCH_BINARY_NAME="ArkAscendedServer.exe"
       
       # Try the same sequence of methods with the standard executable
+      LAUNCH_ATTEMPT_PID=""
       if attempt_launch "proton_direct" "$LAUNCH_BINARY_NAME" "$server_params"; then
-        SERVER_PID=$!
-      elif attempt_launch "proton_fallback" "$LAUNCH_BINARY_NAME" "$server_params"; then
-        SERVER_PID=$!
-      elif attempt_launch "proton_command" "$LAUNCH_BINARY_NAME" "$server_params"; then
-        SERVER_PID=$!
-      elif attempt_launch "wine_direct" "$LAUNCH_BINARY_NAME" "$server_params"; then
-        SERVER_PID=$!
+        SERVER_PID="$LAUNCH_ATTEMPT_PID"
+      elif attempt_launch "proton_retry" "$LAUNCH_BINARY_NAME" "$server_params"; then
+        SERVER_PID="$LAUNCH_ATTEMPT_PID"
       else
         echo "ERROR: All launch attempts failed! Server could not be started."
         echo "This is likely a first boot issue. The monitor process will automatically restart the server."
@@ -771,65 +684,43 @@ start_server() {
       fi
     fi
   else
-    # For regular server launch, try each method in sequence
     SERVER_PID=""
-    
-    # Try first with the found Proton executable
-    if [ -f "$PROTON_EXECUTABLE" ]; then
-      echo "Launching with found Proton executable: $PROTON_EXECUTABLE"
-      "$PROTON_EXECUTABLE" run "$LAUNCH_BINARY_NAME" $server_params &
-      SERVER_PID=$!
-      
-      # Wait a moment to see if the server started correctly
+    local launch_attempt
+    local proton_launcher_pid
+    local PROTON_RUNTIME_LOG="/home/pok/logs/proton_runtime.log"
+
+    mkdir -p "$(dirname "$PROTON_RUNTIME_LOG")"
+    : > "$PROTON_RUNTIME_LOG"
+    echo "[INFO] Direct dedicated-server launch: Steam game-specific ProtonFixes hooks are not applicable."
+    echo "[INFO] Proton diagnostics are mirrored to $PROTON_RUNTIME_LOG"
+
+    for launch_attempt in 1 2; do
+      if [ "$launch_attempt" -eq 1 ]; then
+        echo "Launching with pinned Proton $POK_PROTON_VERSION"
+      else
+        echo "Retrying launch with pinned Proton $POK_PROTON_VERSION"
+      fi
+      "$PROTON_EXECUTABLE" run "$LAUNCH_BINARY_NAME" $server_params \
+        > >(filter_proton_runtime_output) \
+        2> >(filter_proton_runtime_output >&2) &
+      proton_launcher_pid=$!
       sleep 5
-      
-      # Check if the process is running
-      if ! kill -0 $SERVER_PID 2>/dev/null; then
-        echo "WARNING: First launch attempt failed. Trying alternative methods..."
-        SERVER_PID=""
-      else
-        echo "Server started successfully with primary Proton method."
+
+      SERVER_PID=$(pgrep -f "ArkAscendedServer.exe" | head -n 1 || true)
+      if [ -n "$SERVER_PID" ]; then
+        echo "Server process detected with PID $SERVER_PID using pinned Proton $POK_PROTON_VERSION."
+        break
       fi
-    else
-      echo "No primary Proton executable found, trying alternative methods..."
+
+      kill -TERM "$proton_launcher_pid" 2>/dev/null || true
       SERVER_PID=""
-    fi
-    
-    # If first method failed, try alternative methods
-    if [ -z "$SERVER_PID" ] || ! kill -0 $SERVER_PID 2>/dev/null; then
-      # Try different launch methods in sequence
-      if [ -f "${STEAM_COMPAT_DIR}/GE-Proton8-21/proton" ]; then
-        echo "Trying GE-Proton8-21..."
-        "${STEAM_COMPAT_DIR}/GE-Proton8-21/proton" run "$LAUNCH_BINARY_NAME" $server_params &
-        SERVER_PID=$!
-        sleep 5
-      elif [ -f "${STEAM_COMPAT_DIR}/GE-Proton9-25/proton" ]; then
-        echo "Trying GE-Proton9-25..."
-        "${STEAM_COMPAT_DIR}/GE-Proton9-25/proton" run "$LAUNCH_BINARY_NAME" $server_params &
-        SERVER_PID=$!
-        sleep 5
-      elif command -v proton >/dev/null 2>&1; then
-        echo "Trying system proton command..."
-        proton run "$LAUNCH_BINARY_NAME" $server_params &
-        SERVER_PID=$!
-        sleep 5
-      elif command -v wine >/dev/null 2>&1; then
-        echo "Trying direct wine command..."
-        WINEPREFIX="${STEAM_COMPAT_DATA_PATH}/pfx" wine "$LAUNCH_BINARY_NAME" $server_params &
-        SERVER_PID=$!
-        sleep 5
-      else
-        echo "ERROR: No viable launch method found! Server could not be started."
-        exit 1
-      fi
-      
-      # Check if any of these methods worked
-      if ! kill -0 $SERVER_PID 2>/dev/null; then
-        echo "ERROR: All launch attempts failed! Server could not be started."
-        exit 1
-      else
-        echo "Server started successfully with alternative method."
-      fi
+    done
+
+    if [ -z "$SERVER_PID" ]; then
+      echo "ERROR: Both launch attempts with pinned Proton $POK_PROTON_VERSION failed."
+      echo "[ERROR] Last Proton diagnostic output:"
+      print_proton_runtime_diagnostics "$PROTON_RUNTIME_LOG"
+      exit 1
     fi
   fi
   
@@ -860,24 +751,18 @@ start_server() {
     unset API_TAIL_PID
     unset GAME_TAIL_PID
     unset LOGS_DISPLAY_PID
-    unset TAIL_PID
 
     if [ "${API}" = "TRUE" ]; then
       echo "🔍 Looking for AsaApi logs (API is enabled)..."
       while [ $api_elapsed -lt $max_wait ]; do
-        api_log="$(find "$api_log_dir" \( -name "ArkApi_*.log" -o -name "AsaApi.log" \) -type f -printf "%T@ %p\n" 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2-)"
+        api_log="$(find "$api_log_dir" \( -name "ArkApi_*.log" -o -name "ArkApi.log" -o -name "AsaApi.log" \) -type f -printf "%T@ %p\n" 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2-)"
         if [ -n "$api_log" ] && [ -f "$api_log" ]; then
           echo ""
           echo "✅ Found AsaApi logs: $(basename "$api_log")"
           echo "---------------------------------------------"
           echo "📋 ASAAPI LOG OUTPUT:"
           echo "---------------------------------------------"
-          if [ -s "$api_log" ]; then
-            cat "$api_log"
-          fi
-          tail -n 0 -f "$api_log" &
-          API_TAIL_PID=$!
-          export API_TAIL_PID
+          start_log_tail "$api_log" API_TAIL_PID asaapi
           break
         fi
         printf "\r🔍 Waiting for AsaApi logs... (%ds elapsed)      " "$api_elapsed"
@@ -899,16 +784,7 @@ start_server() {
         echo "---------------------------------------------"
         echo "📋 ARK SERVER LOG OUTPUT:"
         echo "---------------------------------------------"
-        if [ -s "$game_log" ]; then
-          cat "$game_log"
-          echo "---------------------------------------------"
-          echo "📋 CONTINUING LIVE LOGS:"
-          echo "---------------------------------------------"
-        fi
-        tail -n 0 -f "$game_log" &
-        GAME_TAIL_PID=$!
-        export GAME_TAIL_PID
-        export TAIL_PID=$GAME_TAIL_PID
+        start_log_tail "$game_log" GAME_TAIL_PID
         return 0
       fi
       printf "\r🔍 Waiting for ShooterGame.log... (%ds elapsed)      " "$elapsed"
@@ -1064,6 +940,10 @@ start_server() {
           
           # Maintain backward compatibility
           touch "/home/pok/.first_launch_completed"
+
+          # A rollback candidate is trusted only after both the game and every
+          # managed AsaApi plugin completed this launch successfully.
+          record_successful_api_deployment || true
         fi
         
         # Double verify correct PID file
@@ -1073,7 +953,9 @@ start_server() {
         echo "[INFO] Ensuring PID file is up-to-date with server PID: $SERVER_PID"
         echo "$SERVER_PID" > "$PID_FILE"
 
-        if update_coordination_enabled && update_coordination_is_active_leader; then
+        if update_coordination_enabled && update_coordination_is_active_leader && \
+            update_coordination_refresh_state && \
+            [ "${UPDATE_COORDINATION_STATE_PHASE:-}" = "leader_starting" ]; then
           update_coordination_mark_ready || true
         fi
         
@@ -1121,8 +1003,9 @@ start_server() {
   echo "Server stopped."
   
   # Clean up all background processes
-  if [ -n "$TAIL_PID" ]; then
-    kill $TAIL_PID 2>/dev/null || true
+  if [ -n "${GAME_TAIL_PID:-}" ]; then
+    kill "$GAME_TAIL_PID" 2>/dev/null || true
+    wait "$GAME_TAIL_PID" 2>/dev/null || true
     echo "Stopped tailing ShooterGame.log."
   fi
   
@@ -1131,8 +1014,9 @@ start_server() {
     echo "Stopped logs display process."
   fi
   
-  if [ -n "$API_TAIL_PID" ]; then
-    kill $API_TAIL_PID 2>/dev/null || true
+  if [ -n "${API_TAIL_PID:-}" ]; then
+    kill "$API_TAIL_PID" 2>/dev/null || true
+    wait "$API_TAIL_PID" 2>/dev/null || true
     echo "Stopped tailing AsaApi log."
   fi
   

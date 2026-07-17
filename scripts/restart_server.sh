@@ -164,15 +164,19 @@ display_animated_countdown() {
     echo -e "${status_color}Initiating server restart phase...${reset_color}"
   else
     echo -e "${warning_color}⚠️ Timeout during shutdown phase${reset_color}"
-    echo -e "${status_color}Proceeding with restart attempt...${reset_color}"
-    # Create the flag anyway to continue with restart
-    touch "$SHUTDOWN_COMPLETE_FLAG"
+    echo -e "${warning_color}Shutdown remains unverified; restart will not continue.${reset_color}"
+    return 1
   fi
 }
 
 # Function to thoroughly clean up environment before restart
 cleanup_environment() {
   echo "Performing thorough environment cleanup before restart..."
+
+  if shutdown_server_process_running && [ ! -f "$SHUTDOWN_COMPLETE_FLAG" ]; then
+    echo "Error: Refusing process cleanup before both save stages are verified." >&2
+    return 1
+  fi
   
   # Remove any stale PID files
   if [ -f "$PID_FILE" ]; then
@@ -245,100 +249,15 @@ cleanup_environment() {
 # Function to exit the container with a restart signal
 exit_container_for_restart() {
   local restart_reason="${1:-NORMAL_RESTART}"
-  
-  # Send RCON commands to save world and shut down the server
-  echo "[INFO] Sending SaveWorld command to server..."
-  if send_rcon_command "SaveWorld"; then
-    echo "[SUCCESS] World save command sent. Waiting for completion..."
-    # Allow time for the save to complete
-    sleep 10
-    
-    # Now send the exit command to properly shut down the server
-    echo "[INFO] Sending DoExit command to server..."
-    send_rcon_command "DoExit"
-    echo "[INFO] DoExit command sent. Waiting for server to shut down..."
-    
-    # Wait for server process to exit
-    local timeout=60
-    local elapsed=0
-    local is_server_down=false
-    
-    echo "[INFO] Waiting for server to shut down (timeout: $timeout seconds)..."
-    while [ $elapsed -lt $timeout ]; do
-      # Check if server processes are still running
-      if ! pgrep -f "ArkAscendedServer.exe" >/dev/null 2>&1 && ! pgrep -f "AsaApiLoader.exe" >/dev/null 2>&1; then
-        echo "[SUCCESS] Server has shut down properly."
-        is_server_down=true
-        break
-      fi
-      
-      # Wait and increment counter
-      sleep 5
-      elapsed=$((elapsed + 5))
-      echo "[INFO] Still waiting for server shutdown... ($elapsed/$timeout seconds)"
-    done
-    
-    # If server didn't shut down gracefully, force kill it
-    if [ "$is_server_down" != "true" ]; then
-      echo "[WARNING] Server didn't shut down gracefully within timeout. Force killing processes..."
-      pkill -9 -f "ArkAscendedServer.exe" >/dev/null 2>&1 || true
-      pkill -9 -f "AsaApiLoader.exe" >/dev/null 2>&1 || true
-      pkill -9 -f "wine" >/dev/null 2>&1 || true
-      pkill -9 -f "wineserver" >/dev/null 2>&1 || true
-      sleep 2
-    fi
-  else
-    echo "[WARNING] Failed to send SaveWorld command. Server might not be running or RCON might be unavailable."
-    echo "[INFO] Will attempt to force stop any running server processes..."
-    pkill -9 -f "ArkAscendedServer.exe" >/dev/null 2>&1 || true
-    pkill -9 -f "AsaApiLoader.exe" >/dev/null 2>&1 || true
-    pkill -9 -f "wine" >/dev/null 2>&1 || true
-    pkill -9 -f "wineserver" >/dev/null 2>&1 || true
-    sleep 2
+
+  if shutdown_server_process_running && ! safe_container_stop; then
+    echo "[ERROR] Container restart aborted because both saves were not verified." >&2
+    return 1
   fi
-  
-  # Create a flag file to indicate a clean exit for restart
-  echo "$(date) - Container exiting for automatic restart by orchestration system" > /home/pok/container_restart.log
-  
-  # Create a flag file that will be detected on container restart
-  echo "$restart_reason" > /home/pok/restart_reason.flag
   
   echo "🔄 Container will now exit for restart via Docker"
   echo "⚠️ Docker will automatically restart the container"
-  
-  # Create a special flag to tell the monitor to stop as well
-  echo "true" > /home/pok/stop_monitor.flag
-  
-  # Simplified container exit approach - no extensive cleanup needed
-  echo "[INFO] Server is shut down. Killing container to trigger Docker restart..."
-  
-  # Force kill the container process with SIGKILL
-  echo "[INFO] Force killing ALL container processes for restart..."
-  
-  # Flush disk writes
-  sync 
-  sleep 1
-  
-  # Super aggressive container kill approach:
-  
-  # 1. Kill all processes owned by our user
-  echo "[INFO] Killing all user processes with SIGKILL..."
-  killall -9 -u pok || true
-  
-  # 2. Kill all processes in our process group
-  echo "[INFO] Killing all processes in process group with SIGKILL..."
-  kill -9 -1 || true
-  
-  # 3. Force kill init process (tini)
-  echo "[INFO] Directly killing PID 1 (tini) with SIGKILL..."
-  kill -9 1 || true
-  
-  # 4. As absolute last resort, crash our own process with ABORT signal
-  echo "[INFO] Last resort: Sending SIGABRT to our own process to force container crash..."
-  kill -ABRT $$ || true
-  
-  # If we somehow get here, exit with failure code
-  exit 1
+  request_verified_container_restart "$restart_reason" "" "/home/pok/container_restart.log"
 }
 
 # Function to restart the server after cleanup
@@ -386,30 +305,12 @@ main() {
 
     if is_process_running; then
       echo "Server is running. Initiating shutdown before restart..."
-      shutdown_handler false
-
-      echo "Waiting for server to fully shut down..."
-      local wait_time=0
-      while is_process_running && [ $wait_time -lt 60 ]; do
-        sleep 5
-        wait_time=$((wait_time + 5))
-        echo "Still waiting for shutdown... ($wait_time seconds elapsed)"
-      done
-
-      if is_process_running; then
-        echo "Server still running after 60 seconds. Forcing shutdown..."
-        local pid
-        pid=$(ps aux | grep -E "AsaApiLoader.exe|ArkAscendedServer.exe" | grep -v grep | awk '{print $2}' | head -1)
-        if [ -n "$pid" ]; then
-          kill -9 $pid
-          sleep 2
-        fi
-      fi
+      shutdown_handler false || return 1
     else
       echo "Server is already down. Proceeding with restart..."
     fi
 
-    cleanup_environment
+    cleanup_environment || return 1
     echo "Triggering container restart for immediate server restart..."
     exit_container_for_restart "IMMEDIATE_RESTART"
   else
@@ -418,7 +319,7 @@ main() {
     if [ "$UPDATE_RESTART" = "TRUE" ]; then
       echo "🔄 Restart requested after update - handling with update-specific protocol"
       echo "Server is restarting after update..."
-      cleanup_environment
+      cleanup_environment || return 1
       exit_container_for_restart "UPDATE_RESTART_COMPLETED"
     elif [ "${API}" = "TRUE" ] && [ "${EXIT_ON_API_RESTART}" = "TRUE" ]; then
       echo "API mode with container restart strategy detected"
@@ -429,18 +330,17 @@ main() {
         initiate_shutdown "$RESTART_NOTICE_MINUTES" &
         SHUTDOWN_PID=$!
         display_animated_countdown "$RESTART_NOTICE_MINUTES"
-        wait $SHUTDOWN_PID 2>/dev/null || true
+        wait $SHUTDOWN_PID 2>/dev/null || return 1
       else
-        initiate_shutdown "$RESTART_NOTICE_MINUTES"
+        initiate_shutdown "$RESTART_NOTICE_MINUTES" || return 1
       fi
 
       if wait_for_shutdown_completion; then
-        cleanup_environment
+        cleanup_environment || return 1
         exit_container_for_restart "UPDATE_RESTART_COMPLETED"
       else
-        echo "WARNING: Shutdown did not complete properly. Forcing container restart anyway."
-        cleanup_environment
-        exit_container_for_restart "UPDATE_RESTART_FAILED"
+        echo "ERROR: Shutdown did not complete safely. Container restart aborted." >&2
+        return 1
       fi
     else
       if [ "$SHOW_ANIMATED_COUNTDOWN" = "TRUE" ]; then
@@ -448,14 +348,14 @@ main() {
         initiate_shutdown "$RESTART_NOTICE_MINUTES" &
         SHUTDOWN_PID=$!
         display_animated_countdown "$RESTART_NOTICE_MINUTES"
-        wait $SHUTDOWN_PID 2>/dev/null || true
+        wait $SHUTDOWN_PID 2>/dev/null || return 1
       else
         export API_CONTAINER_RESTART="TRUE"
-        initiate_shutdown "$RESTART_NOTICE_MINUTES"
+        initiate_shutdown "$RESTART_NOTICE_MINUTES" || return 1
       fi
 
-      wait_for_shutdown_completion
-      cleanup_environment
+      wait_for_shutdown_completion || return 1
+      cleanup_environment || return 1
       restart_server_direct
     fi
   fi

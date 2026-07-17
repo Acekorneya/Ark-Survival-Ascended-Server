@@ -75,6 +75,45 @@ health_probe_has_startup_marker() {
   grep -qF "$HEALTH_STARTUP_MARKER" "$log_file"
 }
 
+health_probe_asaapi_wait_message() {
+  [ "${API:-FALSE}" = "TRUE" ] || return 1
+  [ -f "${ASAAPI_WAIT_MARKER:-/tmp/pok_asaapi_waiting}" ] || return 1
+  cat "${ASAAPI_WAIT_MARKER:-/tmp/pok_asaapi_waiting}" 2>/dev/null
+}
+
+health_probe_asaapi_is_managed() {
+  local state_file="${ASAAPI_STATE_DIR:-${ASA_DIR}/.pok-manager/asaapi}/source.json"
+
+  [ "${API:-FALSE}" = "TRUE" ] || return 1
+  [ -f "$state_file" ] || return 1
+  [ "$(jq -r '.source // empty' "$state_file" 2>/dev/null)" = "managed" ]
+}
+
+health_probe_asaapi_log_file() {
+  local log_dir="${ASA_DIR}/ShooterGame/Binaries/Win64/logs"
+
+  find "$log_dir" \( -name 'ArkApi_*.log' -o -name 'ArkApi.log' -o -name 'AsaApi.log' \) -type f \
+    -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2-
+}
+
+health_probe_has_asaapi_ready_marker() {
+  local api_log=""
+  local launch_marker="${ASAAPI_LAUNCH_MARKER:-/tmp/pok_asaapi_launch_started}"
+  local api_log_modified=""
+  local launch_started=""
+
+  api_log="$(health_probe_asaapi_log_file)"
+  [ -n "$api_log" ] && [ -f "$api_log" ] || return 1
+  [ -f "$launch_marker" ] || return 1
+
+  api_log_modified="$(stat -c %Y "$api_log" 2>/dev/null)" || return 1
+  launch_started="$(stat -c %Y "$launch_marker" 2>/dev/null)" || return 1
+  [[ "$api_log_modified" =~ ^[0-9]+$ && "$launch_started" =~ ^[0-9]+$ ]] || return 1
+  [ "$api_log_modified" -ge "$launch_started" ] || return 1
+
+  grep -qF "API was successfully loaded" "$api_log"
+}
+
 health_probe_run_rcon_command() {
   local timeout_seconds="${HEALTH_RCON_TIMEOUT:-5}"
   timeout "$timeout_seconds" "${RCON_PATH}" -a "${RCON_HOST}:${RCON_PORT}" -p "${RCON_PASSWORD}" "ListPlayers" 2>&1
@@ -128,6 +167,12 @@ health_probe_main() {
     return 0
   fi
 
+  local asaapi_wait_message=""
+  if asaapi_wait_message="$(health_probe_asaapi_wait_message)"; then
+    echo "${asaapi_wait_message:-starting: waiting for AsaApi cache}"
+    return 1
+  fi
+
   if update_coordination_is_waiting; then
     echo "starting: waiting for coordination master"
     return 1
@@ -145,6 +190,16 @@ health_probe_main() {
     fi
 
     echo "starting: startup marker not reached"
+    return 1
+  fi
+
+  if health_probe_asaapi_is_managed && ! health_probe_has_asaapi_ready_marker; then
+    if health_probe_startup_timed_out; then
+      echo "unhealthy: AsaApi load marker timed out"
+      return 1
+    fi
+
+    echo "starting: waiting for AsaApi to confirm successful loading"
     return 1
   fi
 

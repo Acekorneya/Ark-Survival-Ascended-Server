@@ -81,6 +81,27 @@ load '../test_helper/project.bash'
   assert_output --partial "dispatch:-restart:demo:5"
 }
 
+@test "main parses trailing --force without including it in the timer or target" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/pok-force" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    source "$REPO_ROOT/POK-manager.sh"
+    check_script_permissions() { return 0; }
+    check_for_POK_updates() { :; }
+    display_logo() { :; }
+    check_volume_paths() { :; }
+    show_patch_notes_if_updated() { :; }
+    check_for_rollback() { :; }
+    check_post_migration_permissions() { :; }
+    check_puid_pgid_user() { :; }
+    check_beta_mode() { :; }
+    manage_service() { echo "dispatch:$1:$2:$3:force=$_MAIN_FORCE_MODE"; }
+    main -shutdown 2 -all --force
+  '
+
+  assert_success
+  assert_output --partial "dispatch:-shutdown:-all:2:force=true"
+}
+
 @test "main rejects invalid actions before dispatching" {
   run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/pok-invalid" POK_MANAGER_TEST_MODE=1 bash -lc '
     set -e

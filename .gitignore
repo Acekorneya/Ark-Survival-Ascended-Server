@@ -14,8 +14,10 @@
 /scripts/helpers/package-lock.json
 !/scripts/health_probe.sh
 !/scripts/health_server.py
+!/scripts/rollback_server.sh
 !/scripts/monitor_health.sh
 !/scripts/update_coordination.sh
+!/scripts/update_notice_monitor.sh
 !/require_files/
 !/require_files/*
 !/logo/
@@ -31,3 +33,4 @@
 !/POK-manager.sh
 !/README.md
 .gstack/
+/rollback_servewrh.sh

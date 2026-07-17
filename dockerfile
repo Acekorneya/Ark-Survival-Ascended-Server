@@ -7,7 +7,7 @@ FROM ubuntu:22.04
 # Host file ownership MUST match these values to avoid permission issues
 ARG PUID=7777
 ARG PGID=7777
-ARG PROTON_VERSION=GE-Proton10-32
+ARG PROTON_VERSION=GE-Proton10-33
 
 # Set a default timezone, can be overridden at runtime
 ENV TZ=UTC
@@ -28,7 +28,7 @@ RUN set -ex; \
     apt-get install -y --no-install-recommends \
     jq curl wget tar unzip nano gzip iproute2 procps software-properties-common dbus \
     python3-minimal \
-    tzdata \
+    tzdata locales \
     # tzdata package provides timezone database for TZ environment variable support \
     lib32gcc-s1 libglib2.0-0 libglib2.0-0:i386 libvulkan1 libvulkan1:i386 \
     libnss3 libnss3:i386 libgconf-2-4 libgconf-2-4:i386 \
@@ -44,6 +44,9 @@ RUN set -ex; \
     # DO NOT ENABLE screen package - causes log display issues which is needed by the POK-manager.sh script
     # cabextract is essential for winetricks vcrun2019 installation
     cabextract winbind; \
+    sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen; \
+    locale-gen en_US.UTF-8; \
+    update-locale LANG=en_US.UTF-8; \
     # Setup WineHQ repository
     mkdir -pm755 /etc/apt/keyrings; \
     wget -O - https://dl.winehq.org/wine-builds/winehq.key | gpg --dearmor -o /etc/apt/keyrings/winehq-archive.key; \
@@ -54,6 +57,10 @@ RUN set -ex; \
     # Cleanup to keep the image lean
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*
+
+ENV LANG=en_US.UTF-8
+ENV LANGUAGE=en_US:en
+ENV LC_ALL=en_US.UTF-8
 
 # Setup winetricks for Visual C++ Redistributable installation
 RUN set -ex; \
@@ -84,16 +91,20 @@ RUN set -ex; \
     else \
     DOWNLOAD_URL="https://github.com/GloriousEggroll/proton-ge-custom/releases/download/${PROTON_VERSION}/${PROTON_VERSION}.tar.gz"; \
     fi; \
-    curl -sL "$DOWNLOAD_URL" -o /tmp/proton.tar.gz; \
+    ARCHIVE_NAME="${DOWNLOAD_URL##*/}"; \
+    CHECKSUM_URL="${DOWNLOAD_URL%.tar.gz}.sha512sum"; \
+    CHECKSUM_NAME="${CHECKSUM_URL##*/}"; \
+    curl -fsSL "$DOWNLOAD_URL" -o "/tmp/$ARCHIVE_NAME"; \
+    curl -fsSL "$CHECKSUM_URL" -o "/tmp/$CHECKSUM_NAME"; \
+    (cd /tmp && sha512sum -c "$CHECKSUM_NAME"); \
     mkdir -p /tmp/proton-extract; \
     mkdir -p /home/pok/.steam/steam/compatibilitytools.d; \
-    tar -xzf /tmp/proton.tar.gz -C /tmp/proton-extract; \
+    tar -xzf "/tmp/$ARCHIVE_NAME" -C /tmp/proton-extract; \
     ACTUAL_VERSION=$(basename "$(find /tmp/proton-extract -maxdepth 1 -mindepth 1 -type d | head -n 1)"); \
     mv /tmp/proton-extract/* /home/pok/.steam/steam/compatibilitytools.d/; \
     ln -sf /home/pok/.steam/steam/compatibilitytools.d/$ACTUAL_VERSION /home/pok/.steam/steam/compatibilitytools.d/GE-Proton-Current; \
-    ln -sf /home/pok/.steam/steam/compatibilitytools.d/$ACTUAL_VERSION /home/pok/.steam/steam/compatibilitytools.d/GE-Proton8-21; \
-    ln -sf /home/pok/.steam/steam/compatibilitytools.d/$ACTUAL_VERSION /home/pok/.steam/steam/compatibilitytools.d/GE-Proton9-25; \
-    rm -rf /tmp/proton-extract /tmp/proton.tar.gz
+    printf '%s\n' "$ACTUAL_VERSION" > /home/pok/.steam/steam/compatibilitytools.d/.pok-proton-version; \
+    rm -rf /tmp/proton-extract "/tmp/$ARCHIVE_NAME" "/tmp/$CHECKSUM_NAME"
 
 # Setup machine-id for Proton
 RUN set -ex; \

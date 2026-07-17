@@ -29,3 +29,6 @@ fi
 
 echo "Running BATS unit tests..."
 bash "${SCRIPT_DIR}/run_tests.sh"
+
+echo "Running Python helper unit tests..."
+python3 -B -m unittest discover -s "${SCRIPT_DIR}/python" -p 'test_*.py'

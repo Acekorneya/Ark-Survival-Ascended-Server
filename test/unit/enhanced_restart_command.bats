@@ -47,8 +47,7 @@ EOF
     docker() { return 0; }
     sleep() { :; }
     run_in_container_background() { :; }
-    run_in_container() { echo "save:$1:$2"; }
-    stop_instance() { echo "stop:$1"; }
+    _verified_shutdown_instances() { echo "barrier:$*"; }
     start_instance() { echo "start:$1"; }
     update_server_files_and_docker() { echo "unexpected-update"; }
     enhanced_restart_command 0 demo
@@ -58,13 +57,12 @@ EOF
   assert_output --partial "Restarting specific instance: Updates will be skipped to minimize downtime"
   assert_output --partial "Processing instance for restart: demo"
   assert_output --partial "Skipping server updates as a specific instance was selected"
-  assert_output --partial "save:demo:-saveworld"
-  assert_output --partial "stop:demo"
+  assert_output --partial "barrier:false demo"
   assert_output --partial "start:demo"
   refute_output --partial "unexpected-update"
 }
 
-@test "enhanced_restart_command keeps coordinated mixed-mode restarts for all instances" {
+@test "non-interactive mixed-mode restart keeps known-good API files by default" {
   run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/restart-mixed" POK_MANAGER_TEST_MODE=1 bash -lc '
     set -e
     mkdir -p "$BASE_DIR/Instance_alpha" "$BASE_DIR/Instance_beta"
@@ -85,8 +83,7 @@ EOF
     docker() { return 0; }
     sleep() { :; }
     run_in_container_background() { :; }
-    run_in_container() { echo "save:$1:$2"; }
-    stop_instance() { echo "stop:$1"; }
+    _verified_shutdown_instances() { echo "barrier:$*"; }
     _coordination_start_instance_subset() { echo "coord-start:$1:$2:${*:3}"; }
     update_server_files_and_docker() { echo "updated-server-files"; }
     enhanced_restart_command 0 -all
@@ -95,31 +92,84 @@ EOF
   assert_success
   assert_output --partial "Processing all running instances for restart: alpha beta"
   assert_output --partial "⚠️ Mixed API modes detected. Using coordinated restart approach for all instances."
-  assert_output --partial "updated-server-files"
-  assert_output --partial "save:alpha:-saveworld"
-  assert_output --partial "save:beta:-saveworld"
-  assert_output --partial "stop:alpha"
-  assert_output --partial "stop:beta"
+  assert_output --partial "Non-interactive restart: keeping the current known-good server files."
+  assert_output --partial "Keeping the current known-good server files for AsaApi compatibility."
+  assert_output --partial "./POK-manager.sh -rollback -all"
+  refute_output --partial "updated-server-files"
+  assert_output --partial "barrier:false alpha beta"
   assert_output --partial "coord-start:coordinated_all:coordinated_all:alpha beta"
 }
 
-@test "enhanced_shutdown_command uses the shared countdown renderer and shared save wait helper" {
+@test "interactive API restart can explicitly opt in to updating shared server files" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/restart-api-update" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    mkdir -p "$BASE_DIR/Instance_alpha"
+    cat > "$BASE_DIR/Instance_alpha/docker-compose-alpha.yaml" <<EOF
+services:
+  asaserver:
+    environment:
+      - API=TRUE
+EOF
+    source "$REPO_ROOT/POK-manager.sh"
+    list_running_instances() { echo alpha; }
+    docker() { return 0; }
+    sleep() { :; }
+    run_in_container_background() { :; }
+    _restart_prompt_is_interactive() { return 0; }
+    _verified_shutdown_instances() { echo "barrier:$*"; }
+    _coordination_start_instance_subset() { echo "coord-start:$1:$2:${*:3}"; }
+    update_server_files_and_docker() { echo "updated-server-files"; }
+    enhanced_restart_command 0 -all <<< y
+  '
+
+  assert_success
+  assert_output --partial "Server-file update selected."
+  assert_output --partial "./POK-manager.sh -rollback -all"
+  assert_output --partial "updated-server-files"
+  assert_output --partial "barrier:false alpha"
+}
+
+@test "all-instance API-disabled restart retains automatic update behavior" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/restart-no-api" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    mkdir -p "$BASE_DIR/Instance_alpha"
+    cat > "$BASE_DIR/Instance_alpha/docker-compose-alpha.yaml" <<EOF
+services:
+  asaserver:
+    environment:
+      - API=FALSE
+EOF
+    source "$REPO_ROOT/POK-manager.sh"
+    list_running_instances() { echo alpha; }
+    docker() { return 0; }
+    sleep() { :; }
+    run_in_container_background() { :; }
+    _verified_shutdown_instances() { echo "barrier:$*"; }
+    _coordination_start_instance_subset() { echo "coord-start:$1:$2:${*:3}"; }
+    update_server_files_and_docker() { echo "updated-server-files"; }
+    enhanced_restart_command 0 -all
+  '
+
+  assert_success
+  assert_output --partial "updated-server-files"
+  refute_output --partial "AsaApi server-file compatibility protection"
+  assert_output --partial "barrier:false alpha"
+}
+
+@test "enhanced_shutdown_command uses the shared countdown renderer and two-stage barrier" {
   run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/shutdown-shared-countdown" POK_MANAGER_TEST_MODE=1 bash -lc '
     set -e
     source "$REPO_ROOT/POK-manager.sh"
     list_running_instances() { echo "alpha beta"; }
     run_in_container_background() { echo "chat:$1:$2:$3"; }
-    stop_instance() { echo "stop:$1:$2"; }
     sleep() { :; }
     _run_enhanced_countdown() { echo "shared-countdown:$1:$2:$3:$4"; }
-    _save_instances_then_wait() { echo "savewait:$1:$2:${*:3}"; }
+    _verified_shutdown_instances() { echo "barrier:$*"; }
     enhanced_shutdown_command 0 -all
   '
 
   assert_success
   assert_output --partial "Processing all running instances for shutdown: alpha beta"
   assert_output --partial "shared-countdown:0:Shutting down:_shutdown_countdown_notify:🛑 Beginning coordinated shutdown process..."
-  assert_output --partial "savewait:Attempting quick saves on all running instances..."
-  assert_output --partial "stop:alpha:skip_save"
-  assert_output --partial "stop:beta:skip_save"
+  assert_output --partial "barrier:false alpha beta"
 }

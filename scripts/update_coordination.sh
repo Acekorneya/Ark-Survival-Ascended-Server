@@ -17,6 +17,8 @@ UPDATE_COORDINATION_COMPLETED_RETENTION_SECONDS="${UPDATE_COORDINATION_COMPLETED
 UPDATE_COORDINATION_FOLLOWER_WAIT_FOR_MASTER_SECONDS="${UPDATE_COORDINATION_FOLLOWER_WAIT_FOR_MASTER_SECONDS:-90}"
 UPDATE_COORDINATION_FOLLOWER_JITTER_MIN_SECONDS="${UPDATE_COORDINATION_FOLLOWER_JITTER_MIN_SECONDS:-5}"
 UPDATE_COORDINATION_FOLLOWER_JITTER_MAX_SECONDS="${UPDATE_COORDINATION_FOLLOWER_JITTER_MAX_SECONDS:-30}"
+UPDATE_COORDINATION_INSTANCE_STALE_SECONDS="${UPDATE_COORDINATION_INSTANCE_STALE_SECONDS:-90}"
+UPDATE_COORDINATION_BARRIER_EXTRA_SECONDS="${UPDATE_COORDINATION_BARRIER_EXTRA_SECONDS:-300}"
 
 UPDATE_COORDINATION_STATE_PRESENT=0
 UPDATE_COORDINATION_STATE_CYCLE_ID=""
@@ -74,6 +76,159 @@ update_coordination_cycles_dir() {
   echo "$(update_coordination_root)/cycles"
 }
 
+update_coordination_instances_dir() {
+  echo "$(update_coordination_root)/instances"
+}
+
+update_coordination_instance_presence_file() {
+  echo "$(update_coordination_instances_dir)/${INSTANCE_NAME}.env"
+}
+
+update_coordination_touch_instance_presence() {
+  local presence_file=""
+  local tmp_file=""
+
+  [ -n "${INSTANCE_NAME:-}" ] || return 1
+  mkdir -p "$(update_coordination_instances_dir)"
+  presence_file=$(update_coordination_instance_presence_file)
+  tmp_file="${presence_file}.tmp.$$"
+  {
+    printf 'INSTANCE_NAME=%q\n' "${INSTANCE_NAME}"
+    printf 'UPDATED_AT=%q\n' "$(update_coordination_epoch)"
+    printf 'RESTART_NOTICE_MINUTES=%q\n' "${RESTART_NOTICE_MINUTES:-30}"
+  } > "$tmp_file" || return 1
+  mv "$tmp_file" "$presence_file"
+}
+
+update_coordination_remove_instance_presence() {
+  [ -n "${INSTANCE_NAME:-}" ] || return 0
+  rm -f "$(update_coordination_instance_presence_file)"
+}
+
+update_coordination_cycle_dir() {
+  local cycle_id="${1:-${UPDATE_COORDINATION_STATE_CYCLE_ID:-}}"
+  [ -n "$cycle_id" ] || return 1
+  echo "$(update_coordination_cycles_dir)/${cycle_id}"
+}
+
+update_coordination_participants_file() {
+  echo "$(update_coordination_cycle_dir)/participants.txt"
+}
+
+update_coordination_snapshot_live_participants() {
+  local now=""
+  local presence_file=""
+  local participant=""
+  local updated_at=0
+  local INSTANCE_NAME=""
+  local UPDATED_AT=0
+  local RESTART_NOTICE_MINUTES=30
+  local participants_file=""
+  local tmp_file=""
+  local -a participants=()
+
+  [ -n "${UPDATE_COORDINATION_STATE_CYCLE_ID:-}" ] || return 1
+  now=$(update_coordination_epoch)
+  participants_file=$(update_coordination_participants_file)
+  tmp_file="${participants_file}.tmp.$$"
+  mkdir -p "$(dirname "$participants_file")"
+
+  for presence_file in "$(update_coordination_instances_dir)"/*.env; do
+    [ -f "$presence_file" ] || continue
+    INSTANCE_NAME=""
+    UPDATED_AT=0
+    RESTART_NOTICE_MINUTES=30
+    # shellcheck disable=SC1090
+    source "$presence_file"
+    participant="$INSTANCE_NAME"
+    updated_at="$UPDATED_AT"
+    [ -n "$participant" ] || continue
+    [[ "$updated_at" =~ ^[0-9]+$ ]] || continue
+    if [ $((now - updated_at)) -le "$UPDATE_COORDINATION_INSTANCE_STALE_SECONDS" ]; then
+      participants+=("$participant")
+    fi
+  done
+
+  if [ "${#participants[@]}" -gt 0 ]; then
+    printf '%s\n' "${participants[@]}" | sort -u > "$tmp_file"
+  else
+    : > "$tmp_file"
+  fi
+  mv "$tmp_file" "$participants_file"
+}
+
+update_coordination_participant_count() {
+  local participants_file=""
+  participants_file=$(update_coordination_participants_file 2>/dev/null) || {
+    echo 0
+    return 0
+  }
+  [ -f "$participants_file" ] || {
+    echo 0
+    return 0
+  }
+  awk 'NF { count++ } END { print count + 0 }' "$participants_file"
+}
+
+update_coordination_instance_is_participant() {
+  local participants_file=""
+  update_coordination_refresh_state || return 1
+  participants_file=$(update_coordination_participants_file) || return 1
+  [ -f "$participants_file" ] && grep -Fxq "${INSTANCE_NAME}" "$participants_file"
+}
+
+update_coordination_mark_shutdown_ready() {
+  local ready_dir=""
+  local ready_file=""
+  update_coordination_refresh_state || return 1
+  ready_dir="$(update_coordination_cycle_dir)/shutdown-ready"
+  ready_file="${ready_dir}/${INSTANCE_NAME}.ready"
+  mkdir -p "$ready_dir"
+  printf '%s\n' "$(update_coordination_epoch)" > "${ready_file}.tmp.$$" || return 1
+  mv "${ready_file}.tmp.$$" "$ready_file"
+}
+
+update_coordination_all_participants_ready() {
+  local participants_file=""
+  local ready_dir=""
+  local participant=""
+
+  update_coordination_refresh_state || return 1
+  participants_file=$(update_coordination_participants_file) || return 1
+  ready_dir="$(update_coordination_cycle_dir)/shutdown-ready"
+  [ -f "$participants_file" ] || return 1
+
+  while IFS= read -r participant; do
+    [ -n "$participant" ] || continue
+    [ -f "${ready_dir}/${participant}.ready" ] || return 1
+  done < "$participants_file"
+  return 0
+}
+
+update_coordination_wait_for_shutdown_barrier() {
+  local max_notice=0
+  local timeout_seconds=0
+  local elapsed=0
+
+  shared_update_policy_load || true
+  max_notice="${SHARED_POLICY_MAX_RESTART_NOTICE_MINUTES:-0}"
+  [[ "$max_notice" =~ ^[0-9]+$ ]] || max_notice=30
+  timeout_seconds=$((max_notice * 60 + UPDATE_COORDINATION_BARRIER_EXTRA_SECONDS))
+
+  echo "[INFO] Waiting for every running update participant to finish its notice and verified shutdown (timeout: ${timeout_seconds}s)..."
+  while [ "$elapsed" -lt "$timeout_seconds" ]; do
+    if update_coordination_all_participants_ready; then
+      echo "[SUCCESS] Every snapshotted participant reached the verified shutdown barrier."
+      return 0
+    fi
+    sleep 5
+    elapsed=$((elapsed + 5))
+  done
+
+  update_coordination_mark_failed "Timed out waiting for all running instances to complete the verified pre-update shutdown barrier" || true
+  return 1
+}
+
 update_coordination_waiting_flag_file() {
   echo "${UPDATE_COORDINATION_WAITING_FLAG_FILE:-/home/pok/.update_coordination_waiting}"
 }
@@ -83,7 +238,7 @@ update_coordination_epoch() {
 }
 
 update_coordination_mkdirs() {
-  mkdir -p "$(update_coordination_current_dir)" "$(update_coordination_cycles_dir)"
+  mkdir -p "$(update_coordination_current_dir)" "$(update_coordination_cycles_dir)" "$(update_coordination_instances_dir)"
 }
 
 update_coordination_reset_state() {
@@ -277,6 +432,7 @@ update_coordination_begin_cycle() {
   update_coordination_append_attempt "${INSTANCE_NAME}" "${UPDATE_COORDINATION_PRIORITY}"
   update_coordination_set_phase "pending_restart"
   update_coordination_archive_state_snapshot
+  update_coordination_snapshot_live_participants
 }
 
 update_coordination_has_active_cycle() {
@@ -499,7 +655,7 @@ update_coordination_wait_until_ready_or_promoted() {
         return 0
         ;;
       failed)
-        return 1
+        return 3
         ;;
       pending_restart|leader_updating|leader_starting)
         if update_coordination_leader_stale; then

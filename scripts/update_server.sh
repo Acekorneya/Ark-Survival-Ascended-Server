@@ -10,6 +10,8 @@ source "${POK_SCRIPTS_DIR}/common.sh"
 source "${POK_SCRIPTS_DIR}/rcon_commands.sh"
 # shellcheck source=/dev/null
 source "${POK_SCRIPTS_DIR}/update_coordination.sh"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/shutdown_server.sh"
 
 LOCK_HELD=false
 TEMP_DOWNLOAD_DIR=""
@@ -22,6 +24,7 @@ cleanup() {
   local exit_code=$?
   
   echo "[INFO] Update script cleanup triggered (exit code: $exit_code)"
+  update_coordination_stop_heartbeat || true
   
   if [ "$LOCK_HELD" = true ]; then
     # Use the proper lock release function from common.sh if available
@@ -204,81 +207,68 @@ notify_players_of_update() {
 # Function to prepare for container exit and restart
 shutdown_server_for_update() {
   echo "[INFO] Preparing server for update/restart..."
-  
-  # Send RCON commands to save world and shut down the server
-  echo "[INFO] Sending SaveWorld command to server..."
-  if send_rcon_command "SaveWorld"; then
-    echo "[SUCCESS] World save command sent. Waiting for completion..."
-    # Allow time for the save to complete
-    sleep 10
-    
-    # Now send the exit command to properly shut down the server
-    echo "[INFO] Sending DoExit command to server..."
-    send_rcon_command "DoExit"
-    echo "[INFO] DoExit command sent. Waiting for server to shut down..."
-    
-    # Wait for server process to exit
-    local timeout=60
-    local elapsed=0
-    local is_server_down=false
-    
-    echo "[INFO] Waiting for server to shut down (timeout: $timeout seconds)..."
-    while [ $elapsed -lt $timeout ]; do
-      # Check if server processes are still running
-      if ! pgrep -f "ArkAscendedServer.exe" >/dev/null 2>&1 && ! pgrep -f "AsaApiLoader.exe" >/dev/null 2>&1; then
-        echo "[SUCCESS] Server has shut down properly."
-        is_server_down=true
-        break
-      fi
-      
-      # Wait and increment counter
-      sleep 5
-      elapsed=$((elapsed + 5))
-      echo "[INFO] Still waiting for server shutdown... ($elapsed/$timeout seconds)"
-    done
-    
-    # If server didn't shut down gracefully, force kill it
-    if [ "$is_server_down" != "true" ]; then
-      echo "[WARNING] Server didn't shut down gracefully within timeout. Force killing processes..."
-      pkill -9 -f "ArkAscendedServer.exe" >/dev/null 2>&1 || true
-      pkill -9 -f "AsaApiLoader.exe" >/dev/null 2>&1 || true
-      pkill -9 -f "wine" >/dev/null 2>&1 || true
-      pkill -9 -f "wineserver" >/dev/null 2>&1 || true
-      sleep 2
-    fi
-  else
-    echo "[WARNING] Failed to send SaveWorld command. Server might not be running or RCON might be unavailable."
-    echo "[INFO] Will attempt to force stop any running server processes..."
-    pkill -9 -f "ArkAscendedServer.exe" >/dev/null 2>&1 || true
-    pkill -9 -f "AsaApiLoader.exe" >/dev/null 2>&1 || true
-    pkill -9 -f "wine" >/dev/null 2>&1 || true
-    pkill -9 -f "wineserver" >/dev/null 2>&1 || true
-    sleep 2
+
+  if ! safe_container_stop; then
+    echo "[ERROR] Update/restart aborted: SaveWorld and DoExit saves were not both verified." >&2
+    return 1
   fi
-  
-  echo "[INFO] Server processes stopped. Ready for staging update"
+
+  echo "[INFO] Both save stages verified. Ready for staging update."
+  if update_coordination_has_active_cycle && update_coordination_instance_is_participant; then
+    if ! update_coordination_mark_shutdown_ready; then
+      echo "[ERROR] Saves were verified, but this instance could not acknowledge the shared pre-update barrier." >&2
+      return 1
+    fi
+    echo "[INFO] This instance acknowledged the coordinated verified-shutdown barrier."
+  fi
+  return 0
 }
 
 trigger_container_restart() {
   local reason="${1:-UPDATE_RESTART}"
   local expected_build="${2:-$current_build_id}"
 
-  echo "$(date) - Container exiting for automatic restart due to update" > /home/pok/container_update_restart.log
-  echo "$reason" > /home/pok/restart_reason.flag
-
-  if [ -n "$expected_build" ]; then
-    echo "$expected_build" > /home/pok/expected_build_id.txt
-  fi
-
-  echo "true" > /home/pok/stop_monitor.flag
-
   echo "🔄 Container will now exit for restart via Docker"
   echo "⚠️ Docker will automatically restart the container"
+  request_verified_container_restart "$reason" "$expected_build" "/home/pok/container_update_restart.log"
+}
 
-  sync
-  sleep 1
-  kill -9 1
-  exit 1
+preflight_rollback_update() {
+  rollback_state_is_active || return 0
+  echo "[INFO] Preflighting the rollback-protected update while the current server remains online..."
+  if ! acquire_update_lock; then
+    echo "[WARNING] Another shared operation is active; deferring rollback compatibility preflight."
+    return 1
+  fi
+  LOCK_HELD=true
+  TEMP_DOWNLOAD_DIR=$(create_temp_download_dir) || {
+    release_update_lock
+    LOCK_HELD=false
+    return 1
+  }
+  if ! steamcmd_download_to_dir "$TEMP_DOWNLOAD_DIR"; then
+    echo "[WARNING] Candidate update could not be staged; the rollback server will remain online."
+    release_update_lock
+    LOCK_HELD=false
+    rm -rf "$TEMP_DOWNLOAD_DIR"
+    TEMP_DOWNLOAD_DIR=""
+    return 1
+  fi
+  if ! prepare_staged_asaapi_cache "$TEMP_DOWNLOAD_DIR"; then
+    record_failed_rollback_retry "$TEMP_DOWNLOAD_DIR"
+    echo "[WARNING] Candidate update remains incompatible with AsaApi; the rollback server will remain online."
+    release_update_lock
+    LOCK_HELD=false
+    rm -rf "$TEMP_DOWNLOAD_DIR"
+    TEMP_DOWNLOAD_DIR=""
+    return 1
+  fi
+  release_update_lock
+  LOCK_HELD=false
+  rm -rf "$TEMP_DOWNLOAD_DIR"
+  TEMP_DOWNLOAD_DIR=""
+  echo "[SUCCESS] Candidate update passed AsaApi preflight before the restart countdown."
+  return 0
 }
 
 main() {
@@ -291,6 +281,12 @@ main() {
     exit 0
   fi
 
+  if ! shared_update_policy_allows_automatic_updates; then
+    shared_update_policy_print_block
+    echo "[INFO] No countdown, shutdown, file update, or container restart will be performed."
+    exit 0
+  fi
+
   trap cleanup EXIT INT TERM
 
   echo "[INFO] Checking for ARK server updates..."
@@ -298,6 +294,15 @@ main() {
 
   if server_needs_update; then
     echo "[INFO] Server update/restart required: Current build ID: $current_build_id, Installed build ID: $(get_build_id_from_acf)"
+
+    if rollback_state_is_active && ! has_dirty_flag; then
+      if ! update_coordination_enabled || update_coordination_is_master_role; then
+        if ! preflight_rollback_update; then
+          echo "[INFO] No shutdown was initiated because the candidate update did not pass preflight."
+          exit 0
+        fi
+      fi
+    fi
 
     if has_dirty_flag; then
       echo "[INFO] This instance needs restart due to server files updated by another instance"
@@ -311,7 +316,7 @@ main() {
       notify_players_of_update $dirty_restart_notice
 
       echo "[INFO] Countdown completed. Preparing server for restart..."
-      shutdown_server_for_update
+      shutdown_server_for_update || return 1
       trigger_container_restart "DIRTY_RESTART" "$current_build_id"
     elif update_coordination_enabled; then
       # Coordinated multi-instance path. The configured master is the only
@@ -323,6 +328,7 @@ main() {
         fi
 
         echo "[INFO] This instance is the configured coordination master and will lead the shared update cycle"
+        update_coordination_start_heartbeat
 
         local update_notice_minutes
         update_notice_minutes=${RESTART_NOTICE_MINUTES:-30}
@@ -330,7 +336,7 @@ main() {
         notify_players_of_update $update_notice_minutes
 
         echo "[INFO] Countdown completed. Stopping server for update..."
-        shutdown_server_for_update
+        shutdown_server_for_update || return 1
         echo "[INFO] Server shutdown confirmed. Update will be applied during container startup."
         trigger_container_restart "UPDATE_RESTART" "$current_build_id"
       else
@@ -349,7 +355,7 @@ main() {
         notify_players_of_update $follower_notice_minutes
 
         echo "[INFO] Countdown completed. Preparing follower for coordinated restart..."
-        shutdown_server_for_update
+        shutdown_server_for_update || return 1
         trigger_container_restart "FOLLOWER_COORDINATION_RESTART" "$current_build_id"
       fi
     else
@@ -388,7 +394,7 @@ main() {
       notify_players_of_update $update_notice_minutes
 
       echo "[INFO] Countdown completed. Stopping server for update..."
-      shutdown_server_for_update
+      shutdown_server_for_update || return 1
 
       echo "[INFO] Server shutdown confirmed. Update will be applied during container startup."
 

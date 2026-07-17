@@ -394,13 +394,14 @@ This approach provides better security while ensuring permissions are automatica
 - `-setup`: Performs the initial setup tasks required for running server instances.
 - `-create <instance_name>`: Creates a new server instance.
 - `-start <instance_name|-all>`: Starts a specific server instance or all instances.
-- `-stop <instance_name|-all>`: Stops a specific server instance or all instances.
-- `-shutdown [minutes] <instance_name|-all>`: Shuts down a specific server instance or all instances with an optional countdown in minutes.
+- `-stop <instance_name|-all> [--force]`: Stops one or all instances after verifying both the explicit `SaveWorld` and the save performed by `DoExit`.
+- `-rollback <instance_name|-all> [--force]`: Stages an AsaApi-compatible ASA depot, safely stops every instance sharing the server files, activates it once, and restarts only instances that were running.
+- `-shutdown <minutes> <instance_name|-all> [--force]`: Performs the same verified two-stage stop after a countdown.
 - `-update`: Checks for server files & Docker image updates (doesn't modify the script itself).
 - `-upgrade`: Upgrades POK-manager.sh script to the latest version (requires confirmation).
 - `-force-restore`: Forces restoration of POK-manager.sh from backup in case of update failure.
 - `-status <instance_name|-all>`: Shows the status of a specific server instance or all instances. The first successful run now needs Steam credentials so the container can obtain an EOS user token for the matchmaking query.
-- `-restart [minutes] <instance_name|-all>`: Restarts a specific server instance or all instances with an optional countdown in minutes.
+- `-restart <minutes> <instance_name|-all> [--force]`: Restarts one or all instances after the verified two-stage save barrier. Coordinated restarts that include `API=TRUE` default to the current known-good ARK files and require an explicit interactive opt-in before updating them.
 - `-saveworld <instance_name|-all>`: Saves the world of a specific server instance or all instances.
 - `-chat "<message>" <instance_name|-all>`: Sends a chat message to a specific server instance or all instances.
 - `-custom <command> <instance_name|-all>`: Executes a custom command on a specific server instance or all instances.
@@ -432,7 +433,7 @@ POK-manager now handles this automatically:
 
 Important notes:
 
-- These Steam credentials are only needed for the `-status` command path.
+- These Steam credentials are used by the `-status` authentication path and to download licensed historical depots during `-rollback`.
 - The 5-digit Steam Guard mobile code is never saved to compose. You can enter it up front for a fresh auth run, or leave it blank if the account does not use Steam Guard.
 - `-status -all` resolves the Steam credentials once and reuses them for every running instance.
 - The Steam values are preserved in the compose file, but they are not shown in the interactive config review screen to avoid echoing secrets back to the terminal.
@@ -449,7 +450,12 @@ Important notes:
 ```bash
 ./POK-manager.sh -start my_instance
 ./POK-manager.sh -stop my_instance
+./POK-manager.sh -stop -all
 ```
+
+For `-all`, POK sends each stage to every running instance concurrently. It verifies every `SaveWorld` before sending any `DoExit`, then verifies every `DoExit` save before stopping any container. If one instance fails either stage, no containers are removed and the command returns a failure for cron. Use trailing `--force` only when you intentionally accept possible data loss or corruption.
+
+After both saves are verified, POK allows ASA five seconds to exit normally, then asks each still-running container to terminate its lingering Proton/Wine server process in parallel. The verified termination command refuses to act without a fresh `DoExit` save marker. If termination itself fails, POK retains the remainder of the original 60-second safety wait before Docker removes the container. Automatic update and recovery paths persist their restart state before exiting PID 1 so `restart: unless-stopped` can start them again; operator `-stop` and `-shutdown` commands remain stopped. `ShooterGame.log` and, when enabled, the AsaApi log are streamed verbatim to the container console from their first line and continue across log replacement. ASA's `Commandline:` entry can therefore expose the game join and admin passwords to anyone with access to the container logs.
 
 #### Sending Chat Messages
 ```bash
@@ -470,6 +476,8 @@ To schedule automatic restarts using cron, add an entry to your crontab file. He
   ```
 
 > **Note:** When using `-restart` with instances that have `API=TRUE`, the script automatically uses a special restart process that stops and starts the container instead of using the in-game restart command. This ensures proper restarting for API-enabled servers.
+
+The image launches only its checksum-verified, pinned GE-Proton build. A retry message means the same pinned executable is being tried again; it does not select an older Proton release or direct Wine fallback.
 
 - Save the world of all instances every 30 minutes:
   ```
@@ -668,21 +676,22 @@ When creating a new server instance using POK-manager.sh, a Docker Compose confi
 | `RCON_ENABLED`                | `TRUE`            | Needed for Graceful Shutdown                                                              |
 | `DISPLAY_POK_MONITOR_MESSAGE` | `FALSE`           | TRUE to Show the Server Monitor Messages / Update Monitor Shutdown                        |
 | `CPU_OPTIMIZATION`            | `FALSE`           | Set to TRUE to enable CPU optimization helps reduce high CPU usage on some systems, FALSE to disable |
-| `UPDATE_SERVER`               | `TRUE`            | Enable or disable update checks                                                           |
+| `UPDATE_SERVER`               | `TRUE`            | Enable shared automatic updates; if any configured instance disables this, automatic updates are disabled for the shared installation |
 | `UPDATE_COORDINATION_ROLE`    | auto-assigned     | Only written for multi-instance auto-update setups; one instance becomes `MASTER`, others become `FOLLOWER` |
 | `UPDATE_COORDINATION_PRIORITY`| auto-assigned     | Only written for multi-instance auto-update setups; lower number means earlier failover priority |
 | `CHECK_FOR_UPDATE_INTERVAL`   | `24`              | Check for Updates interval in hours                                                       |
 | `UPDATE_WINDOW_MINIMUM_TIME`  | `12:00 AM`        | Defines the minimum time, relative to server time, when an update check should run        |
 | `UPDATE_WINDOW_MAXIMUM_TIME`  | `11:59 PM`        | Defines the maximum time, relative to server time, when an update check should run        |
 | `RESTART_NOTICE_MINUTES`      | `30`              | Duration in minutes for notifying players before a server restart due to updates          |
+| `SAVE_WAIT_SECONDS`           | `60`              | Maximum time for each save-verification stage (1-900); existing custom values are preserved |
 | `ENABLE_MOTD`                 | `FALSE`           | Enable or disable Message of the Day                                                      |
 | `MOTD`                        |                   | Message of the Day                                                                        |
 | `MOTD_DURATION`               | `30`              | Duration for the Message of the Day                                                       |
-| `MAP_NAME`                    | `TheIsland`       | The map name (`TheIsland') Or Custom Map Name Can Be Enter aswell                         |
+| `MAP_NAME`                    | `TheIsland`       | Official, future, or modded map name; save discovery uses this value without an allowlist  |
 | `SESSION_NAME`                | `Server_name`     | The session name for the server                                                           |
 | `SERVER_ADMIN_PASSWORD`       | `MyPassword`      | The admin password for the server                                                         |
-| `STEAM_USERNAME`              |                   | Optional: Steam account name used only by `-status` to obtain an EOS user token           |
-| `STEAM_PASSWORD`              |                   | Optional: Steam password used only by `-status` to obtain an EOS user token               |
+| `STEAM_USERNAME`              |                   | Optional: Steam account name used by authenticated `-status` and `-rollback` operations   |
+| `STEAM_PASSWORD`              |                   | Optional: Steam password used by authenticated `-status` and `-rollback` operations       |
 | `SERVER_PASSWORD`             |                   | Set a server password or leave it blank (ONLY NUMBERS AND CHARACTERS ARE ALLOWED BY DEVS) |
 | `ASA_PORT`                    | `7777`            | The game port for the server                                                              |
 | `RCON_PORT`                   | `27020`           | Rcon Port Use for Most Server Operations                                                  |
@@ -693,13 +702,16 @@ When creating a new server instance using POK-manager.sh, a Docker Compose confi
 | `MOD_IDS`                     | `123456`          | Add your mod IDs here, separated by commas, e.g., 123456789,987654321                     |
 | `CUSTOM_SERVER_ARGS`          |                   | If You need to add more Custom Args -ForceRespawnDinos -ForceAllowCaveFlyers              |
 
-**Multi-instance auto-update coordination**
+**Shared update safety and multi-instance coordination**
 
-- Coordination is only enabled when more than one managed instance has `UPDATE_SERVER=TRUE`.
+- Every managed instance uses the same `ServerFiles/arkserver` tree. Automatic updates are therefore enabled only when **all configured instances** have `API=FALSE` and `UPDATE_SERVER=TRUE`, including instances that are currently stopped.
+- If any instance has `API=TRUE` or `UPDATE_SERVER=FALSE`, POK leaves the installed files and running containers unchanged, reports the blocking instance settings, and runs only a read-only update notifier. Schedule maintenance by stopping every instance and running `./POK-manager.sh -update`, or use the verified all-instance restart workflow.
+- Direct `-update` refuses to modify shared files while any managed instance is running. This prevents SteamCMD from replacing binaries underneath a live Proton/ARK process.
+- Coordination is enabled when the shared policy permits automatic updates and more than one managed instance exists.
 - POK-manager auto-assigns one `MASTER` and ordered `FOLLOWER`s. The master is the only instance allowed to update shared server files and perform the first post-update startup.
+- Before the master changes files, every running instance receives its own `RESTART_NOTICE_MINUTES` countdown and must acknowledge a verified `SaveWorld` plus `DoExit` shutdown. The update is cancelled if any snapshotted participant does not reach that barrier.
 - Followers wait until the master reaches a startup-ready marker (`Full Startup:` or `Server has completed startup and is now advertising for join`), then start automatically with a short stagger.
 - `-start -all` and `-restart -all` both bring up the leader first, wait for leader readiness, and then continue with followers so shared server-file and mod startup work happens only once.
-- Instances with `UPDATE_SERVER=FALSE` are excluded from this automation and remain manual-update instances.
 - If `UPDATE_COORDINATION_ROLE` and `UPDATE_COORDINATION_PRIORITY` are absent, the container stays on the legacy lock-based update path. This is the supported fallback for Kubernetes and other external orchestrators that do not use POK-manager.
 - If a compose file still says `FOLLOWER` and you start it manually, the container will refuse to continue until a master-led cycle exists. Use `POK-manager.sh` for managed promotion/ordering, or change the intended leader instance to `MASTER` before starting it yourself.
 
@@ -709,11 +721,11 @@ When creating a new server instance using POK-manager.sh, a Docker Compose confi
 
 Host file ownership must match these values to prevent permission issues.
 
-**`-status` authentication note**
+**Steam authentication note**
 
-- `STEAM_USERNAME` and `STEAM_PASSWORD` are only used for the `-status` matchmaking query flow.
-- Most users do not need to add them manually because POK-manager can prompt for them and save them automatically on the first `-status` run.
-- When a fresh Steam/EOS auth is likely needed, POK-manager offers the current 5-digit mobile code prompt and does not save it.
+- `STEAM_USERNAME` and `STEAM_PASSWORD` are used for the `-status` matchmaking query and authenticated historical depot downloads during `-rollback`.
+- Most users do not need to add them manually because POK-manager prompts for them and saves them automatically when either command first needs them.
+- POK-manager can request the current Steam Guard mobile code for either operation and never saves that code.
 
 ---
 
@@ -726,6 +738,7 @@ services:
     image: acekorneya/asa_server:2_0_latest
     container_name: asa_my_instance
     restart: unless-stopped
+    stop_grace_period: 210s              # Derived as (2 × SAVE_WAIT_SECONDS) + 90 seconds
     environment:
       - INSTANCE_NAME=my_instance            # The name of the instance
       - TZ=America/Los_Angeles               # Timezone setting: Change this to your local timezone. Ex.America/New_York, Europe/Berlin, Asia/Tokyo
@@ -735,7 +748,7 @@ services:
       - RCON_ENABLED=TRUE                    # Needed for Graceful Shutdown / Updates / Server Notifications
       - CPU_OPTIMIZATION=FALSE               # Set to TRUE to enable CPU optimization helps reduce high CPU usage on some systems, FALSE to disable
       - DISPLAY_POK_MONITOR_MESSAGE=FALSE    # Or TRUE to Show the Server Monitor Messages / Update Monitor 
-      - UPDATE_SERVER=TRUE                   # Enable or disable update checks
+      - UPDATE_SERVER=TRUE                   # Automatic updates require TRUE on every configured shared instance
       # Only used when more than one instance has UPDATE_SERVER=TRUE.
       # POK-manager writes these automatically for managed multi-instance setups.
       - UPDATE_COORDINATION_ROLE=MASTER      # MASTER or FOLLOWER
@@ -744,14 +757,15 @@ services:
       - UPDATE_WINDOW_MINIMUM_TIME=12:00 AM  # Defines the minimum time, relative to server time, when an update check should run
       - UPDATE_WINDOW_MAXIMUM_TIME=11:59 PM  # Defines the maximum time, relative to server time, when an update 
       - RESTART_NOTICE_MINUTES=30            # Duration in minutes for notifying players before a server restart due to updates
+      - SAVE_WAIT_SECONDS=60                 # Maximum time for each verified save stage (1-900)
       - ENABLE_MOTD=FALSE                    # Enable or disable Message of the Day
       - MOTD=                                # Message of the Day
       - MOTD_DURATION=30                     # Duration for the Message of the Day
-      - MAP_NAME=TheIsland                   # TheIsland, ScorchedEarth, TheCenter, Aberration / TheIsland_WP, ScorchedEarth_WP, TheCenter_WP, Aberration_WP / Are the current official maps available
+      - MAP_NAME=TheIsland                   # Official, future, or modded map name; save verification uses this value directly
       - SESSION_NAME=Server_name             # The name of the server session
       - SERVER_ADMIN_PASSWORD=MyPassword     # The admin password for the server 
-      - STEAM_USERNAME=                      # Optional: used only by -status to obtain an EOS user token
-      - STEAM_PASSWORD=                      # Optional: used only by -status to obtain an EOS user token
+      - STEAM_USERNAME=                      # Optional: used by authenticated -status and -rollback operations
+      - STEAM_PASSWORD=                      # Optional: used by authenticated -status and -rollback operations
       - SERVER_PASSWORD=                     # Set a server password or leave it blank (ONLY NUMBERS AND CHARACTERS ARE ALLOWED BY DEVS)
       - ASA_PORT=7777                        # The port for the server
       - RCON_PORT=27020                      # The port for the RCON
@@ -816,11 +830,37 @@ To enable AsaApi on your server:
 
 When you enable the API feature:
 
-1. The container will automatically download the latest version of AsaApi from the official GitHub repository (https://github.com/ArkServerApi/AsaApi/releases/latest)
-2. The API will be installed to the correct location in your server files
-3. The Visual C++ 2019 Redistributable (required by AsaApi) will be automatically installed in the Proton environment
-4. The server will start using AsaApiLoader.exe instead of ArkAscendedServer.exe
-5. On subsequent starts, the container will check for AsaApi updates and install them if available
+1. POK-manager installs the tested AsaApi 2.01 release and verifies its official SHA-256 checksum.
+2. The verified release archive is retained in the shared server files for reliable reinstalls and custom-version rollback.
+3. Before Wine starts, native Linux `curl` downloads the cache matching the SHA-256 of `ArkAscendedServer.exe`.
+4. POK validates the archive, both serialized cache maps, and the core offsets required by the tested AsaApi release, then installs the cache atomically. The optional `cached_offsets.txt` diagnostic index is retained with the selected cache generation. AsaApi's Windows HTTPS downloader is disabled only after validation succeeds.
+5. If a new ARK build removes an offset required by the tested AsaApi release, the API-enabled server remains in a visible `starting` state that names the executable hash and missing symbol. POK checks the CDN every 60 seconds and downloads the archive again only after its `Last-Modified` value changes. It never launches a known-incompatible API or silently starts without the requested plugins.
+6. Multiple instances share a filesystem lock and reuse the same verified release and cache instead of downloading them concurrently.
+7. The server starts with `AsaApiLoader.exe`, and managed API instances are not considered healthy until the API log contains `API was successfully loaded`.
+
+### Rolling Back an Incompatible ARK Build
+
+When a new ARK build is missing an offset required by managed AsaApi, run:
+
+```bash
+./POK-manager.sh -rollback -all
+```
+
+Historical ASA depot manifests require a Steam account that owns ARK: Survival Ascended. POK reuses `STEAM_USERNAME` and `STEAM_PASSWORD` from the selected instance's Compose file, prompts securely and saves them when missing, and offers a one-run Steam Guard code prompt that is never persisted. Enter a current code at that prompt, or leave it blank and keep the Steam Mobile app open: the rollback worker preserves an interactive terminal and immediately displays SteamCMD's request to approve the new sign-in. It then downloads and validates the selected Windows depot and its executable-specific AsaApi cache while the existing servers remain online. Only after that preflight succeeds does it run the normal two-stage verified save barrier across every running instance that shares `ServerFiles/arkserver`, activate the shared files once, and restart exactly those instances. A named-instance rollback prompts before affecting the shared installation; non-interactive jobs must use `-all`, have credentials configured already, and can supply a current one-run code as `STEAM_GUARD_CODE=<code> ./POK-manager.sh -rollback -all`. `--force` only overrides failed save verification and never bypasses file or cache validation.
+
+The first rollback uses depot `2430931` manifest `681058914540629286`. Afterward, POK records up to five deployments that reached fresh game startup, `API was successfully loaded`, and `Loaded all plugins`, and prefers the newest distinct verified deployment. Rollback state prevents the normal updater from immediately reinstalling the known-bad build. A retry is allowed only after Steam publishes another build or the failed AsaApi cache timestamp changes, and that candidate is again cache-validated before it replaces live files. Proton, saves, plugins, and instance configuration are not downgraded.
+
+### Using a Custom AsaApi Version
+
+Advanced users can override the tested release by extracting a complete AsaApi release into:
+
+```text
+./ServerFiles/arkserver/ShooterGame/Binaries/Win64/AsaApi_Custom/
+```
+
+The directory must contain the release root, including `AsaApiLoader.exe`, `ArkApi/AsaApi.dll`, and `config.json`. While the directory exists, POK uses those files without overwriting them and leaves that version's cache behavior unchanged. Custom releases are unsupported and may fail under Wine.
+
+Remove `AsaApi_Custom` and restart the instance to restore the checksum-verified AsaApi 2.01 release automatically.
 
 ### Special Handling for API Mode Restarts
 
@@ -831,12 +871,25 @@ AsaApi instances require special handling when restarting. POK-manager includes 
 When using the `-restart` command on an instance with API=TRUE, POK-manager:
 
 1. Detects that the instance is in API mode
-2. Sends a shutdown command with the specified countdown
-3. Waits for the server to completely shut down
-4. Stops the Docker container entirely
-5. Starts a fresh container
+2. For an all-instance/shared restart, explains the AsaApi offset risk and asks whether to keep the current known-good ARK files or update them; keeping them is the default
+3. Sends a shutdown command with the specified countdown
+4. Waits for the server to completely shut down
+5. Stops the Docker container entirely
+6. Starts a fresh container
 
 This approach ensures a clean environment for API mode restarts, which solves common issues where API-enabled servers fail to restart properly when using the in-game restart command.
+
+Non-interactive API restarts always keep the known-good files so scheduled maintenance cannot silently invalidate AsaApi offsets. Use `./POK-manager.sh -update` when an unattended workflow intentionally needs to test a newer build. If an explicitly selected update proves incompatible, `./POK-manager.sh -rollback -all` restores a previously verified executable/cache pair. API-disabled all-instance restarts retain their existing automatic update behavior.
+
+If ASA has already exited before the verified stop phase begins, POK reconfirms that no server process appeared and removes the already-safe container immediately instead of waiting through the full Docker grace period. If the final check is uncertain or sees a process, the normal protected grace period remains in force.
+
+The manager uses the container's authoritative shutdown process probe before deciding that ASA is absent, with live Wine/Proton command-line and recorded-launcher-PID fallbacks for older images. The final pre-removal race check uses the same probe. If Docker's PID 1 shutdown trap must perform the two saves itself, it allows five seconds for a clean ASA exit and then terminates lingering Proton/Wine processes only after both saves are verified. A failed verified termination retains the remaining 55-second safety wait.
+
+When the host cannot see ASA but the container shutdown trap finds it, the manager no longer claims that no save was required. It checkpoints the instance's `ShooterGame.log` before removal and reports the number of fresh `World Save Complete` entries afterward, so saves completed by PID 1 remain visible in host-side stop output.
+
+Direct `API=FALSE` launches do not use Steam's game-specific ProtonFixes hook path. Unfiltered launch diagnostics remain available at `/home/pok/logs/proton_runtime.log`, and the final lines are shown automatically if both pinned-Proton attempts fail.
+
+For `API=TRUE`, the container console omits AsaApi's repeated copyright, URL, cache-reading, and hook-initialization boilerplate. API load success, plugin activity, warnings, and errors remain visible, while the mounted `API_Logs` file retains the complete original output. First-launch guidance is controlled by persistent per-instance flags, so recreating a container does not incorrectly present an established server as a first launch.
 
 ```bash
 # Restart an API-enabled instance with a 5-minute countdown
@@ -930,6 +983,9 @@ If you encounter issues with AsaApi or plugins:
    - Missing Visual C++ Redistributable: The system will try to install it automatically
    - Wine/Proton configuration: Try manually updating the docker image with `./POK-manager.sh -update`
    - Plugin compatibility: Some plugins may not work with our Linux/Proton setup or with the current version of ARK
+   - `starting: waiting for AsaApi cache`: POK is safely checking the native cache for the current ARK executable. A detailed `starting: AsaApi cache ... is unusable` message identifies an executable-specific missing core offset; the server will start automatically only after the CDN publishes a compatible cache. Network-only failures should be investigated against `cdn.pelayori.com`.
+   - Missing core offset after an ARK update: use `./POK-manager.sh -rollback -all` to stage and validate the last known-good server depot before the shared verified restart.
+   - Invalid custom override: Ensure `AsaApi_Custom` contains the complete release root and is readable by container UID/GID 7777, or remove the directory to restore managed 2.01.
 
 5. If the API still doesn't work, try reinstalling it:
    ```bash

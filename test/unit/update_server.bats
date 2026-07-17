@@ -70,3 +70,71 @@ load '../test_helper/project.bash'
   assert_output --partial "msg=ServerChat 5..."
   assert_output --partial "msg=ServerChat Server restarting NOW!"
 }
+
+@test "shutdown_server_for_update aborts when the shared two-stage stop fails" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    source "$REPO_ROOT/scripts/update_server.sh"
+    safe_container_stop() { echo "verified-stop=failed"; return 1; }
+    if shutdown_server_for_update; then
+      echo "result=unexpected-success"
+    else
+      echo "result=failed"
+    fi
+  '
+
+  assert_success
+  assert_output --partial "verified-stop=failed"
+  assert_output --partial "result=failed"
+  refute_output --partial "result=unexpected-success"
+}
+
+@test "shutdown_server_for_update acknowledges an active coordinated barrier only after verified saves" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    source "$REPO_ROOT/scripts/update_server.sh"
+    safe_container_stop() { echo "verified-stop=ok"; return 0; }
+    update_coordination_has_active_cycle() { return 0; }
+    update_coordination_instance_is_participant() { return 0; }
+    update_coordination_mark_shutdown_ready() { echo "barrier=acknowledged"; }
+    shutdown_server_for_update
+  '
+
+  assert_success
+  assert_output --partial "verified-stop=ok"
+  assert_output --partial "barrier=acknowledged"
+  assert_output --partial "acknowledged the coordinated verified-shutdown barrier"
+}
+
+@test "trigger_container_restart delegates durable state and restart signaling" {
+  run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/update_server.sh"
+    request_verified_container_restart() { printf "request=%s:%s:%s\n" "$1" "$2" "$3"; }
+    trigger_container_restart FOLLOWER_COORDINATION_RESTART 24680
+  '
+
+  assert_success
+  assert_output --partial "request=FOLLOWER_COORDINATION_RESTART:24680:/home/pok/container_update_restart.log"
+}
+
+@test "rollback update preflight rejects incompatible candidates without shutdown" {
+  run env REPO_ROOT="$PROJECT_ROOT" BATS_TMP="$BATS_TEST_TMPDIR/update-preflight" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/update_server.sh"
+    rollback_state_is_active() { return 0; }
+    acquire_update_lock() { echo lock; return 0; }
+    release_update_lock() { echo unlock; }
+    create_temp_download_dir() { mkdir -p "$BATS_TMP/staged"; echo "$BATS_TMP/staged"; }
+    steamcmd_download_to_dir() { echo download; return 0; }
+    prepare_staged_asaapi_cache() { echo incompatible; return 1; }
+    record_failed_rollback_retry() { echo recorded; }
+    shutdown_server_for_update() { echo unexpected-shutdown; }
+    if preflight_rollback_update; then echo unexpected-success; else echo held-online; fi
+  '
+
+  assert_success
+  assert_output --partial "incompatible"
+  assert_output --partial "recorded"
+  assert_output --partial "held-online"
+  assert_output --partial "unlock"
+  refute_output --partial "unexpected-shutdown"
+}

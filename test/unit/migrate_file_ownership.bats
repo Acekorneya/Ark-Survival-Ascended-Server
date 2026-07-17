@@ -27,21 +27,16 @@ load '../test_helper/project.bash'
   assert_output --partial "config_dir=present"
 }
 
-@test "_migration_stop_running_instances uses compose when present and docker stop otherwise" {
+@test "_migration_stop_running_instances uses the atomic verified barrier" {
   run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/migration-stop" POK_MANAGER_TEST_MODE=1 bash -lc '
     set -e
-    mkdir -p "$BASE_DIR/Instance_alpha" "$BASE_DIR/Instance_beta"
-    : > "$BASE_DIR/Instance_alpha/docker-compose-alpha.yaml"
     source "$REPO_ROOT/POK-manager.sh"
-    get_docker_compose_cmd() { DOCKER_COMPOSE_CMD="echo compose"; }
-    is_sudo() { return 0; }
-    docker() { echo "docker:$*"; }
+    _verified_shutdown_instances() { echo "barrier:$*"; }
     _migration_stop_running_instances alpha beta
   '
 
   assert_success
-  assert_output --partial "compose -f $BATS_TEST_TMPDIR/migration-stop/Instance_alpha/docker-compose-alpha.yaml down"
-  assert_output --partial "docker:stop -t 30 asa_beta"
+  assert_output --partial "barrier:false alpha beta"
 }
 
 @test "_migration_update_api_logs_volume_for_instance_dir adds the API logs bind mount once" {

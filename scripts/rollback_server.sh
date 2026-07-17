@@ -1,0 +1,283 @@
+#!/bin/bash
+# Stage and activate an explicitly selected ASA Steam depot rollback.
+
+POK_SCRIPTS_DIR="${POK_SCRIPTS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+# shellcheck source=/dev/null
+source "${POK_SCRIPTS_DIR}/common.sh"
+
+LOCK_HELD=false
+STAGE_SUCCEEDED=false
+ROLLBACK_COMMAND=""
+
+cleanup() {
+  local exit_code=$?
+  if [ "$LOCK_HELD" = true ]; then
+    release_update_lock || true
+    LOCK_HELD=false
+  fi
+  if [ "$exit_code" -ne 0 ] && [ "$STAGE_SUCCEEDED" != true ] && [ "$ROLLBACK_COMMAND" = "stage" ]; then
+    rm -rf "$ROLLBACK_STAGING_DIR"
+    python3 -B "$DEPLOYMENT_MANAGER_PATH" abort --state-dir "$DEPLOYMENT_STATE_DIR" >/dev/null 2>&1 || true
+  fi
+  exit "$exit_code"
+}
+
+validate_manifest() {
+  local manifest="$1"
+  if ! [[ "$manifest" =~ ^[0-9]+$ ]]; then
+    echo "[ERROR] Depot manifest must contain only digits."
+    return 1
+  fi
+}
+
+find_rollback_depot_root() {
+  local steamcmd_root="${1:-${STEAMCMD_ROOT:-/opt/steamcmd}}"
+  local downloaded_exe=""
+
+  [ -d "$steamcmd_root" ] || return 1
+  while IFS= read -r -d '' downloaded_exe; do
+    dirname "$(dirname "$(dirname "$(dirname "$downloaded_exe")")")"
+    return 0
+  done < <(find "$steamcmd_root" -type f \
+    -name ArkAscendedServer.exe \
+    -path '*app_2430930*' \
+    -path '*depot_2430931*' \
+    -print0 2>/dev/null)
+
+  return 1
+}
+
+cleanup_rollback_downloads() {
+  local steamcmd_root="${1:-${STEAMCMD_ROOT:-/opt/steamcmd}}"
+  local depot_root=""
+
+  depot_root=$(find_rollback_depot_root "$steamcmd_root" 2>/dev/null || true)
+  [ -z "$depot_root" ] || rm -rf -- "$depot_root"
+
+  # Also remove empty/partial standard layouts that do not contain the
+  # executable yet. SteamCMD has used both root- and linux32-relative layouts.
+  rm -rf -- \
+    "${steamcmd_root}/steamapps/content/app_2430930/depot_2430931" \
+    "${steamcmd_root}/linux32/steamapps/content/app_2430930/depot_2430931"
+}
+
+rollback_downloaded_megabytes() {
+  local steamcmd_root="${1:-${STEAMCMD_ROOT:-/opt/steamcmd}}"
+  local total_kib=0
+
+  [ -d "$steamcmd_root" ] || {
+    echo 0
+    return 0
+  }
+  total_kib=$(find "$steamcmd_root" -type f \
+    -path '*app_2430930*' \
+    -path '*depot_2430931*' \
+    -printf '%k\n' 2>/dev/null | awk '{ total += $1 } END { print total + 0 }')
+  echo $((total_kib / 1024))
+}
+
+rollback_download_heartbeat() {
+  local steamcmd_root="$1"
+  local interval="${ROLLBACK_PROGRESS_INTERVAL_SECONDS:-30}"
+  local elapsed=0
+  local downloaded_mb=0
+  local sleep_pid=""
+
+  if ! [[ "$interval" =~ ^[0-9]+$ ]] || [ "$interval" -lt 1 ]; then
+    interval=30
+  fi
+  trap '[ -z "$sleep_pid" ] || kill "$sleep_pid" 2>/dev/null || true; exit 0' TERM INT
+  while true; do
+    sleep "$interval" &
+    sleep_pid=$!
+    wait "$sleep_pid" || return 0
+    sleep_pid=""
+    elapsed=$((elapsed + interval))
+    downloaded_mb=$(rollback_downloaded_megabytes "$steamcmd_root")
+    echo "[INFO] SteamCMD rollback staging is still active (${elapsed}s elapsed, approximately ${downloaded_mb} MiB present)."
+  done
+}
+
+download_rollback_manifest() {
+  local manifest="$1"
+  local steamcmd_bin="${STEAMCMD_BIN:-/opt/steamcmd/steamcmd.sh}"
+  local steamcmd_root="${STEAMCMD_ROOT:-/opt/steamcmd}"
+  local -a login_args=()
+  local heartbeat_pid=""
+  local steamcmd_status=0
+
+  if [ -z "${STEAM_USERNAME:-}" ] || [ -z "${STEAM_PASSWORD:-}" ]; then
+    echo "[ERROR] Authenticated Steam credentials are required to download historical ASA depot manifests."
+    return 1
+  fi
+
+  login_args=(+login "$STEAM_USERNAME" "$STEAM_PASSWORD")
+  if [ -n "${STEAM_GUARD_CODE:-}" ]; then
+    login_args+=("$STEAM_GUARD_CODE")
+    echo "[INFO] Authenticating to Steam with the supplied one-run Steam Guard code."
+  else
+    echo "[ACTION REQUIRED] If Steam requests mobile confirmation, approve the new SteamCMD sign-in immediately."
+    echo "[ACTION REQUIRED] SteamCMD will wait only for a limited time before cancelling the login."
+  fi
+
+  rollback_download_heartbeat "$steamcmd_root" &
+  heartbeat_pid=$!
+  "$steamcmd_bin" \
+    +@sSteamCmdForcePlatformType windows \
+    "${login_args[@]}" \
+    +download_depot 2430930 2430931 "$manifest" \
+    +quit || steamcmd_status=$?
+  kill "$heartbeat_pid" 2>/dev/null || true
+  wait "$heartbeat_pid" 2>/dev/null || true
+  return "$steamcmd_status"
+}
+
+stage_rollback() {
+  local manifest="$1"
+  local steamcmd_root="${STEAMCMD_ROOT:-/opt/steamcmd}"
+  local content_root=""
+  local staged_exe="${ROLLBACK_STAGING_DIR}/ShooterGame/Binaries/Win64/ArkAscendedServer.exe"
+  local current_exe="${ASA_DIR}/ShooterGame/Binaries/Win64/ArkAscendedServer.exe"
+  local failed_hash=""
+  local failed_build_id=""
+  local failed_cache_timestamp=""
+  local incompatible_marker="${ASA_DIR}/ShooterGame/Binaries/Win64/ArkApi/Cache/incompatible_cache.json"
+
+  validate_manifest "$manifest" || return 1
+  [ -f "$current_exe" ] || {
+    echo "[ERROR] Current ARK server executable is missing; rollback cannot establish a safe baseline."
+    return 1
+  }
+  failed_hash=$(sha256sum "$current_exe" | awk '{print $1}')
+  failed_build_id=$(get_build_id_from_acf 2>/dev/null || true)
+  if [ -f "$incompatible_marker" ] && \
+      [ "$(jq -r '.executable_hash // empty' "$incompatible_marker" 2>/dev/null)" = "$failed_hash" ]; then
+    failed_cache_timestamp=$(jq -r '.last_modified // empty' "$incompatible_marker" 2>/dev/null)
+  fi
+
+  if ! acquire_update_lock; then
+    echo "[ERROR] Another shared install, update, or rollback operation is active."
+    return 1
+  fi
+  LOCK_HELD=true
+
+  echo "[INFO] Staging ASA depot 2430931 manifest ${manifest} with authenticated SteamCMD access..."
+  cleanup_rollback_downloads "$steamcmd_root"
+  rm -rf "$ROLLBACK_STAGING_DIR"
+  mkdir -p "$ROLLBACK_STAGING_DIR" "$DEPLOYMENT_STATE_DIR"
+  if ! download_rollback_manifest "$manifest"; then
+    echo "[ERROR] SteamCMD failed to download rollback manifest ${manifest}."
+    echo "[ERROR] Confirm that the configured Steam account owns ARK: Survival Ascended and that any Steam Guard code is current."
+    return 1
+  fi
+  content_root=$(find_rollback_depot_root "$steamcmd_root" || true)
+  [ -n "$content_root" ] || {
+    echo "[ERROR] SteamCMD reported success, but the downloaded depot could not be located under ${steamcmd_root}."
+    return 1
+  }
+  echo "[INFO] Located downloaded rollback depot at: ${content_root}"
+  [ -f "${content_root}/ShooterGame/Binaries/Win64/ArkAscendedServer.exe" ] || {
+    echo "[ERROR] SteamCMD completed without the expected ARK server executable."
+    return 1
+  }
+  cp -a "${content_root}/." "$ROLLBACK_STAGING_DIR/" || {
+    echo "[ERROR] Unable to copy the downloaded depot into persistent rollback staging."
+    return 1
+  }
+  prepare_staged_asaapi_cache "$ROLLBACK_STAGING_DIR" || return 1
+
+  local staged_hash
+  staged_hash=$(sha256sum "$staged_exe" | awk '{print $1}')
+  python3 -B "$DEPLOYMENT_MANAGER_PATH" begin \
+    --state-dir "$DEPLOYMENT_STATE_DIR" \
+    --manifest "$manifest" \
+    --executable-hash "$staged_hash" \
+    --failed-build-id "$failed_build_id" \
+    --failed-executable-hash "$failed_hash" \
+    --failed-cache-last-modified "$failed_cache_timestamp" || return 1
+
+  STAGE_SUCCEEDED=true
+  release_update_lock
+  LOCK_HELD=false
+  echo "[SUCCESS] Rollback manifest ${manifest} is staged and AsaApi-compatible; live files are unchanged."
+}
+
+activate_rollback() {
+  local manifest="$1"
+  local staged_exe="${ROLLBACK_STAGING_DIR}/ShooterGame/Binaries/Win64/ArkAscendedServer.exe"
+  local live_exe="${ASA_DIR}/ShooterGame/Binaries/Win64/ArkAscendedServer.exe"
+  local expected_hash
+  local actual_hash
+
+  validate_manifest "$manifest" || return 1
+  [ -f "$staged_exe" ] || {
+    echo "[ERROR] The validated rollback staging directory is missing."
+    return 1
+  }
+  expected_hash=$(deployment_state_field transaction executable_sha256 || true)
+  actual_hash=$(sha256sum "$staged_exe" | awk '{print $1}')
+  [ -n "$expected_hash" ] && [ "$actual_hash" = "$expected_hash" ] || {
+    echo "[ERROR] Staged rollback files no longer match the validated transaction."
+    return 1
+  }
+
+  if ! acquire_update_lock; then
+    echo "[ERROR] Another shared install, update, or rollback operation is active."
+    return 1
+  fi
+  LOCK_HELD=true
+  echo "[INFO] Activating validated rollback manifest ${manifest} in the shared server files..."
+  sync_temp_into_live_dir "$ROLLBACK_STAGING_DIR" "$ASA_DIR" || return 1
+  ensure_server_file_permissions "$ASA_DIR"
+  cleanup_steam_dlls "$ASA_DIR"
+  sync
+
+  python3 -B "$DEPLOYMENT_MANAGER_PATH" activate \
+    --state-dir "$DEPLOYMENT_STATE_DIR" \
+    --manifest "$manifest" \
+    --server-exe "$live_exe" || return 1
+
+  STAGE_SUCCEEDED=true
+  rm -rf "$ROLLBACK_STAGING_DIR"
+  release_update_lock
+  LOCK_HELD=false
+  echo "[SUCCESS] Shared ASA files now use rollback manifest ${manifest}."
+}
+
+main() {
+  local command="${1:-}"
+  local manifest="${2:-}"
+  prepare_runtime_env
+  ROLLBACK_COMMAND="$command"
+  trap cleanup EXIT INT TERM
+
+  case "$command" in
+    select)
+      local current_exe="${ASA_DIR}/ShooterGame/Binaries/Win64/ArkAscendedServer.exe"
+      local current_hash=""
+      [ -f "$current_exe" ] && current_hash=$(sha256sum "$current_exe" | awk '{print $1}')
+      python3 -B "$DEPLOYMENT_MANAGER_PATH" select-manifest \
+        --state-dir "$DEPLOYMENT_STATE_DIR" --current-hash "$current_hash"
+      STAGE_SUCCEEDED=true
+      ;;
+    stage)
+      stage_rollback "$manifest"
+      ;;
+    activate)
+      activate_rollback "$manifest"
+      ;;
+    abort)
+      rm -rf "$ROLLBACK_STAGING_DIR"
+      python3 -B "$DEPLOYMENT_MANAGER_PATH" abort --state-dir "$DEPLOYMENT_STATE_DIR"
+      STAGE_SUCCEEDED=true
+      ;;
+    *)
+      echo "Usage: $0 {select|stage|activate|abort} [manifest]" >&2
+      return 2
+      ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

@@ -152,61 +152,9 @@ display_animated_countdown() {
   else
     send_rcon_command "ServerChat Server is shutting down NOW!"
   fi
-  
-  # Wait for shutdown flag to appear with cleaner status display
-  local wait_count=0
-  local max_wait=60
-  local phase="saving"
-  
-  if [ "$countdown_type" = "restart" ]; then
-    echo -e "\n${status_color}Waiting for server to restart...${reset_color}"
-  else
-    echo -e "\n${status_color}Waiting for server to finish shutdown...${reset_color}"
-  fi
-  
-  while [ ! -f "$SHUTDOWN_COMPLETE_FLAG" ] && [ $wait_count -lt $max_wait ]; do
-    sleep 1
-    ((wait_count++))
-    current_spinner=${spinner[$spinner_idx]}
-    spinner_idx=$(( (spinner_idx + 1) % ${#spinner[@]} ))
-    
-    # Determine phase message based on time elapsed
-    if [ $wait_count -le 20 ]; then
-      if [ "$phase" != "saving" ]; then
-        phase="saving"
-        echo ""  # Add space before new phase
-      fi
-      printf "\r${status_color}%s${reset_color} ${action_color}Phase 1/3:${reset_color} Saving world data... " "$current_spinner"
-    elif [ $wait_count -le 40 ]; then
-      if [ "$phase" != "exiting" ]; then
-        phase="exiting"
-        echo ""  # Add space before new phase
-        echo -e "${success_color}✓${reset_color} World data save complete"
-      fi
-      printf "\r${status_color}%s${reset_color} ${action_color}Phase 2/3:${reset_color} Server processes exiting... " "$current_spinner"
-    else
-      if [ "$phase" != "cleanup" ]; then
-        phase="cleanup"
-        echo ""  # Add space before new phase
-        echo -e "${success_color}✓${reset_color} Server processes stopped"
-      fi
-      printf "\r${status_color}%s${reset_color} ${action_color}Phase 3/3:${reset_color} Finalizing operation... " "$current_spinner"
-    fi
-  done
-  
-  echo ""  # Add a final newline
-  if [ -f "$SHUTDOWN_COMPLETE_FLAG" ]; then
-    if [ "$countdown_type" = "restart" ]; then
-      echo -e "${success_color}✓ Server shutdown phase completed!${reset_color}"
-      echo -e "${status_color}Server will restart shortly...${reset_color}"
-    else
-      echo -e "${success_color}✓ Server shutdown completed successfully!${reset_color}"
-    fi
-  else
-    echo -e "${warning_color}⚠️ Timeout waiting for completion${reset_color}"
-    # Create the flag anyway to continue
-    touch "$SHUTDOWN_COMPLETE_FLAG"
-  fi
+
+  echo -e "\n${status_color}Starting verified two-stage save and shutdown...${reset_color}"
+  return 0
 }
 
 # Function to display usage
@@ -214,6 +162,9 @@ usage() {
   echo "Usage: $0 [command] [options]"
   echo "Available commands:"
   echo "  -saveworld                - Save the game world."
+  echo "  -verify-save              - Save and wait for fresh completion evidence."
+  echo "  -verify-doexit            - Send DoExit and verify its save independently."
+  echo "  -terminate-verified       - Terminate lingering ASA only after verified DoExit."
   echo "  -restart <minutes>        - Schedule a server restart with countdown."
   echo "  -shutdown <minutes>       - Schedule a server shutdown with countdown."
   echo "  -stop                     - Safely stop the server, ensuring world save completion."
@@ -234,6 +185,15 @@ main() {
   case "$command" in
   -saveworld)
     saveWorld
+    ;;
+  -verify-save)
+    verified_saveworld
+    ;;
+  -verify-doexit)
+    verified_doexit_save
+    ;;
+  -terminate-verified)
+    shutdown_terminate_lingering_processes
     ;;
   -restart)
     if [ -z "$1" ]; then
@@ -297,12 +257,12 @@ main() {
     ;;
   -stop)
     echo "🛑 Safely stopping server and ensuring world save completion..."
-    # Call the safe_container_stop function to ensure the world is saved
-    safe_container_stop
-    
-    # After the world is saved and shutdown flag is set, it's safe to proceed with container stop
-    echo "✅ World saved and server ready for container stop."
-    echo "   POK-manager.sh can now safely stop the container."
+    if safe_container_stop; then
+      echo "✅ Both world saves verified; server is ready for container stop."
+      return 0
+    fi
+    echo "❌ Safe stop aborted because a save could not be verified." >&2
+    return 1
     ;;
   -chat)
     if [ -z "$1" ]; then

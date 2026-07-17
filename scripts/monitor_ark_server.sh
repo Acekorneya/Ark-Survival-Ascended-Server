@@ -30,23 +30,22 @@ check_restart_timeout() {
     local current_time=$(date +%s)
     local elapsed_time=$((current_time - start_time))
     
-    # If it's been more than 5 minutes (300 seconds), force kill the container
+    # If it's been more than 5 minutes, retry a verified shutdown before restart.
     if [ $elapsed_time -gt 300 ]; then
-      echo "[CRITICAL] Restart timeout exceeded (${elapsed_time}s) - FORCING CONTAINER KILL"
+      echo "[CRITICAL] Restart timeout exceeded (${elapsed_time}s) - requesting verified container restart"
+
+      if shutdown_server_process_running && ! safe_container_stop; then
+        echo "[ERROR] Restart timeout recovery aborted because both saves were not verified." >&2
+        date +%s > "$RESTART_TIMESTAMP_FILE"
+        return 1
+      fi
       
-      # Absolutely ensure container dies
-      echo "true" > /home/pok/stop_monitor.flag
-      sync
-      
-      # Execute most aggressive kill sequence
-      killall -9 -u pok || true
-      sleep 1
-      kill -9 -1 || true
-      sleep 1
-      kill -9 1 || true
-      sleep 1
-      kill -ABRT $$ || true
-      exec kill -SEGV $$ || exit 1
+      local restart_reason
+      local expected_build=""
+      restart_reason=$(cat /home/pok/restart_reason.flag 2>/dev/null || echo "MONITOR_TIMEOUT_RESTART")
+      expected_build=$(cat /home/pok/expected_build_id.txt 2>/dev/null || true)
+      request_verified_container_restart "$restart_reason" "$expected_build" "/home/pok/container_recovery.log"
+      return $?
     fi
   else
     # If no restart flag, remove the timestamp file if it exists
@@ -282,56 +281,16 @@ exit_container_for_recovery() {
   if pgrep -f "AsaApiLoader.exe" >/dev/null 2>&1 || pgrep -f "ArkAscendedServer.exe" >/dev/null 2>&1; then
     # Use safe_container_stop function to ensure world save
     echo "[$current_time] [INFO] Server is running, ensuring world data is saved before container exit..." | tee -a "$RECOVERY_LOG"
-    safe_container_stop
-    
-    # Kill any running server processes after safe stop
-    echo "[$current_time] [INFO] Terminating any running server processes after save..." | tee -a "$RECOVERY_LOG"
-    pkill -9 -f "AsaApiLoader.exe" >/dev/null 2>&1 || true
-    pkill -9 -f "ArkAscendedServer.exe" >/dev/null 2>&1 || true
-    pkill -9 -f "wine" >/dev/null 2>&1 || true
-    pkill -9 -f "wineserver" >/dev/null 2>&1 || true
-    sleep 2
+    if ! safe_container_stop; then
+      echo "[$current_time] [ERROR] Recovery restart aborted because both saves were not verified." | tee -a "$RECOVERY_LOG"
+      return 1
+    fi
   else
     echo "[$current_time] [INFO] Server not running, no world save needed" | tee -a "$RECOVERY_LOG"
   fi
   
-  # Make sure any existing shutdown flag is removed so a fresh restart can occur
-  if [ -f "$SHUTDOWN_COMPLETE_FLAG" ]; then
-    echo "[$current_time] [INFO] Removing existing shutdown complete flag..." | tee -a "$RECOVERY_LOG"
-    rm -f "$SHUTDOWN_COMPLETE_FLAG"
-  fi
-  
-  # Create a special flag to tell other monitors to stop
-  echo "true" > /home/pok/stop_monitor.flag
-  
-  # Flush any pending disk writes
-  sync
-  
-  # Allow some time for logs to be written
-  sleep 3
-  
-  echo "[$current_time] [INFO] Force killing ALL container processes..." | tee -a "$RECOVERY_LOG"
-  
-  # Super aggressive container kill approach:
-  
-  # 1. Kill all processes owned by our user
-  echo "[$current_time] [INFO] Killing all user processes with SIGKILL..." | tee -a "$RECOVERY_LOG"
-  killall -9 -u pok || true
-  
-  # 2. Kill all processes in our process group
-  echo "[$current_time] [INFO] Killing all processes in process group with SIGKILL..." | tee -a "$RECOVERY_LOG"
-  kill -9 -1 || true
-  
-  # 3. Force kill init process (tini)
-  echo "[$current_time] [INFO] Directly killing PID 1 (tini) with SIGKILL..." | tee -a "$RECOVERY_LOG"
-  kill -9 1 || true
-  
-  # 4. As absolute last resort, crash our own process with ABORT signal
-  echo "[$current_time] [INFO] Last resort: Sending SIGABRT to our own process to force container crash..." | tee -a "$RECOVERY_LOG"
-  kill -ABRT $$ || true
-  
-  # If we somehow get here, exit with failure code
-  exit 1
+  echo "[$current_time] [INFO] Signaling PID 1 for a clean container restart..." | tee -a "$RECOVERY_LOG"
+  request_verified_container_restart "CONTAINER_RECOVERY" "" "/home/pok/container_recovery.log"
 }
 
 # Enhanced recovery function with better logging and recovery 
@@ -594,6 +553,10 @@ handle_first_launch_recovery() {
   
   # Terminate any running processes
   echo "[INFO] Stopping any running server processes..."
+  if shutdown_server_process_running && ! safe_container_stop; then
+    echo "[ERROR] First-launch recovery aborted because both saves were not verified." >&2
+    return 1
+  fi
   pkill -9 -f "AsaApiLoader.exe" >/dev/null 2>&1 || true
   pkill -9 -f "ArkAscendedServer.exe" >/dev/null 2>&1 || true
   pkill -9 -f "wine" >/dev/null 2>&1 || true
@@ -657,6 +620,11 @@ fi
 
 prepare_runtime_env
 monitor_health_load_state
+monitor_cleanup_presence() {
+  update_coordination_remove_instance_presence || true
+}
+trap monitor_cleanup_presence EXIT
+trap 'monitor_cleanup_presence; exit 0' INT TERM
 
 NO_RESTART_FLAG="/home/pok/shutdown.flag"
 RESTART_FLAG="/home/pok/restart.flag"
@@ -672,6 +640,13 @@ if ! env_value_is_truthy "${UPDATE_SERVER:-FALSE}"; then
   exit 0
 fi
 
+SHARED_AUTOMATIC_UPDATES_ENABLED=true
+if ! shared_update_policy_allows_automatic_updates; then
+  shared_update_policy_print_block
+  echo "[INFO] Automatic update actions are disabled; runtime health monitoring will continue."
+  SHARED_AUTOMATIC_UPDATES_ENABLED=false
+fi
+
 # Clear stale stop flag so the monitor stays active after restarts
 if [ -f "/home/pok/stop_monitor.flag" ]; then
   rm -f "/home/pok/stop_monitor.flag"
@@ -682,6 +657,7 @@ UPDATE_WINDOW_MINIMUM_TIME=${UPDATE_WINDOW_MINIMUM_TIME:-12:00 AM} # Default to 
 UPDATE_WINDOW_MAXIMUM_TIME=${UPDATE_WINDOW_MAXIMUM_TIME:-11:59 PM} # Default to "11:59 PM" if not set
 
 # Wait for the initial startup before monitoring
+update_coordination_touch_instance_presence || true
 sleep $INITIAL_STARTUP_DELAY
 
 # Clean up any legacy locks from previous system usage
@@ -702,6 +678,8 @@ fi
 
 # Monitoring loop
 while true; do
+  update_coordination_touch_instance_presence || true
+
   # Check for restart timeout (nuclear option for stuck restarts)
   check_restart_timeout
 
@@ -721,30 +699,35 @@ while true; do
     exit 0
   fi
 
+  # A master may discover an update while another instance is being started.
+  # Join that already-created cycle immediately instead of waiting for this
+  # instance's next Steam polling interval or update window.
+  if update_coordination_has_active_cycle && \
+      [ "${UPDATE_COORDINATION_STATE_PHASE:-}" = "pending_restart" ]; then
+    cycle_marker="/tmp/pok_update_cycle_${UPDATE_COORDINATION_STATE_CYCLE_ID}"
+    if { update_coordination_is_active_leader || update_coordination_instance_is_participant; } && \
+        [ ! -f "$cycle_marker" ]; then
+      touch "$cycle_marker"
+      display_monitor_status "A coordinated shared-file update is pending; starting this instance's configured restart notice." "WARNING" "true"
+      export API_CONTAINER_RESTART="TRUE"
+      export RESTART_NOTICE_MINUTES="${RESTART_NOTICE_MINUTES:-30}"
+      if ! /home/pok/scripts/update_server.sh; then
+        display_monitor_status "Coordinated update preparation failed; leaving the server running for administrator review." "ERROR" "true"
+      fi
+    fi
+  fi
+
   # Check for restart coordination flags
   if [ -f "/home/pok/restart_reason.flag" ]; then
     if ! is_process_running; then
       current_time=$(date "+%Y-%m-%d %H:%M:%S")
-      echo "[$current_time] [WARNING] Detected a restart flag with server not running - forced container kill needed" | tee -a "$RECOVERY_LOG"
-      display_monitor_status "⚠️ Restart detected but server not running - forcing container kill" "WARNING" "true"
+      echo "[$current_time] [WARNING] Detected a restart flag with server not running - requesting clean container restart" | tee -a "$RECOVERY_LOG"
+      display_monitor_status "⚠️ Restart detected with server stopped - restarting container" "WARNING" "true"
       
-      # Ensure stop flag is created
-      echo "true" > /home/pok/stop_monitor.flag
-      
-      # Execute the most aggressive kill methods immediately
-      echo "[$current_time] [WARNING] Executing emergency container kill sequence" | tee -a "$RECOVERY_LOG"
-      
-      # Force sync to ensure all data is written
-      sync
-      
-      # Kill everything with maximum prejudice
-      killall -9 -u pok || true
-      kill -9 -1 || true
-      kill -9 1 || true
-      kill -ABRT $$ || true
-      
-      # If we somehow get here, try a second approach
-      exec kill -SEGV $$ || exit 1
+      restart_reason=$(cat /home/pok/restart_reason.flag 2>/dev/null || echo "MONITOR_RESTART")
+      expected_build=$(cat /home/pok/expected_build_id.txt 2>/dev/null || true)
+      request_verified_container_restart "$restart_reason" "$expected_build" "/home/pok/container_recovery.log"
+      exit $?
     else
       # Server is healthy; clear restart coordination markers
       rm -f "/home/pok/restart_reason.flag"
@@ -807,7 +790,7 @@ while true; do
     continue
   fi
   
-  if [ "${UPDATE_SERVER^^}" = "TRUE" ]; then
+  if [ "${UPDATE_SERVER^^}" = "TRUE" ] && [ "$SHARED_AUTOMATIC_UPDATES_ENABLED" = true ]; then
     # Check for updates at the interval specified by CHECK_FOR_UPDATE_INTERVAL
     current_time=$(TZ="${TZ}" date +%s)
     last_update_check_time=${last_update_check_time:-0}

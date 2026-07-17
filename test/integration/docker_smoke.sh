@@ -57,10 +57,11 @@ services:
   asaserver:
     image: busybox:1.36
     container_name: "asa_smoke"
-    command: ["sh", "-c", "sleep 300"]
+    command: ["sh", "-c", "trap 'exit 0' TERM INT; while true; do sleep 1 & wait $!; done"]
     environment:
       - INSTANCE_NAME=smoke
       - API=FALSE
+      - SAVE_WAIT_SECONDS=1
 EOF
 }
 
@@ -90,7 +91,6 @@ docker_smoke_source_manager() {
   update_docker_compose_image_tag() { :; }
   get_docker_sudo_preference() { echo false; }
   get_docker_compose_cmd() { DOCKER_COMPOSE_CMD="${DOCKER_SMOKE_CMD[*]} compose"; }
-  _stop_instance_attempt_quick_save() { :; }
   _start_instance_launch_container() {
     local instance_name="$1"
     local docker_compose_file="$2"
