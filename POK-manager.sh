@@ -3306,38 +3306,90 @@ _compose_file_instance_name() {
 
 _compose_container_instance_name() {
   local docker_compose_file="$1"
-  grep -E "container_name:.*asa_" "$docker_compose_file" | sed -E 's/.*container_name:.*asa_([^"]*).*/\1/' | tr -d ' '
+  local container_name
+  local instance_name
+
+  container_name=$(_compose_full_container_name "$docker_compose_file")
+  [ -n "$container_name" ] || return 0
+  instance_name="${container_name#asa_}"
+  echo "$instance_name"
 }
 
 _compose_full_container_name() {
   local docker_compose_file="$1"
+  local val
 
-  if ! grep -q "container_name:" "$docker_compose_file"; then
-    return 0
-  fi
+  [ -f "$docker_compose_file" ] || return 0
+  val=$(grep -E '^[[:space:]]*container_name:' "$docker_compose_file" 2>/dev/null | head -n 1 | sed -E 's/^[[:space:]]*container_name:[[:space:]]*//' | tr -d '\r')
+  [ -n "$val" ] || return 0
 
-  if grep -q "container_name: \"" "$docker_compose_file"; then
-    grep "container_name:" "$docker_compose_file" | sed 's/.*container_name: "\(.*\)".*/\1/'
-  else
-    grep "container_name:" "$docker_compose_file" | sed 's/.*container_name: \(.*\)/\1/'
-  fi
+  # Strip surrounding single or double quotes
+  val="${val#\"}"
+  val="${val%\"}"
+  val="${val#\'}"
+  val="${val%\'}"
+  # Trim leading and trailing whitespace
+  val=$(echo "$val" | xargs)
+  echo "$val"
 }
 
 _compose_env_instance_name() {
   local docker_compose_file="$1"
-  grep -E "INSTANCE_NAME=" "$docker_compose_file" | sed -E 's/.*INSTANCE_NAME=([^"]*).*/\1/' | tr -d ' '
+  _compose_env_value "$docker_compose_file" "INSTANCE_NAME"
 }
 
 _compose_api_enabled() {
   local docker_compose_file="$1"
-  grep -q "^ *- API=TRUE" "$docker_compose_file" || grep -q "^ *- API:TRUE" "$docker_compose_file"
+  local api_val
+  api_val=$(_compose_env_value "$docker_compose_file" "API")
+  [ "${api_val,,}" = "true" ]
 }
 
 _compose_env_value() {
   local docker_compose_file="$1"
   local env_key="$2"
+  local val
+  local line
 
-  grep -E "^[[:space:]]*-[[:space:]]*${env_key}=" "$docker_compose_file" 2>/dev/null | head -1 | sed -E "s/.*${env_key}=//"
+  [ -f "$docker_compose_file" ] || return 0
+
+  # Match either: - KEY=VAL, - 'KEY=VAL', or - "KEY=VAL"
+  line=$(grep -E "^[[:space:]]*-[[:space:]]*['\"]?${env_key}=" "$docker_compose_file" 2>/dev/null | head -1 | tr -d '\r')
+  [ -n "$line" ] || return 0
+
+  # Strip leading dash and spaces
+  line=$(echo "$line" | sed -E 's/^[[:space:]]*-[[:space:]]*//')
+
+  # Strip outer quotes of the entire environment entry if present (e.g. 'KEY=VAL' -> KEY=VAL)
+  if [[ "$line" == \"*\" ]]; then
+    line="${line#\"}"
+    line="${line%\"}"
+  elif [[ "$line" == \'*\' ]]; then
+    line="${line#\'}"
+    line="${line%\'}"
+  fi
+
+  # Now it is in the format KEY=VAL or KEY:VAL. Strip KEY= or KEY:
+  if [[ "$line" == *=* ]]; then
+    val="${line#*=}"
+  elif [[ "$line" == *:* ]]; then
+    val="${line#*:}"
+  else
+    val=""
+  fi
+
+  # Strip quotes around the value if present (e.g. "VAL" -> VAL)
+  if [[ "$val" == \"*\" ]]; then
+    val="${val#\"}"
+    val="${val%\"}"
+  elif [[ "$val" == \'*\' ]]; then
+    val="${val#\'}"
+    val="${val%\'}"
+  fi
+
+  # Trim leading and trailing whitespace
+  val=$(echo "$val" | xargs)
+  echo "$val"
 }
 
 _sanitize_save_wait_seconds() {
