@@ -1,4 +1,6 @@
 ## Version 2.1.81 (Latest)
+- Fixed `-update` to honor the saved Docker sudo preference for image pulls and every temporary-container operation, fail promptly in unattended jobs when configured sudo authorization is unavailable, and return a failure status when SteamCMD retries are exhausted.
+- Moved multi-gigabyte SteamCMD update staging out of Docker's writable `/tmp` layer and onto `ServerFiles/arkserver/.pok-manager/update/staging`, aligning the actual download with the manager's host free-space validation while retaining explicit `TEMP_DOWNLOAD_ROOT` overrides.
 - Made automatic ARK updates a shared-installation policy: any configured `API=TRUE` or `UPDATE_SERVER=FALSE` instance now blocks automatic file replacement for every instance sharing `ServerFiles/arkserver`, while a read-only notifier reports pending manual maintenance.
 - Added a coordinated pre-update barrier that snapshots running instances, honors each server's restart notice, verifies both save stages, and prevents the leader from changing shared files until every participant is safely stopped. Direct `-update` also refuses to mutate files beneath running servers.
 - Reduced persisted Proton-prefix startup delays by repairing permissions only on entries missing required access, while preserving executable and additional permission bits on already-valid files.

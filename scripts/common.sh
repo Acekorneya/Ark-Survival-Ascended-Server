@@ -131,7 +131,10 @@ common_init() {
   STEAM_COMPAT_DATA_PATH="/home/pok/.steam/steam/steamapps/compatdata/${APPID}"
   STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/pok/.steam/steam"
   PID_FILE="/home/pok/${INSTANCE_NAME}_ark_server.pid"
-  TEMP_DOWNLOAD_ROOT="${TEMP_DOWNLOAD_ROOT:-/tmp}"
+  # Keep multi-gigabyte SteamCMD staging on the shared server filesystem.
+  # Container /tmp normally lives in Docker's writable layer, which may be
+  # much smaller than the host filesystem already validated for ASA updates.
+  TEMP_DOWNLOAD_ROOT="${TEMP_DOWNLOAD_ROOT:-${ASA_DIR}/.pok-manager/update/staging}"
   TEMP_DOWNLOAD_PREFIX="arkserver_download"
 
   RCON_HOST="localhost"
