@@ -1,4 +1,5 @@
 ## Version 2.1.81 (Latest)
+- Upgraded container base image from Ubuntu 22.04 (Jammy) to Ubuntu 24.04 LTS (Noble Numbat) and updated pinned GE-Proton from 10-33 to 10-34. This provides GLIBC 2.39, updated OpenSSL 3.0, GnuTLS 3.8, and 2024 CA certificates, resolving AsaApi plugin SSL/TLS connection failures (GitHub #135).
 - Fixed `-update` to honor the saved Docker sudo preference for image pulls and every temporary-container operation, fail promptly in unattended jobs when configured sudo authorization is unavailable, and return a failure status when SteamCMD retries are exhausted.
 - Moved multi-gigabyte SteamCMD update staging out of Docker's writable `/tmp` layer and onto `ServerFiles/arkserver/.pok-manager/update/staging`, aligning the actual download with the manager's host free-space validation while retaining explicit `TEMP_DOWNLOAD_ROOT` overrides.
 - Made automatic ARK updates a shared-installation policy: any configured `API=TRUE` or `UPDATE_SERVER=FALSE` instance now blocks automatic file replacement for every instance sharing `ServerFiles/arkserver`, while a read-only notifier reports pending manual maintenance.

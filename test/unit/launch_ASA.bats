@@ -23,14 +23,14 @@ load '../test_helper/project.bash'
     PROTON_RUNTIME_LOG="$BATS_TMP/proton.log"
     printf "%s\n" \
       "ProtonFixes[324] WARN: Skipping fix execution. We are probably running a unit test." \
-      "Proton: Upgrading prefix from None to GE-Proton10-33" \
+      "Proton: Upgrading prefix from None to GE-Proton10-34" \
       "wine: example actionable failure" | filter_proton_runtime_output
     printf "%s\n" "---raw-diagnostics---"
     cat "$PROTON_RUNTIME_LOG"
   '
 
   assert_success
-  assert_line "Proton: Upgrading prefix from None to GE-Proton10-33"
+  assert_line "Proton: Upgrading prefix from None to GE-Proton10-34"
   assert_line "wine: example actionable failure"
   assert_output --partial "---raw-diagnostics---"
   assert_output --partial "ProtonFixes[324] WARN: Skipping fix execution. We are probably running a unit test."
