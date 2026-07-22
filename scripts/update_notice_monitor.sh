@@ -6,8 +6,6 @@
 POK_SCRIPTS_DIR="${POK_SCRIPTS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 # shellcheck source=/dev/null
 source "${POK_SCRIPTS_DIR}/common.sh"
-# shellcheck source=/dev/null
-source "${POK_SCRIPTS_DIR}/rcon_commands.sh"
 
 notice_interval_seconds() {
   local interval="${CHECK_FOR_UPDATE_INTERVAL:-1}"
@@ -48,7 +46,6 @@ notify_once_for_build() {
 
   echo "[WARNING] ARK build ${available_build} is available, but automatic shared-file updates are disabled."
   echo "[WARNING] An administrator must stop every managed instance and run ./POK-manager.sh -update."
-  send_rcon_command "ServerChat ARK update ${available_build} is available. Automatic updating is disabled for this shared installation; an administrator must schedule maintenance." || true
   printf '%s\n' "$(date +%s)" > "${marker_file}.tmp.$$" && mv "${marker_file}.tmp.$$" "$marker_file"
 }
 
