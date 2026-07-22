@@ -36,10 +36,10 @@ RUN set -ex; \
     libcups2 libcups2:i386 \
     gnupg2 ca-certificates \
     # Add X server packages for headless operation
-    xvfb x11-xserver-utils xauth libgl1-mesa-dri libgl1-mesa-glx \
+    xvfb x11-xserver-utils xauth libgl1-mesa-dri libgl1 \
     # Add necessary libraries for Wine and VC++
-    libldap-2.6-0:i386 libldap-2.6-0 libgnutls30:i386 libgnutls30 \
-    libxml2:i386 libxml2 libasound2:i386 libasound2 libpulse0:i386 libpulse0 \
+    libldap2:i386 libldap2 libgnutls30:i386 libgnutls30 \
+    libxml2:i386 libxml2 libasound2t64:i386 libasound2t64 libpulse0:i386 libpulse0 \
     libopenal1:i386 libopenal1 libncurses6:i386 libncurses6 \
     # DO NOT ENABLE screen package - causes log display issues which is needed by the POK-manager.sh script
     # cabextract is essential for winetricks vcrun2019 installation
