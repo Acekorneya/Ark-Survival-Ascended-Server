@@ -27,7 +27,6 @@ load '../test_helper/project.bash'
     mkdir -p "$ASA_DIR"
     get_build_id_from_acf() { echo 100; }
     get_current_build_id() { echo 101; }
-    send_rcon_command() { echo "rcon=$1"; }
     check_for_blocked_update
     check_for_blocked_update
     source "$ASA_DIR/.pok-manager/pending_manual_update.env"
@@ -36,7 +35,7 @@ load '../test_helper/project.bash'
 
   assert_success
   assert_output --partial "installed=100 available=101"
-  assert_output --partial "rcon=ServerChat ARK update 101 is available."
-  run grep -c '^rcon=' <<< "$output"
+  assert_output --partial "[WARNING] ARK build 101 is available, but automatic shared-file updates are disabled."
+  run grep -c "\[WARNING\] ARK build 101 is available" <<< "$output"
   assert_output "1"
 }
