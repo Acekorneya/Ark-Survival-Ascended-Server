@@ -1,4 +1,4 @@
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 
 # IMPORTANT: These values are set at build time and CANNOT be changed at runtime
 # The container has fixed user IDs:
@@ -7,7 +7,7 @@ FROM ubuntu:22.04
 # Host file ownership MUST match these values to avoid permission issues
 ARG PUID=7777
 ARG PGID=7777
-ARG PROTON_VERSION=GE-Proton10-33
+ARG PROTON_VERSION=GE-Proton10-34
 
 # Set a default timezone, can be overridden at runtime
 ENV TZ=UTC
@@ -31,14 +31,14 @@ RUN set -ex; \
     tzdata locales \
     # tzdata package provides timezone database for TZ environment variable support \
     lib32gcc-s1 libglib2.0-0 libglib2.0-0:i386 libvulkan1 libvulkan1:i386 \
-    libnss3 libnss3:i386 libgconf-2-4 libgconf-2-4:i386 \
+    libnss3 libnss3:i386 \
     libfontconfig1 libfontconfig1:i386 libfreetype6 libfreetype6:i386 \
     libcups2 libcups2:i386 \
     gnupg2 ca-certificates \
     # Add X server packages for headless operation
     xvfb x11-xserver-utils xauth libgl1-mesa-dri libgl1-mesa-glx \
     # Add necessary libraries for Wine and VC++
-    libldap-2.5-0:i386 libldap-2.5-0 libgnutls30:i386 libgnutls30 \
+    libldap-2.6-0:i386 libldap-2.6-0 libgnutls30:i386 libgnutls30 \
     libxml2:i386 libxml2 libasound2:i386 libasound2 libpulse0:i386 libpulse0 \
     libopenal1:i386 libopenal1 libncurses6:i386 libncurses6 \
     # DO NOT ENABLE screen package - causes log display issues which is needed by the POK-manager.sh script
@@ -50,7 +50,7 @@ RUN set -ex; \
     # Setup WineHQ repository
     mkdir -pm755 /etc/apt/keyrings; \
     wget -O - https://dl.winehq.org/wine-builds/winehq.key | gpg --dearmor -o /etc/apt/keyrings/winehq-archive.key; \
-    wget -NP /etc/apt/sources.list.d/ https://dl.winehq.org/wine-builds/ubuntu/dists/jammy/winehq-jammy.sources; \
+    wget -NP /etc/apt/sources.list.d/ https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources; \
     apt-get update; \
     # Install latest stable Wine
     apt-get install -y --install-recommends winehq-stable; \

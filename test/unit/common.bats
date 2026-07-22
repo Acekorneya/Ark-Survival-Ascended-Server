@@ -75,11 +75,11 @@ load '../test_helper/project.bash'
   run env REPO_ROOT="$PROJECT_ROOT" PROTON_ROOT="$BATS_TEST_TMPDIR/proton-valid" bash -lc '
     set -e
     source "$REPO_ROOT/scripts/common.sh"
-    mkdir -p "$PROTON_ROOT/GE-Proton10-33"
-    printf "#!/bin/bash\n" > "$PROTON_ROOT/GE-Proton10-33/proton"
-    chmod +x "$PROTON_ROOT/GE-Proton10-33/proton"
-    ln -s "$PROTON_ROOT/GE-Proton10-33" "$PROTON_ROOT/GE-Proton-Current"
-    printf "GE-Proton10-33\n" > "$PROTON_ROOT/.pok-proton-version"
+    mkdir -p "$PROTON_ROOT/GE-Proton10-34"
+    printf "#!/bin/bash\n" > "$PROTON_ROOT/GE-Proton10-34/proton"
+    chmod +x "$PROTON_ROOT/GE-Proton10-34/proton"
+    ln -s "$PROTON_ROOT/GE-Proton10-34" "$PROTON_ROOT/GE-Proton-Current"
+    printf "GE-Proton10-34\n" > "$PROTON_ROOT/.pok-proton-version"
     POK_PROTON_BASE_DIR="$PROTON_ROOT"
     resolve_pinned_proton
     printf "version=%s\n" "$POK_PROTON_VERSION"
@@ -87,8 +87,8 @@ load '../test_helper/project.bash'
   '
 
   assert_success
-  assert_output --partial "version=GE-Proton10-33"
-  assert_output --partial "/GE-Proton10-33/proton"
+  assert_output --partial "version=GE-Proton10-34"
+  assert_output --partial "/GE-Proton10-34/proton"
 }
 
 @test "resolve_pinned_proton rejects a mismatched canonical target" {
@@ -98,7 +98,7 @@ load '../test_helper/project.bash'
     printf "#!/bin/bash\n" > "$PROTON_ROOT/GE-Proton8-21/proton"
     chmod +x "$PROTON_ROOT/GE-Proton8-21/proton"
     ln -s "$PROTON_ROOT/GE-Proton8-21" "$PROTON_ROOT/GE-Proton-Current"
-    printf "GE-Proton10-33\n" > "$PROTON_ROOT/.pok-proton-version"
+    printf "GE-Proton10-34\n" > "$PROTON_ROOT/.pok-proton-version"
     POK_PROTON_BASE_DIR="$PROTON_ROOT"
     if resolve_pinned_proton; then
       echo "result=unexpected-success"
