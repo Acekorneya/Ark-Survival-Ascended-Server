@@ -66,6 +66,90 @@ load '../test_helper/project.bash'
   [ "$(printf "%s\n" "$output" | grep -Ec "(Info|Debug)/GameAnalytics")" -eq 2 ]
 }
 
+@test "SDK multiline metrics are hidden while raw diagnostics and real messages survive" {
+  run env REPO_ROOT="$PROJECT_ROOT" BATS_TMP="$BATS_TEST_TMPDIR/sdk-filter" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/launch_ASA.sh"
+    mkdir -p "$BATS_TMP"
+    PROTON_RUNTIME_LOG="$BATS_TMP/proton.log"
+    cat > "$BATS_TMP/input.log" <<EOF
+Info/GameAnalytics : Sending events {
+    "MapName": "Aberration_WP",
+    "PeakPlayers": 0,
+    "PlayerHours": 0,
+    "UtcTime": "2026-10-01T15:33:34.016Z"
+}}
+    "AvgFPS": 30.3843,
+    "AvgGameThreadMs": 7.6753,
+    "MinFPS": 46.1759,
+    "UtcTime": "2026
+World Save Complete. Took: 0.49
+    "MapName": "Aberration_WP",
+    "PeakPlayers": 0,
+    "PlayerHours": 0
+}}
+    "GCMs": 0,
+    "GCs": 0
+}}
+    "SaveFrames": 0,
+    "SaveMs": 0
+}}
+    "IntervalSeconds": 60.0309,
+    "MapName": "Aberration_WP"
+}}
+    "AvailablePhysicalMB": 45910.78,
+    "UsedVirtualMB": 8531.
+    "AvgDpcPct": 0,
+    "WorstInterruptPct": 0
+}}
+    "BoxBusyPct": 38.8158,
+    "NeighbourCores": 11.9406
+}}
+    "BoxHardFaults": 0,
+    "ProcessPageFaultsPerSecond": 0
+}}
+    "Connections": 0,
+    "PingP50": 0,
+    "PingP
+wine: example actionable failure
+    "Kicks": 0,
+    "Timeouts": 0
+}}
+    "HitchLostMsSum": 0,
+    "ModerateHitches": 0
+}}
+Server has completed startup and is now advertising for join.
+{
+    "MapName": "unrelated diagnostic",
+    "Error": "keep this JSON"
+}
+10-01 14:06:18.111   204   708 W Warning/GameAnalytics : Available resource currencies must be set before SDK is initialized
+10-01 14:06:18.111   204   708 W Warning/GameAnalytics : Available resource item types must be set before SDK is initialized
+10-01 14:06:18.111   204   708 W Warning/GameAnalytics : SDK already initialized. Can only be called once.
+Error/GameAnalytics : upload failed
+Error/OtherSubsystem : keep this failure
+EOF
+    filter_proton_runtime_output < "$BATS_TMP/input.log" > "$BATS_TMP/console.log"
+    cmp "$BATS_TMP/input.log" "$PROTON_RUNTIME_LOG"
+    print_proton_runtime_diagnostics "$PROTON_RUNTIME_LOG" > "$BATS_TMP/summary.log"
+    cmp "$BATS_TMP/console.log" "$BATS_TMP/summary.log"
+    cat "$BATS_TMP/console.log"
+  '
+
+  assert_success
+  assert_line "World Save Complete. Took: 0.49"
+  assert_line "wine: example actionable failure"
+  assert_line "Server has completed startup and is now advertising for join."
+  assert_output --partial "keep this JSON"
+  assert_line "Error/OtherSubsystem : keep this failure"
+  refute_output --partial "/GameAnalytics"
+  refute_output --partial "AvgFPS"
+  refute_output --partial "Aberration_WP"
+  refute_output --partial "UtcTime"
+  refute_output --partial "PingP"
+  refute_output --partial "}}"
+}
+
 @test "AsaApi console filtering removes fixed startup boilerplate but keeps operational lines" {
   run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
     set -e
@@ -148,7 +232,7 @@ EOF
   assert_output --partial "second=advertising"
 }
 
-@test "start_log_tail filters GameAnalytics telemetry and follows log replacement" {
+@test "start_log_tail filters SDK payloads and follows log replacement without changing raw logs" {
   run env REPO_ROOT="$PROJECT_ROOT" bash -lc '
     set -e
     source "$REPO_ROOT/scripts/launch_ASA.sh"
@@ -159,7 +243,10 @@ EOF
     start_log_tail "$log_file" GAME_TAIL_PID shootergame > "$captured" 2>&1
     printf "%s\n" \
       "09-14 09:47:40.547 204 708 I Info/GameAnalytics : Event queue: No events to send" \
-      "09-14 09:48:04.649 204 708 D Debug/GameAnalytics : Sending events URL" >> "$log_file"
+      "09-14 09:48:04.649 204 708 D Debug/GameAnalytics : Sending events URL" \
+      "    \"AvgGameThreadMs\": 7.6753," \
+      "    \"UtcTime\": \"2026-10-01T15:33:34.016Z\"" \
+      "}}" >> "$log_file"
     printf "%s\n" "Commandline: Map?ServerPassword=joinSecret?ServerAdminPassword=adminSecret! -Port=7777" >> "$log_file"
 
     for _ in $(seq 1 50); do
@@ -169,6 +256,7 @@ EOF
       sleep 0.1
     done
 
+    grep -Fq "AvgGameThreadMs" "$log_file"
     mv "$log_file" "$log_file.previous"
     printf "%s\n" "Server has completed startup and is now advertising for join" > "$log_file"
     for _ in $(seq 1 50); do
@@ -195,6 +283,9 @@ EOF
   assert_output --partial "Server has completed startup and is now advertising for join"
   refute_output --partial "Info/GameAnalytics"
   refute_output --partial "Debug/GameAnalytics"
+  refute_output --partial "AvgGameThreadMs"
+  refute_output --partial "UtcTime"
+  refute_output --partial "}}"
   assert_output --partial "tail-stopped"
 }
 
