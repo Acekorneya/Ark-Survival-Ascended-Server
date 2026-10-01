@@ -1,5 +1,5 @@
 ## Version 2.1.82 (Latest)
-- Hid routine Studio Wildcard `Info/GameAnalytics` and `Debug/GameAnalytics` SDK telemetry from Docker logs while retaining complete ShooterGame and Proton diagnostic logs on disk.
+- Hid GameAnalytics messages at every severity (including SDK initialization warnings) and multiline SDK telemetry metric payloads from ShooterGame console mirroring, Proton output, and failure summaries while preserving raw logs for later analysis.
 - Upgraded the container to Ubuntu 24.04 and pinned GE-Proton 10-34 for current Linux runtime and certificate support.
 - Fixed ASA and AsaApi startup under Proton by using one real Proton-managed prefix instead of mixing distro Wine, fake registry files, and placeholder DLLs.
 - Fixed server launches that stalled inside Proton by using the prepared prefix directly for both API and non-API modes.

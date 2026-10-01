@@ -26,32 +26,68 @@ proton_output_is_direct_launch_hook_warning() {
 console_output_is_gameanalytics_telemetry() {
   local line="$1"
 
-  [[ "$line" =~ (Info|Debug)/GameAnalytics[[:space:]]*: ]]
+  [[ "$line" =~ [[:alpha:]]+/GameAnalytics[[:space:]]*: ]]
+}
+
+console_output_is_sdk_metric() {
+  local line="$1"
+  # Recognize payload fragments even if their SDK header was truncated. Keep
+  # shared names such as MapName/Players out of this fallback so unrelated JSON
+  # is preserved unless it follows an identified telemetry header or metric.
+  local metric_keys='AvgFPS|MinFPS|AvgGameThreadMs|MaxGameThreadMs|Frames|IntervalSeconds|GCMs|GCMsPerGC|GCs|SaveFrames|SaveMs|AvailablePhysicalMB|PeakUsedPhysicalMB|TotalPhysicalMB|UsedPhysicalMB|UsedVirtualMB|AvgDpcPct|AvgInterruptPct|Cpus|InterruptStolenMs|WorstCpu|WorstDpcPct|WorstInterruptPct|BoxBusyPct|NeighbourCores|NeighbourPct|ProcessCores|BoxHardFaults|BoxHardFaultsPerSecond|BoxPageFaults|ProcessPageFaults|ProcessPageFaultsPerSecond|Connections|InBytesPerSecond|InLossPctAvg|InPacketsLost|OutBytesPerSecond|OutBytesPerSecondPerPlayer|OutLossPctAvg|OutLossPctMax|OutPacketsLost|OutPacketsPerSecond|PingMax|PingP50|PingP95|Kicks|Logouts|OtherFailures|Timeouts|ExtremeHitches|HitchLostMsSum|HitchLostPct|HitchMsSum|HitchTimePercent|Hitches|HitchesPerMinute|MinorHitches|ModerateHitches|PeakPlayers|PlayerHours|UptimeHours'
+
+  [[ "$line" =~ ^[[:space:]]*\"($metric_keys)\"[[:space:]]*: ]]
 }
 
 filter_game_console_output() {
-  local line=""
+  local line="" telemetry=false pending_metadata=""
+  local json_field='^[[:space:]]*"[^"]+"[[:space:]]*:'
+  local metric_metadata='^[[:space:]]*"(MapName|Players|ServerName|UptimeSeconds|UtcTime)"[[:space:]]*:'
+  local json_partial_key='^[[:space:]]*"[^"]*$'
+  local json_open='^[[:space:]]*(\{|\[)+[[:space:]]*$'
+  local json_close='^[[:space:]]*(\}|\])+[[:space:],]*$'
 
   while IFS= read -r line || [ -n "$line" ]; do
-    console_output_is_gameanalytics_telemetry "$line" && continue
+    if console_output_is_gameanalytics_telemetry "$line" || console_output_is_sdk_metric "$line"; then
+      telemetry=true
+      pending_metadata=""
+      continue
+    fi
+    if [ "$telemetry" = true ]; then
+      # Payloads can be cut off mid-value. Do not require valid JSON or wait
+      # for a closing brace: an ordinary log line always ends suppression.
+      if [[ "$line" =~ $json_field || "$line" =~ $json_partial_key || "$line" =~ $json_open ]]; then
+        continue
+      fi
+      if [[ "$line" =~ $json_close ]]; then
+        telemetry=false
+        continue
+      fi
+      telemetry=false
+    fi
+    # Some SDK blocks start with metadata before their first metric. Hold
+    # just those lines until the next line identifies telemetry or normal JSON.
+    if [[ "$line" =~ $metric_metadata ]]; then
+      pending_metadata+="$line"$'\n'
+      continue
+    fi
+    printf '%s' "$pending_metadata"
+    pending_metadata=""
     printf '%s\n' "$line"
   done
+  printf '%s' "$pending_metadata"
 }
 
 filter_proton_runtime_output() {
   local line=""
   local diagnostic_log="${PROTON_RUNTIME_LOG:-/home/pok/logs/proton_runtime.log}"
 
+  # Record before filtering so SDK metrics remain available for diagnostics.
   while IFS= read -r line || [ -n "$line" ]; do
     printf '%s\n' "$line" >> "$diagnostic_log"
-    if proton_output_is_direct_launch_hook_warning "$line"; then
-      continue
-    fi
-    if console_output_is_gameanalytics_telemetry "$line"; then
-      continue
-    fi
+    proton_output_is_direct_launch_hook_warning "$line" && continue
     printf '%s\n' "$line"
-  done
+  done | filter_game_console_output
 }
 
 print_proton_runtime_diagnostics() {
@@ -63,9 +99,8 @@ print_proton_runtime_diagnostics() {
   filtered_log=$(mktemp "${TMPDIR:-/tmp}/pok-proton-diagnostics.XXXXXX") || return 1
   while IFS= read -r line || [ -n "$line" ]; do
     proton_output_is_direct_launch_hook_warning "$line" && continue
-    console_output_is_gameanalytics_telemetry "$line" && continue
-    printf '%s\n' "$line" >> "$filtered_log"
-  done < "$diagnostic_log"
+    printf '%s\n' "$line"
+  done < "$diagnostic_log" | filter_game_console_output > "$filtered_log"
   tail -20 "$filtered_log"
   rm -f "$filtered_log"
 }
@@ -98,7 +133,7 @@ start_log_tail() {
     tail -n +1 -F "$log_file" > >(filter_asaapi_console_output) &
   elif [ "$output_mode" = "shootergame" ]; then
     # ShooterGame.log remains complete on disk while routine built-in
-    # GameAnalytics telemetry is omitted from the container console.
+    # GameAnalytics headers and SDK metric payloads are omitted from the console.
     tail -n +1 -F "$log_file" > >(filter_game_console_output) &
   else
     tail -n +1 -F "$log_file" &
