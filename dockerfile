@@ -198,7 +198,7 @@ USER pok
 WORKDIR /home/pok
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30m --retries=3 \
-  CMD curl -fsS "http://127.0.0.1:${HEALTHCHECK_PORT}/healthz" >/dev/null || exit 1
+  CMD curl -fsS "http://127.0.0.1:${HEALTHCHECK_PORT:-8080}/healthz" >/dev/null || exit 1
 
 # Use tini as the entrypoint  
 ENTRYPOINT ["/tini", "--", "/home/pok/scripts/init.sh"]

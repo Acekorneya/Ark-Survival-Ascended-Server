@@ -291,3 +291,75 @@ load '../test_helper/project.bash'
   assert_success
   assert_output --partial "result=allowed"
 }
+
+@test "sync_temp_into_live_dir moves staged files on the same filesystem and persist_manifest_from_temp handles moved manifests" {
+  run env REPO_ROOT="$PROJECT_ROOT" BATS_TMP="$BATS_TEST_TMPDIR/sync-same-fs" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/common.sh"
+    APPID=2430930
+    ASA_DIR="$BATS_TMP/live"
+    PERSISTENT_ACF_FILE="$ASA_DIR/appmanifest_${APPID}.acf"
+    STAGED_DIR="$ASA_DIR/.pok-manager/update/staging/run1"
+    mkdir -p "$STAGED_DIR/ShooterGame/Binaries/Win64" "$STAGED_DIR/ShooterGame/Saved" "$STAGED_DIR/steamapps/downloading"
+    mkdir -p "$ASA_DIR/ShooterGame/Saved"
+    printf "new-binary\n" > "$STAGED_DIR/ShooterGame/Binaries/Win64/ArkAscendedServer.exe"
+    printf "staged-save\n" > "$STAGED_DIR/ShooterGame/Saved/TheIsland.ark"
+    printf "live-save\n" > "$ASA_DIR/ShooterGame/Saved/TheIsland.ark"
+    printf "partial\n" > "$STAGED_DIR/steamapps/downloading/tmp.bin"
+    printf "\"buildid\" \"99999\"\n" > "$STAGED_DIR/steamapps/appmanifest_${APPID}.acf"
+
+    src_inode=$(stat -c "%i" "$STAGED_DIR/ShooterGame/Binaries/Win64/ArkAscendedServer.exe")
+    sync_temp_into_live_dir "$STAGED_DIR" "$ASA_DIR"
+    persist_manifest_from_temp "$STAGED_DIR"
+
+    dest_inode=$(stat -c "%i" "$ASA_DIR/ShooterGame/Binaries/Win64/ArkAscendedServer.exe")
+    [ "$src_inode" = "$dest_inode" ] && echo "same-inode=yes"
+    [ ! -e "$STAGED_DIR/ShooterGame/Binaries/Win64/ArkAscendedServer.exe" ] && echo "moved-out=yes"
+    echo "save=$(cat "$ASA_DIR/ShooterGame/Saved/TheIsland.ark")"
+    [ ! -e "$ASA_DIR/steamapps/downloading/tmp.bin" ] && echo "downloading-skipped=yes"
+    grep -q "99999" "$PERSISTENT_ACF_FILE" && echo "persistent-manifest=yes"
+    grep -q "99999" "$ASA_DIR/steamapps/appmanifest_${APPID}.acf" && echo "live-manifest=yes"
+  '
+
+  assert_success
+  assert_output --partial "same filesystem"
+  assert_output --partial "same-inode=yes"
+  assert_output --partial "moved-out=yes"
+  assert_output --partial "save=live-save"
+  assert_output --partial "downloading-skipped=yes"
+  assert_output --partial "persistent-manifest=yes"
+  assert_output --partial "live-manifest=yes"
+}
+
+@test "sync_temp_into_live_dir falls back to cp when staging and live are on different filesystems" {
+  run env REPO_ROOT="$PROJECT_ROOT" BATS_TMP="$BATS_TEST_TMPDIR/sync-cross-fs" bash -lc '
+    set -e
+    source "$REPO_ROOT/scripts/common.sh"
+    ASA_DIR="$BATS_TMP/live"
+    STAGED_DIR="$BATS_TMP/staged"
+    mkdir -p "$STAGED_DIR/ShooterGame/Binaries/Win64" "$ASA_DIR"
+    printf "payload\n" > "$STAGED_DIR/ShooterGame/Binaries/Win64/ArkAscendedServer.exe"
+
+    stat() {
+      if [ "$1" = "-c" ] && [ "$2" = "%d" ]; then
+        if [ "$3" = "$STAGED_DIR" ]; then
+          echo "101"
+          return 0
+        elif [ "$3" = "$ASA_DIR" ]; then
+          echo "202"
+          return 0
+        fi
+      fi
+      command stat "$@"
+    }
+
+    sync_temp_into_live_dir "$STAGED_DIR" "$ASA_DIR"
+    [ -f "$STAGED_DIR/ShooterGame/Binaries/Win64/ArkAscendedServer.exe" ] && echo "source-kept=yes"
+    [ -f "$ASA_DIR/ShooterGame/Binaries/Win64/ArkAscendedServer.exe" ] && echo "dest-copied=yes"
+  '
+
+  assert_success
+  assert_output --partial "cross-filesystem"
+  assert_output --partial "source-kept=yes"
+  assert_output --partial "dest-copied=yes"
+}
