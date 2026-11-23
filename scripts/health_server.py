@@ -6,8 +6,8 @@ import subprocess
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
-HEALTH_HOST = os.environ.get("HEALTHCHECK_HOST", "0.0.0.0")
-HEALTH_PORT = int(os.environ.get("HEALTHCHECK_PORT", "8080"))
+HEALTH_HOST = os.environ.get("HEALTHCHECK_HOST") or "0.0.0.0"
+HEALTH_PORT = int((os.environ.get("HEALTHCHECK_PORT") or "8080").strip())
 PROBE_SCRIPT = os.environ.get("HEALTHCHECK_PROBE_SCRIPT", "/home/pok/scripts/health_probe.sh")
 PROBE_TIMEOUT = float(os.environ.get("HEALTHCHECK_PROBE_TIMEOUT", "10"))
 

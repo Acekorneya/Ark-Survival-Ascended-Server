@@ -807,3 +807,122 @@ EOF
   assert_output --partial "beta=      - UPDATE_COORDINATION_ROLE=MASTER"
   assert_output --partial "beta_priority=      - UPDATE_COORDINATION_PRIORITY=1"
 }
+
+@test "write_docker_compose_file and read_docker_compose_config round-trip host network mode and HEALTHCHECK_PORT" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/host-network-roundtrip" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    source "$REPO_ROOT/POK-manager.sh"
+    TZ="UTC"
+    PUID=7777
+    PGID=7777
+    chmod() { :; }
+    chown() { :; }
+    get_docker_image_tag() { echo "2_1_beta"; }
+    declare -A config_values=(
+      ["Memory Limit"]="16G"
+      ["BattleEye"]="FALSE"
+      ["API"]="FALSE"
+      ["RCON Enabled"]="TRUE"
+      ["POK Monitor Message"]="FALSE"
+      ["Random Startup Delay"]="TRUE"
+      ["CPU Optimization"]="FALSE"
+      ["Update Server"]="TRUE"
+      ["Update Interval"]="24"
+      ["Update Window Start"]="12:00 AM"
+      ["Update Window End"]="11:59 PM"
+      ["Restart Notice"]="30"
+      ["Save Wait Seconds"]="60"
+      ["MOTD Enabled"]="FALSE"
+      ["MOTD"]=""
+      ["MOTD Duration"]="30"
+      ["Map Name"]="TheIsland"
+      ["Session Name"]="Demo"
+      ["Admin Password"]="secret"
+      ["Server Password"]=""
+      ["ASA Port"]="7779"
+      ["RCON Port"]="27021"
+      ["Network Mode"]="host"
+      ["Healthcheck Port"]="8081"
+      ["Max Players"]="70"
+      ["Show Admin Commands In Chat"]="FALSE"
+      ["Cluster ID"]="cluster"
+      ["Mod IDs"]=""
+      ["Passive Mods"]=""
+      ["Custom Server Args"]=""
+    )
+    write_docker_compose_file demo
+    compose="$BASE_DIR/Instance_demo/docker-compose-demo.yaml"
+    grep "network_mode: host" "$compose"
+    grep "HEALTHCHECK_PORT=8081" "$compose"
+    if grep -q "^[[:space:]]*ports:" "$compose"; then
+      echo "ports_present=yes"
+    else
+      echo "ports_present=no"
+    fi
+
+    yq() {
+      if [ "${1:-}" = "--version" ]; then
+        echo "yq (https://github.com/mikefarah/yq/) version v4.9.8"
+        return 0
+      fi
+      if [ "${1:-}" = "e" ] && [ "${2:-}" = "-n" ]; then
+        echo "probe: ok"
+        return 0
+      fi
+      local expr="$2"
+      local file="$3"
+      case "$expr" in
+        ".services.asaserver.environment[]")
+          grep "^      - " "$file" | sed "s/^      - //"
+          ;;
+        ".services.asaserver.mem_limit")
+          awk "/mem_limit:/ { print \$2 }" "$file"
+          ;;
+        ".services.asaserver.network_mode // \"\"")
+          awk "/network_mode:/ { print \$2 }" "$file"
+          ;;
+      esac
+    }
+    unset config_values
+    declare -A config_values=()
+    read_docker_compose_config demo
+    echo "read_network=${config_values[Network Mode]}"
+    echo "read_health=${config_values[Healthcheck Port]}"
+  '
+
+  assert_success
+  assert_output --partial "network_mode: host"
+  assert_output --partial "HEALTHCHECK_PORT=8081"
+  assert_output --partial "ports_present=no"
+  assert_output --partial "read_network=host"
+  assert_output --partial "read_health=8081"
+}
+
+@test "add_steam_creds_to_compose inserts credentials before network_mode when ports block is omitted" {
+  run env REPO_ROOT="$PROJECT_ROOT" BASE_DIR="$BATS_TEST_TMPDIR/steam-host-net" POK_MANAGER_TEST_MODE=1 bash -lc '
+    set -e
+    mkdir -p "$BASE_DIR/Instance_demo"
+    cat > "$BASE_DIR/Instance_demo/docker-compose-demo.yaml" <<'"'"'EOF'"'"'
+version: "2.4"
+services:
+  asaserver:
+    environment:
+      - INSTANCE_NAME=demo
+      - HEALTHCHECK_PORT=8081
+    network_mode: host
+    volumes:
+      - "./ServerFiles/arkserver:/home/pok/arkserver"
+EOF
+    source "$REPO_ROOT/POK-manager.sh"
+    add_steam_creds_to_compose \
+      "$BASE_DIR/Instance_demo/docker-compose-demo.yaml" \
+      "lanuser" \
+      "lanpass"
+    cat "$BASE_DIR/Instance_demo/docker-compose-demo.yaml"
+  '
+
+  assert_success
+  assert_output --partial "'STEAM_USERNAME=lanuser'"
+  assert_output --partial "'STEAM_PASSWORD=lanpass'"
+  assert_output --partial "network_mode: host"
+}

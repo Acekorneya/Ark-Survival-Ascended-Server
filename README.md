@@ -287,7 +287,7 @@ You can always switch back to the stable branch with:
 
 The container now includes a built-in internal health endpoint:
 
-- `GET /healthz` on port `8080`
+- `GET /healthz` on port `8080` by default (configurable via `HEALTHCHECK_PORT`)
 - not published by default in generated Docker Compose files
 - Docker image health status is reported automatically through the image `HEALTHCHECK`
 
@@ -318,7 +318,17 @@ livenessProbe:
   failureThreshold: 3
 ```
 
-Because the endpoint is built into the image, v1 does not require any new `POK-manager.sh` settings or generated Compose fields.
+Because the endpoint is built into the image, it works out of the box on port `8080` and can be reassigned per instance via `HEALTHCHECK_PORT`.
+
+## Host Networking for LAN Play and Cluster Transfers
+
+By default, containers use Docker bridge networking. When players connect from the same LAN without NAT hairpinning, the ARK server inside a bridge container only sees its internal Docker IP (`172.x.x.x`) and advertises that address to EOS, which can cause server-browser joins and in-game cluster transfers to time out.
+
+To advertise the host's LAN IP directly, configure the instance with `Network Mode: host` (which writes `network_mode: host` and omits the `ports:` block):
+
+- During `./POK-manager.sh -create <name>`, set `Network Mode` to `host` and choose a unique `Healthcheck Port` (`HEALTHCHECK_PORT`) for each instance on the same host (for example `8080`, `8081`, `8082`).
+- For existing instances, edit `docker-compose-<name>.yaml` to replace the `ports:` block with `network_mode: host` and set a unique `ASA_PORT`, `RCON_PORT`, and `HEALTHCHECK_PORT` on every instance sharing the host.
+- Do not pass `-MULTIHOME=<host LAN IP>` in Docker bridge mode; the container does not own the host LAN address.
 
 ### Installation Tips for Different User Types
 
@@ -832,7 +842,7 @@ To enable AsaApi on your server:
 
 When you enable the API feature:
 
-1. POK-manager installs the tested AsaApi 2.03 release and verifies its official SHA-256 checksum.
+1. POK-manager installs the tested AsaApi 2.11 release and verifies its official SHA-256 checksum.
 2. The verified release archive is retained in the shared server files for reliable reinstalls and custom-version rollback.
 3. Before Wine starts, native Linux `curl` downloads the cache matching the SHA-256 of `ArkAscendedServer.exe`.
 4. POK validates the archive, both serialized cache maps, and the core offsets required by the tested AsaApi release, then installs the cache atomically. The optional `cached_offsets.txt` diagnostic index is retained with the selected cache generation. AsaApi's Windows HTTPS downloader is disabled only after validation succeeds.
@@ -862,7 +872,7 @@ Advanced users can override the tested release by extracting a complete AsaApi r
 
 The directory must contain the release root, including `AsaApiLoader.exe`, `ArkApi/AsaApi.dll`, and `config.json`. While the directory exists, POK uses those files without overwriting them and leaves that version's cache behavior unchanged. Custom releases are unsupported and may fail under Wine.
 
-Remove `AsaApi_Custom` and restart the instance to restore the checksum-verified AsaApi 2.03 release automatically.
+Remove `AsaApi_Custom` and restart the instance to restore the checksum-verified AsaApi 2.11 release automatically.
 
 ### Special Handling for API Mode Restarts
 
@@ -993,7 +1003,7 @@ If you encounter issues with AsaApi or plugins:
    - Plugin compatibility: Some plugins may not work with our Linux/Proton setup or with the current version of ARK
    - `starting: waiting for AsaApi cache`: POK is safely checking the native cache for the current ARK executable. A detailed `starting: AsaApi cache ... is unusable` message identifies an executable-specific missing core offset; the server will start automatically only after the CDN publishes a compatible cache. Network-only failures should be investigated against `cdn.pelayori.com`.
    - Missing core offset after an ARK update: use `./POK-manager.sh -rollback -all` to stage and validate the last known-good server depot before the shared verified restart.
-   - Invalid custom override: Ensure `AsaApi_Custom` contains the complete release root and is readable by container UID/GID 7777, or remove the directory to restore managed 2.03.
+   - Invalid custom override: Ensure `AsaApi_Custom` contains the complete release root and is readable by container UID/GID 7777, or remove the directory to restore managed 2.11.
 
 5. If the API still doesn't work, try reinstalling it:
    ```bash

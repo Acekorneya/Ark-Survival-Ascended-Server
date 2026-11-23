@@ -20,9 +20,9 @@ import time
 import zipfile
 
 
-BASE_VERSION = "2.03"
-BASE_URL = "https://github.com/ArkServerApi/AsaApi/releases/download/2.03/AsaApi_2.03.zip"
-BASE_SHA256 = "ac72fb29436198ac062cd273e1c496b1ef4e6ffddeec08243d11d9b35e8b8ae3"
+BASE_VERSION = "2.11"
+BASE_URL = "https://github.com/ArkServerApi/AsaApi/releases/download/2.11/AsaApi_2.11.zip"
+BASE_SHA256 = "64f5f1165ef73f3439bba3794e77e379489167cc385c0ac5c4717ca60ad3e88a"
 DEFAULT_CACHE_URL = "https://cdn.pelayori.com/cache/"
 
 EXIT_RETRY = 10

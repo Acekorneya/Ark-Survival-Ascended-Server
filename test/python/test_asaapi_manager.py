@@ -73,7 +73,7 @@ class AsaApiManagerTests(unittest.TestCase):
         self.state_dir = self.root / "state"
         self.bin_dir.mkdir()
         self.state_dir.mkdir()
-        self.release = self.root / "AsaApi_2.03.zip"
+        self.release = self.root / "AsaApi_2.11.zip"
         self.release_sha = release_archive(self.release)
 
     def tearDown(self) -> None:
@@ -83,7 +83,7 @@ class AsaApiManagerTests(unittest.TestCase):
         return types.SimpleNamespace(
             bin_dir=self.bin_dir,
             state_dir=self.state_dir,
-            base_version="2.03",
+            base_version="2.11",
             base_url=self.release.as_uri(),
             base_sha256=self.release_sha,
         )
@@ -115,11 +115,11 @@ class AsaApiManagerTests(unittest.TestCase):
         state = json.loads((self.state_dir / "source.json").read_text(encoding="utf-8"))
         installed_config = json.loads((self.bin_dir / "config.json").read_text(encoding="utf-8"))
         self.assertEqual(state["source"], "managed")
-        self.assertEqual(state["version"], "2.03")
+        self.assertEqual(state["version"], "2.11")
         self.assertEqual(installed_config["settings"]["UserSetting"], 42)
-        self.assertEqual((self.bin_dir / ".asaapi_version").read_text().strip(), "2.03")
+        self.assertEqual((self.bin_dir / ".asaapi_version").read_text().strip(), "2.11")
         self.assertEqual(
-            hashlib.sha256((self.state_dir / "AsaApi_2.03.zip").read_bytes()).hexdigest(),
+            hashlib.sha256((self.state_dir / "AsaApi_2.11.zip").read_bytes()).hexdigest(),
             self.release_sha,
         )
 

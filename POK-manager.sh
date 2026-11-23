@@ -349,6 +349,8 @@ declare -a config_order=(
     "Server Password"
     "ASA Port"
     "RCON Port"
+    "Network Mode"
+    "Healthcheck Port"
     "Max Players"
     "Show Admin Commands In Chat"
     "Cluster ID"
@@ -381,6 +383,8 @@ declare -A default_config_values=(
     ["Server Password"]=
     ["ASA Port"]=""7777""
     ["RCON Port"]="27020"
+    ["Network Mode"]="bridge"
+    ["Healthcheck Port"]="8080"
     ["Max Players"]="70"
     ["Show Admin Commands In Chat"]="FALSE"
     ["Cluster ID"]="cluster"
@@ -423,6 +427,23 @@ validate_save_wait_seconds() {
   local input=$1
   while ! [[ "$input" =~ ^[0-9]+$ ]] || [ "$input" -lt 1 ] || [ "$input" -gt 900 ]; do
     read -rp "Invalid input. Please enter a whole number between 1 and 900 seconds: " input
+  done
+  echo "$input"
+}
+
+validate_network_mode() {
+  local input="${1,,}"
+  while ! [[ "$input" =~ ^(bridge|host)$ ]]; do
+    read -rp "Invalid input. Please enter 'bridge' or 'host': " input
+    input="${input,,}"
+  done
+  echo "$input"
+}
+
+validate_port_number() {
+  local input="$1"
+  while ! [[ "$input" =~ ^[0-9]+$ ]] || [ "$input" -lt 1 ] || [ "$input" -gt 65535 ]; do
+    read -rp "Invalid input. Please enter a port number between 1 and 65535: " input
   done
   echo "$input"
 }
@@ -520,6 +541,12 @@ prompt_for_input() {
       ;;
     "Update Interval"|"Max Players"|"Restart Notice"|"MOTD Duration"|"ASA Port"|"RCON Port")
       config_values[$config_key]=$(validate_number "$user_input")
+      ;;
+    "Network Mode")
+      config_values[$config_key]=$(validate_network_mode "$user_input")
+      ;;
+    "Healthcheck Port")
+      config_values[$config_key]=$(validate_port_number "$user_input")
       ;;
     "Save Wait Seconds")
       config_values[$config_key]=$(validate_save_wait_seconds "$user_input")
@@ -1698,7 +1725,7 @@ add_steam_creds_to_compose() {
       ;;
     esac
 
-    if [ "$inserted" = false ] && [[ "$line" =~ ^[[:space:]]*ports: ]]; then
+    if [ "$inserted" = false ] && [[ "$line" =~ ^[[:space:]]*(ports|network_mode|volumes): ]]; then
       _compose_write_steam_env_lines "$tmp_file" "$username" "$password"
       inserted=true
     fi
@@ -1861,6 +1888,7 @@ read_docker_compose_config() {
     "SERVER_PASSWORD") config_key="Server Password" ;;
     "ASA_PORT") config_key="ASA Port" ;;
     "RCON_PORT") config_key="RCON Port" ;;
+    "HEALTHCHECK_PORT") config_key="Healthcheck Port" ;;
     "MAX_PLAYERS") config_key="Max Players" ;;
     "SHOW_ADMIN_COMMANDS_IN_CHAT") config_key="Show Admin Commands In Chat" ;;      
     "CLUSTER_ID") config_key="Cluster ID" ;;
@@ -1877,8 +1905,9 @@ read_docker_compose_config() {
     config_values[$config_key]="$value"
   done
 
-  # Separately parse the mem_limit
+  # Separately parse the mem_limit and network_mode
   local mem_limit
+  local network_mode
   local yq_bin
   yq_bin="$(require_yq_bin)" || return 1
   mem_limit=$("$yq_bin" e '.services.asaserver.mem_limit' "$docker_compose_file")
@@ -1886,6 +1915,17 @@ read_docker_compose_config() {
     # Assuming you want to strip the last character (G) and store just the numeric part
     # If you want to keep the 'G', remove the `${mem_limit%?}` manipulation
     config_values["Memory Limit"]="${mem_limit}" 
+  fi
+
+  network_mode=$("$yq_bin" e '.services.asaserver.network_mode // ""' "$docker_compose_file")
+  if [[ "${network_mode,,}" == "host" ]]; then
+    config_values["Network Mode"]="host"
+  else
+    config_values["Network Mode"]="bridge"
+  fi
+
+  if [ -z "${config_values["Healthcheck Port"]:-}" ]; then
+    config_values["Healthcheck Port"]="8080"
   fi
 }
 
@@ -1898,10 +1938,25 @@ write_docker_compose_file() {
   local image_tag=$(get_docker_image_tag "$instance_name")
   local save_wait_seconds
   local stop_grace_seconds
+  local network_mode
+  local healthcheck_port
 
   save_wait_seconds=$(_sanitize_save_wait_seconds "${config_values["Save Wait Seconds"]:-60}" "instance ${instance_name}")
   config_values["Save Wait Seconds"]="$save_wait_seconds"
   stop_grace_seconds=$((2 * save_wait_seconds + 90))
+
+  network_mode="${config_values["Network Mode"]:-bridge}"
+  network_mode="${network_mode,,}"
+  if [[ "$network_mode" != "host" ]]; then
+    network_mode="bridge"
+  fi
+  config_values["Network Mode"]="$network_mode"
+
+  healthcheck_port="${config_values["Healthcheck Port"]:-8080}"
+  if ! [[ "$healthcheck_port" =~ ^[0-9]+$ ]] || [ "$healthcheck_port" -lt 1 ] || [ "$healthcheck_port" -gt 65535 ]; then
+    healthcheck_port="8080"
+  fi
+  config_values["Healthcheck Port"]="$healthcheck_port"
 
   # Ensure the instance directory exists
   mkdir -p "${instance_dir}"
@@ -1963,6 +2018,7 @@ EOF
       "Server Password") env_key="SERVER_PASSWORD" ;;
       "ASA Port") env_key="ASA_PORT" ;;
       "RCON Port") env_key="RCON_PORT" ;;
+      "Healthcheck Port") env_key="HEALTHCHECK_PORT" ;;
       "Show Admin Commands In Chat") env_key="SHOW_ADMIN_COMMANDS_IN_CHAT" ;;      
       "Max Players") env_key="MAX_PLAYERS" ;;
       "Cluster ID") env_key="CLUSTER_ID" ;;
@@ -1972,8 +2028,8 @@ EOF
       *) env_key="$key" ;; # Default case if the mapping is direct
     esac
     
-    # Write the environment variable to the Docker Compose file, skipping Memory Limit
-    if [[ "$key" != "Memory Limit" ]]; then
+    # Write the environment variable to the Docker Compose file, skipping service-level keys
+    if [[ "$key" != "Memory Limit" && "$key" != "Network Mode" ]]; then
       echo "      - $env_key=${config_values[$key]}" >> "$docker_compose_file"
     fi
   done
@@ -1991,7 +2047,15 @@ EOF
   fi
 
   # Continue writing the rest of the Docker Compose configuration
-cat >> "$docker_compose_file" <<-EOF
+  if [[ "$network_mode" == "host" ]]; then
+    cat >> "$docker_compose_file" <<-EOF
+    network_mode: host
+    volumes:
+      - "${base_dir}/ServerFiles/arkserver:/home/pok/arkserver"
+      - "${instance_dir}/Saved:/home/pok/arkserver/ShooterGame/Saved"
+EOF
+  else
+    cat >> "$docker_compose_file" <<-EOF
     ports:
       - "${config_values[ASA Port]}:${config_values[ASA Port]}/tcp"
       - "${config_values[ASA Port]}:${config_values[ASA Port]}/udp"
@@ -2000,6 +2064,7 @@ cat >> "$docker_compose_file" <<-EOF
       - "${base_dir}/ServerFiles/arkserver:/home/pok/arkserver"
       - "${instance_dir}/Saved:/home/pok/arkserver/ShooterGame/Saved"
 EOF
+  fi
 
   # Check if API is enabled and only add API_Logs volume if it is
   if grep -q "^ *- API=TRUE" "$docker_compose_file" || grep -q "^ *- API:TRUE" "$docker_compose_file"; then
@@ -2035,6 +2100,10 @@ EOF
 
   echo "Created Docker Compose file: $docker_compose_file"
   echo "Using Docker image with tag: ${image_tag}"
+  if [[ "$network_mode" == "host" ]]; then
+    echo "ℹ️ Host networking enabled (network_mode: host; ports block omitted)."
+    echo "   For multiple instances on the same host, give each instance a unique ASA_PORT, RCON_PORT, and HEALTHCHECK_PORT."
+  fi
   
   # Display information about file ownership and container permissions
   if [[ "$image_tag" == 2_0* ]]; then

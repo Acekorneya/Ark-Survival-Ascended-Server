@@ -980,7 +980,17 @@ sync_temp_into_live_dir() {
     fi
   fi
 
-  echo "[INFO] Syncing temporary download into $live_dir using cp"
+  local src_dev=""
+  local dest_dev=""
+  local use_mv=false
+  src_dev=$(stat -c '%d' "$temp_dir" 2>/dev/null || true)
+  dest_dev=$(stat -c '%d' "$live_dir" 2>/dev/null || true)
+  if [ -n "$src_dev" ] && [ "$src_dev" = "$dest_dev" ]; then
+    use_mv=true
+    echo "[INFO] Moving temporary download into $live_dir (same filesystem)"
+  else
+    echo "[INFO] Syncing temporary download into $live_dir using cp (cross-filesystem)"
+  fi
   local sync_failure=0
 
   while IFS= read -r -d '' item; do
@@ -999,7 +1009,7 @@ sync_temp_into_live_dir() {
     local source_path="$temp_dir/$relative"
     local dest_path="$live_dir/$relative"
 
-    if [ -d "$source_path" ]; then
+    if [ -d "$source_path" ] && [ ! -L "$source_path" ]; then
       if ! mkdir -p "$dest_path"; then
         echo "[ERROR] Failed to create directory $dest_path (check permissions)"
         sync_failure=1
@@ -1014,9 +1024,16 @@ sync_temp_into_live_dir() {
         continue
       fi
 
-      if ! cp -f "$source_path" "$dest_path"; then
-        echo "[ERROR] Failed to copy $source_path to $dest_path (check permissions)"
-        sync_failure=1
+      if [ "$use_mv" = true ]; then
+        if ! mv -f -- "$source_path" "$dest_path"; then
+          echo "[ERROR] Failed to move $source_path to $dest_path (check permissions)"
+          sync_failure=1
+        fi
+      else
+        if ! cp -f -- "$source_path" "$dest_path"; then
+          echo "[ERROR] Failed to copy $source_path to $dest_path (check permissions)"
+          sync_failure=1
+        fi
       fi
     fi
   done < <(cd "$temp_dir" && find . -print0)
@@ -1033,17 +1050,24 @@ sync_temp_into_live_dir() {
 persist_manifest_from_temp() {
   local temp_dir="$1"
   local manifest_source="$temp_dir/steamapps/appmanifest_${APPID}.acf"
+  local live_manifest="$ASA_DIR/steamapps/appmanifest_${APPID}.acf"
+
+  if [ ! -f "$manifest_source" ] && [ -f "$live_manifest" ]; then
+    manifest_source="$live_manifest"
+  fi
 
   if [ ! -f "$manifest_source" ]; then
-    echo "[ERROR] Manifest file not found at $manifest_source"
+    echo "[ERROR] Manifest file not found at $temp_dir/steamapps/appmanifest_${APPID}.acf"
     return 1
   fi
 
   mkdir -p "$ASA_DIR/steamapps" 2>/dev/null || true
 
   echo "[INFO] Copying manifest into live directory and persistent storage"
-  cp "$manifest_source" "$ASA_DIR/steamapps/appmanifest_${APPID}.acf"
-  cp "$manifest_source" "$PERSISTENT_ACF_FILE"
+  if [ "$manifest_source" != "$live_manifest" ]; then
+    cp "$manifest_source" "$live_manifest" || return 1
+  fi
+  cp "$manifest_source" "$PERSISTENT_ACF_FILE" || return 1
 }
 
 # Ensure copied server files have sane permissions for the container user
